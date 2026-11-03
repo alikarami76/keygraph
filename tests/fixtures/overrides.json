@@ -1,0 +1,4 @@
+{"prefixes": ["tbl_"], "aliases": {"merchant": "shop.sellers"},
+ "confirm": [{"from": "shop.vendor_notes.vendor_id", "to": "shop.vendors.id", "note": "checked by hand"}],
+ "reject": [{"from": "logs.access_log.order_id"}],
+ "add": [{"from": "shop.scratch.a", "to": "shop.users.id"}]}

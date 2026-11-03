@@ -1,0 +1,36 @@
+source: tests/fixtures/context.yaml
+verified: true
+concepts:
+  - name: order
+    definition: A purchase made by a customer.
+    domain: sales
+    synonyms: [purchase, سفارش]
+    links:
+      - {table: shop.orders, role: primary-record}
+      - {table: shop.orders, column: status, role: attribute}
+  - name: customer
+    definition: Person who buys.
+    synonyms: [buyer, مشتری]
+    links: [{table: shop.customers, role: primary-record}]
+  - name: ghost
+    links: [{table: shop.nope, role: primary-record}]
+relations:
+  - {from: customer, rel: places, to: order, note: a customer places orders}
+columns:
+  - table: shop.orders
+    column: status
+    meaning: Order lifecycle state
+    codes: {"1": new, "2": paid, "3": shipped}
+    null_meaning: never null
+  - {table: shop.orders, column: missing_col, meaning: x}
+metrics:
+  - name: revenue
+    definition: Sum of paid order item value
+    expression: SUM(qty)
+    grain: order item
+    tables: [shop.order_items, shop.orders]
+tables:
+  - table: shop.orders
+    grain: one row per order
+    date_column: created_at
+    pitfalls: status 1 rows are carts, not sales

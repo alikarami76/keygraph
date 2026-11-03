@@ -1,0 +1,12 @@
+[
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "CONSTRAINT_NAME": "fk_orders_customer",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "customer_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "customers",
+  "REFERENCED_COLUMN_NAME": "id"
+ }
+]

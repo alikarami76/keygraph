@@ -1,0 +1,178 @@
+[
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "users",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customers",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customers",
+  "INDEX_NAME": "uq_email",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "email"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "sellers",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "INDEX_NAME": "ix_parent",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "parent_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "INDEX_NAME": "ix_seller",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "seller_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "ix_customer",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "customer_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "ix_created",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "created_at"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "ix_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "ix_order_product",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "ix_order_product",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 2,
+  "COLUMN_NAME": "product_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "comments",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "vendors",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "tbl_vendors",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "vendor_notes",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "settings",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "k"
+ },
+ {
+  "TABLE_SCHEMA": "logs",
+  "TABLE_NAME": "access_log",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "logs",
+  "TABLE_NAME": "access_log",
+  "INDEX_NAME": "ix_user",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "user_id"
+ }
+]

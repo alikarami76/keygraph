@@ -1,0 +1,44 @@
+{"engine": "shop", "raw": {"TABLE_NAME": "users", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "users", "COLUMN_NAME": "name", "ORDINAL_POSITION": 2, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(100)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "customers", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "customers", "COLUMN_NAME": "name", "ORDINAL_POSITION": 2, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(100)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "customers", "COLUMN_NAME": "email", "ORDINAL_POSITION": 3, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(200)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "sellers", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "sellers", "COLUMN_NAME": "name", "ORDINAL_POSITION": 2, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(100)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "categories", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "categories", "COLUMN_NAME": "parent_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "categories", "COLUMN_NAME": "name", "ORDINAL_POSITION": 3, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(100)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "products", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "products", "COLUMN_NAME": "seller_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "products", "COLUMN_NAME": "category_id", "ORDINAL_POSITION": 3, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "products", "COLUMN_NAME": "title", "ORDINAL_POSITION": 4, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(200)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "products", "COLUMN_NAME": "deleted_at", "ORDINAL_POSITION": 5, "DATA_TYPE": "datetime", "COLUMN_TYPE": "datetime", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "orders", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "orders", "COLUMN_NAME": "customer_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "orders", "COLUMN_NAME": "buyer_user_id", "ORDINAL_POSITION": 3, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "orders", "COLUMN_NAME": "created_by_id", "ORDINAL_POSITION": 4, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "orders", "COLUMN_NAME": "status", "ORDINAL_POSITION": 5, "DATA_TYPE": "tinyint", "COLUMN_TYPE": "tinyint", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "orders", "COLUMN_NAME": "created_at", "ORDINAL_POSITION": 6, "DATA_TYPE": "datetime", "COLUMN_TYPE": "datetime", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "order_items", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "order_items", "COLUMN_NAME": "order_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "order_items", "COLUMN_NAME": "product_id", "ORDINAL_POSITION": 3, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "order_items", "COLUMN_NAME": "qty", "ORDINAL_POSITION": 4, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "comments", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "comments", "COLUMN_NAME": "commentable_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "comments", "COLUMN_NAME": "commentable_type", "ORDINAL_POSITION": 3, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(50)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "comments", "COLUMN_NAME": "body", "ORDINAL_POSITION": 4, "DATA_TYPE": "text", "COLUMN_TYPE": "text", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "vendors", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "vendors", "COLUMN_NAME": "name", "ORDINAL_POSITION": 2, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(100)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "tbl_vendors", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "tbl_vendors", "COLUMN_NAME": "name", "ORDINAL_POSITION": 2, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(100)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "vendor_notes", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "vendor_notes", "COLUMN_NAME": "vendor_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "vendor_notes", "COLUMN_NAME": "note", "ORDINAL_POSITION": 3, "DATA_TYPE": "text", "COLUMN_TYPE": "text", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "scratch", "COLUMN_NAME": "a", "ORDINAL_POSITION": 1, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "scratch", "COLUMN_NAME": "b", "ORDINAL_POSITION": 2, "DATA_TYPE": "int", "COLUMN_TYPE": "int", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "shop", "raw": {"TABLE_NAME": "settings", "COLUMN_NAME": "k", "ORDINAL_POSITION": 1, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(50)", "IS_NULLABLE": "YES", "COLUMN_KEY": "PRI"}}
+{"engine": "shop", "raw": {"TABLE_NAME": "settings", "COLUMN_NAME": "v", "ORDINAL_POSITION": 2, "DATA_TYPE": "varchar", "COLUMN_TYPE": "varchar(50)", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "logs", "raw": {"TABLE_NAME": "access_log", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI"}}
+{"engine": "logs", "raw": {"TABLE_NAME": "access_log", "COLUMN_NAME": "user_id", "ORDINAL_POSITION": 2, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "logs", "raw": {"TABLE_NAME": "access_log", "COLUMN_NAME": "order_id", "ORDINAL_POSITION": 3, "DATA_TYPE": "bigint", "COLUMN_TYPE": "bigint", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
+{"engine": "logs", "raw": {"TABLE_NAME": "access_log", "COLUMN_NAME": "at", "ORDINAL_POSITION": 4, "DATA_TYPE": "datetime", "COLUMN_TYPE": "datetime", "IS_NULLABLE": "YES", "COLUMN_KEY": ""}}
