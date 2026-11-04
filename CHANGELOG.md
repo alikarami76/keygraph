@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 - 2026-11-04
+
+- Code index (`keygraph code index | where | what | stats`): links source code to the tables and columns of a built graph, read as text and never executed. Built-in rules for Doctrine, SQLAlchemy, Django, TypeORM, Prisma, JPA/Hibernate, GORM and Rails; SQL in string literals and `.sql` files, parsed with sqlglot (`keygraph[code]`) or matched by table name without it; uses of declared properties with a common-name guard; every link carries its rule and a confidence. Incremental re-index by file hash; names that match no table are reported as unresolved.
+- User pattern files (`code-patterns.yaml`) for in-house framework conventions, with the same engine as the built-in rules.
+- Query log (`keygraph queries add | import | top | slow | for | search | show | stats`): SQL that was run, its timing, who ran it and the business question, grouped by fingerprint (a regex normaliser; sqlglot is not used for fingerprints), linked to tables and columns (with roles filter, join, group, read and write when sqlglot is installed), with median, p95 and the recent trend. Literals are masked unless `--keep-literals`; secret-looking values are always masked.
+- MCP tools `code_where`, `code_what`, `query_for`, `query_top`, `query_search` (read-only) and `query_submit`, the only tool that writes, and only to the query log.
+- Explorer and table pages: "Used in code" per table and column, an "in code" count per table in the area panel, and with `--queries` the most-run queries per table. Code snippets appear only with `--snippets`.
+- The shop demo gains a fictional app (`examples/shop/app`) and query log (`examples/shop/queries.jsonl`).
+
 ## 0.2.0 - 2026-11-03
 
 - Question-first explorer views: Areas, Area, Path, Table, Column and Search, with a canvas limit of 40 boxes, 25 tables shown first in large areas, and groups of more than 8 relations collapsed.

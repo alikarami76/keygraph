@@ -1,0 +1,12 @@
+{
+ "refs": [
+  ["models.py", 9, "declare_table", "app.customers", null, "Customer", "sqlalchemy-tablename", 1.0],
+  ["models.py", 10, "declare_column", "app.customers", "id", "id", "sqlalchemy-column", 1.0],
+  ["models.py", 11, "declare_column", "app.customers", "name", "full_name", "sqlalchemy-column", 1.0],
+  ["models.py", 12, "declare_column", "app.customers", "email", "email", "sqlalchemy-column", 1.0],
+  ["models.py", 20, "declare_table", "app.products", null, null, "sqlalchemy-core-table", 1.0],
+  ["models.py", 22, "declare_column", "app.products", "id", null, "sqlalchemy-core-column", 1.0],
+  ["models.py", 23, "declare_column", "app.products", "sku", null, "sqlalchemy-core-column", 1.0]
+ ],
+ "unresolved": []
+}

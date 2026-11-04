@@ -1,0 +1,27 @@
+{
+ "refs": [
+  ["Repo.php", 6, "sql_read", "app.order_items", "qty", null, "sql:sqlglot", 0.95],
+  ["Repo.php", 6, "sql_read", "app.order_items", "unit_price", null, "sql:sqlglot", 0.95],
+  ["Repo.php", 7, "sql_read", "app.order_items", null, null, "sql:sqlglot", 0.95],
+  ["Repo.php", 8, "sql_read", "app.order_items", "order_id", null, "sql:sqlglot", 0.95],
+  ["repo.py", 2, "sql_read", "app.customers", "email", null, "sql:sqlglot", 0.95],
+  ["repo.py", 2, "sql_read", "app.customers", "id", null, "sql:sqlglot", 0.95],
+  ["repo.py", 2, "sql_read", "app.orders", "id", null, "sql:sqlglot", 0.95],
+  ["repo.py", 2, "sql_read", "app.orders", "placed_at", null, "sql:sqlglot", 0.95],
+  ["repo.py", 3, "sql_read", "app.orders", null, null, "sql:sqlglot", 0.95],
+  ["repo.py", 4, "sql_read", "app.customers", null, null, "sql:sqlglot", 0.95],
+  ["repo.py", 4, "sql_read", "app.orders", "customer_id", null, "sql:sqlglot", 0.95],
+  ["repo.py", 5, "sql_read", "app.orders", "status", null, "sql:sqlglot", 0.95],
+  ["repo.py", 10, "sql_write", "app.orders", null, null, "sql:sqlglot", 0.95],
+  ["repo.py", 10, "sql_write", "app.orders", "status", null, "sql:sqlglot", 0.95],
+  ["repo.py", 10, "sql_read", "app.orders", "id", null, "sql:sqlglot", 0.95],
+  ["report.sql", 2, "sql_read", "app.payments", "amount", null, "sql:sqlglot", 0.95],
+  ["report.sql", 2, "sql_read", "app.payments", "order_id", null, "sql:sqlglot", 0.95],
+  ["report.sql", 3, "sql_read", "app.payments", null, null, "sql:sqlglot", 0.95],
+  ["report.sql", 6, "sql_write", "app.shipments", null, null, "sql:sqlglot", 0.95],
+  ["report.sql", 6, "sql_read", "app.shipments", "status", null, "sql:sqlglot", 0.95]
+ ],
+ "unresolved": [
+  ["repo.py", 14, "sql_write", "order_archive", "sql:tokens"]
+ ]
+}

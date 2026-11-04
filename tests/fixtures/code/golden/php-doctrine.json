@@ -1,0 +1,14 @@
+{
+ "refs": [
+  ["Order.php", 8, "declare_table", "app.orders", null, "Order", "doctrine-table-attribute", 1.0],
+  ["Order.php", 13, "declare_column", "app.orders", "id", "id", "doctrine-column-attribute", 1.0],
+  ["Order.php", 15, "declare_column", "app.orders", "customer_id", "buyer", "doctrine-column-attribute", 1.0],
+  ["Order.php", 19, "declare_column", "app.orders", "status", "status", "doctrine-column-attribute", 1.0],
+  ["Shipment.php", 9, "declare_table", "app.shipments", null, "Shipment", "doctrine-table-annotation", 1.0],
+  ["Shipment.php", 14, "declare_column", "app.shipments", "tracking_no", "trackingNumber", "doctrine-column-annotation", 1.0],
+  ["Shipment.php", 21, "declare_column", "app.shipments", "carrier", "carrier", "doctrine-column-annotation", 1.0]
+ ],
+ "unresolved": [
+  ["Legacy.php", 3, "declare_table", "legacy_orders", "doctrine-table-attribute"]
+ ]
+}

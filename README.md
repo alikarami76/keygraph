@@ -5,9 +5,9 @@
 
 # keygraph
 
-keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input.
+keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input. It can also link your source code to the same tables and columns (where each column is declared, written, read and used) and keep a log of the queries people and agents ran, with their timing and the business question behind them.
 
-**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Nine read-only MCP tools. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
+**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Fifteen MCP tools: fourteen read-only and one that logs a query. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
 
 [![PyPI](https://img.shields.io/pypi/v/keygraph)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph)](https://pypi.org/project/keygraph/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
 
@@ -54,10 +54,10 @@ Build the map once with `keygraph scan`, then let your agent look up tables, joi
 2. `describe` each candidate to read its grain, keys, columns, status codes and pitfalls.
 3. `path` between the tables to get ranked join routes with confidence, evidence, fan-out warnings and a `JOIN` snippet. Do not write a join from column-name guesses when `path` can answer it.
 4. `keys` on the large tables to pick filters that match an index, leading with the first column of an index.
-5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile.
-6. Check the result against what the map said: aggregate before a fan-out join, treat relations below 0.6 confidence as unverified, and verify them with a small `SELECT`.
+5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile. Before you write it, if code or past queries were indexed, `code_where` shows how a column is used in code and `query_for` shows queries that already touched the table, with their business question and timing.
+6. Check the result against what the map said: aggregate before a fan-out join, treat relations below 0.6 confidence as unverified, and verify them with a small `SELECT`. Then log the query you ran with `query_submit` (or `keygraph queries add`), so the next agent can reuse a proven query shape. `query_submit` only records; keygraph still runs nothing.
 
-Register the MCP server once and the nine tools appear in your agent (the configs for other clients are in [MCP](#mcp)):
+Register the MCP server once and the fifteen tools appear in your agent (the configs for other clients are in [MCP](#mcp)):
 
     claude mcp add keygraph -- uvx --from 'keygraph[mcp]' keygraph mcp --dir /abs/path/to/out
 
@@ -174,17 +174,19 @@ There is also a Column view that sets documented status codes next to the values
 
 An agent can use the same graph four ways: MCP tools, the Claude Code skill, the CLI with `--json`, and plain markdown files. The recommended order for an agent is in [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md): search or list the areas, describe the table, find the path before writing any join, and use `keys` to choose index-friendly filters.
 
-Every query command (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`) takes `--json`. The build also writes `areas/index.md`, `areas/<area>.md` (tables, joins and a Mermaid ER diagram) and `tables/<schema.table>.md` (grain, keys, columns, relations in both directions) that an agent can read like any other file.
+Every query command (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `code where|what|stats`, `queries top|slow|for|search|show|stats`) takes `--json`. The build also writes `areas/index.md`, `areas/<area>.md` (tables, joins and a Mermaid ER diagram) and `tables/<schema.table>.md` (grain, keys, columns, relations in both directions) that an agent can read like any other file.
 
 The Claude Code skill is in [skills/keygraph/SKILL.md](https://github.com/alikarami76/keygraph/blob/main/skills/keygraph/SKILL.md). It tells an agent when to use each command and how to read confidence.
 
 ### MCP
 
-`keygraph mcp` serves the read-only queries to any MCP client over stdio. It needs the `mcp` extra and a built output
+`keygraph mcp` serves keygraph's queries to any MCP client over stdio. It needs the `mcp` extra and a built output
 directory (`<out>` below, e.g. `keygraph-out`). Tools: `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
-`areas`, `area` and `profile_summary` (stored, sampled profiles; PII values are withheld). Each returns the same JSON as
+`areas`, `area`, `profile_summary` (stored, sampled profiles; PII values are withheld), `code_where` and `code_what`
+(the code index), `query_for`, `query_top` and `query_search` (the query log), and `query_submit`, the one tool that
+writes: it logs a query the agent ran into the query log tables and nothing else. Each returns the same JSON as
 the CLI's `--json`, except that `areas` wraps the list of areas as `{"areas": [...]}` because MCP tool results must be objects. `path`, `areas` and `area` take `include_mirrors`. Resources: `keygraph://areas/index` and
-`keygraph://tables/{schema.table}`. The server never runs SQL.
+`keygraph://tables/{schema.table}`. The server never runs SQL against your database.
 
 Use absolute paths for `--dir` and `--directory`. GUI clients (Claude Desktop, Cursor) often do not see your shell
 `PATH`, so put the absolute path to `uvx` or `uv` (`which uvx`) in `command` if the server fails to start. The checkout
@@ -274,6 +276,57 @@ Unknown tables or columns produce warnings, not failures. Concept relations that
 
 **PII rule.** A column is treated as personal data when its name matches (email, mobile, phone, national id, first, last or full name, address, postal code, token, password, iban, card number, birth date, ip address, api key and similar), when sampled values look like email addresses or phone numbers, or when a context entry sets `pii`. For those columns raw values are never stored: no top values, minimum, maximum or percentiles, only counts, null rate, length statistics and the pattern name. The rule is enforced in `profile_values` and covered by tests.
 
+## Code index and query log
+
+**Code index.** `keygraph code index` reads one or more repos as text (nothing is imported or executed) and links them
+to the tables and columns of the built graph. It finds ORM declarations (Doctrine, SQLAlchemy, Django, TypeORM, Prisma,
+JPA/Hibernate, GORM, Rails), SQL in string literals and `.sql` files (parsed with sqlglot when you install
+`keygraph[code]`, matched by table name otherwise), and uses of the declared properties (`order.status`,
+`getStatus()`). Every link records the rule that made it and a confidence. Common names such as `id` or `status`
+count only in files that name the entity or the table. Names that match no table are listed as unresolved, so you can
+see the gaps.
+
+```bash
+keygraph code index ./api ./web --name api --name web      # incremental: unchanged files are not re-read
+keygraph code where shop.orders.status                       # declared, written, read and used where
+keygraph code what app/orders.py:42                          # what one line (or file, or --symbol) touches
+keygraph code stats
+```
+
+Your own framework conventions go in a pattern file, `code-patterns.yaml` (pass `--patterns`, or put it in the output
+directory). Named groups `table`, `column` and `symbol` say what a match means:
+
+```yaml
+patterns:
+  - name: my-table
+    languages: [php]
+    kind: declare_table
+    regex: "Schema::table\\(\\s*'(?P<table>[A-Za-z0-9_]+)'"
+  - name: my-field
+    languages: [php]
+    kind: use
+    confidence: 0.85
+    regex: "getField\\(\\s*'(?P<column>[A-Za-z0-9_]+)'"
+```
+
+The explorer and the table pages show a "Used in code" section (locations only; add `--snippets` to a build or render
+to include the code lines, with secret-looking values masked).
+
+**Query log.** `keygraph queries` keeps the SQL that was run, how long it took and the business question it answered,
+linked to the tables and columns it touches. keygraph only records queries; it never runs them. Literal values are
+replaced by `?` unless you pass `--keep-literals`, and secret-looking values are always masked. Queries that differ only
+in literals share one fingerprint (made by a regex normaliser, so fingerprints do not need sqlglot).
+
+```bash
+keygraph queries add --sql q.sql --source warehouse --ms 840 --rows 120 --context "late orders this week"
+keygraph queries import runs.jsonl                           # one JSON object per line: sql, source, ms, rows, context, ...
+keygraph queries top --table shop.orders                     # how a table was queried before
+keygraph queries slow                                        # median and p95 per query, and the recent trend
+keygraph queries search "refund rate"
+```
+
+Build or render with `--queries` to show each table's most-run queries in the explorer and on its page.
+
 ## Comparison
 
 These tools solve neighbouring problems. The table says what each is for and where keygraph overlaps or stops.
@@ -312,7 +365,15 @@ Connect the keygraph MCP server, or let the agent call the CLI with `--json`. Th
 Have the agent ask keygraph for the path before it writes a join. `keygraph path A B` (or the MCP `path` tool) returns ranked routes built from declared and inferred foreign keys, each hop with a confidence and the evidence behind it. Routes through hub, log, archive or scratch tables rank lower, and every fan-out hop is flagged so the agent aggregates before joining. Anything below 0.6 confidence should be checked with a small `SELECT` before it is trusted.
 
 ### Can an LLM agent query my database through keygraph?
-No. keygraph has no query tool, and the MCP server never runs SQL. The agent reads the map, writes SQL, and runs it with whatever read-only database access you give it separately.
+No. keygraph has no tool that runs SQL, and the MCP server never runs SQL against your database. The agent reads the map, writes SQL, and runs it with whatever read-only database access you give it separately. The `query_submit` tool only logs a query the agent already ran.
+
+The server exposes fifteen tools, fourteen read-only and `query_submit`, which only writes the query log, and it never runs SQL against your database.
+
+### How do I find where a column is used in code?
+Index your repos with `keygraph code index ./repo --name repo`, then run `keygraph code where schema.table.column`. It lists the ORM declarations first, then the SQL that writes and reads the column, then uses of its property, each with file, line, rule and confidence. `keygraph code what path/to/file.py:42` goes the other way.
+
+### How do I see how a table was queried before?
+Log queries with `keygraph queries add` or `keygraph queries import`, or let an agent call the MCP `query_submit` tool after each query it runs. Then `keygraph queries for schema.table` lists the queries that touched it, with the business question, the normalized SQL and median and p95 run time, and `keygraph queries top` and `slow` rank them.
 
 ### Does keygraph send my data to an LLM?
 No. keygraph calls no LLM and makes no network requests beyond the connection to the database you choose. Whatever your agent does with the answers is up to the agent. Value profiles never store raw values for personal data (the PII rule above), so profiled output is safer to hand to a model, but treat profiles as samples.
@@ -339,7 +400,7 @@ No. It makes no network requests of its own beyond the connection to the databas
 It is built for them. The overview shows areas, not tables. An area over 25 tables first shows its 25 most connected tables (in the explorer and in the Mermaid diagram of `areas/<area>.md`), and no explorer canvas draws more than 40 boxes. Profiling samples with one bounded SELECT per table and can skip tables above a row limit (`--skip-over-rows`). No benchmarks are published here.
 
 ### How do I set up the MCP server?
-Install `keygraph[mcp]`, build an output directory, then register `keygraph mcp --dir /abs/path/to/out` with your client. Copy-paste configs for Claude Code, Claude Desktop, Cursor and Codex are in the [MCP section](#mcp) above. The server exposes nine read-only tools and never runs SQL.
+Install `keygraph[mcp]`, build an output directory, then register `keygraph mcp --dir /abs/path/to/out` with your client. Copy-paste configs for Claude Code, Claude Desktop, Cursor and Codex are in the [MCP section](#mcp) above. The server exposes fifteen tools (fourteen read-only, plus `query_submit`, which only logs a query) and never runs SQL against your database.
 
 ### How does confidence work?
 Confidence is a score from 0 to 1 for an inferred relation. Declared foreign keys are 1.0; inferred ones are raised or lowered by name match, types, indexes, key targets, ambiguity and cross-schema matches, and every reason is listed as evidence. Use 0.8 and above freely, read the evidence between 0.6 and 0.8, and verify anything lower.
@@ -361,12 +422,15 @@ Write it in an overrides file with `confirm`, `reject`, `add` or `aliases`, and 
 - Metabase: GET metadata plus native SELECT. MongoDB: list, find and index reads only.
 - Personal data is never stored in profiles (the PII rule above).
 - The explorer is one self-contained HTML file with no runtime network fetches.
+- `code index` reads source files as text. It never imports, runs or compiles them, skips binary and very large files, and does not follow symlinks. Snippets are masked and stay out of the explorer unless you pass `--snippets`.
+- The query log lives in `keygraph.db`. Literals are replaced by `?` unless you pass `--keep-literals`, and secret-looking values are always masked.
 
 ## Development
 
 ```bash
 uv sync
-uv run pytest
+uv run --exact pytest         # without sqlglot (--exact removes it)
+uv run --extra code pytest    # with sqlglot
 ```
 
 ## License

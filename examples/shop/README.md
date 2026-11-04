@@ -18,7 +18,11 @@ confidence and the evidence behind it. Many columns named `created_by_id` point 
 - `context.yaml`: concepts, metrics, column codes, table grain and pitfalls, and a small areas curation.
 - `shop.db`: SQLite with a few hundred sample rows, used by `keygraph profile`. It includes an email column (masked in
   the profile) and one order status code (`9`) that the context does not document, so the profile flags it.
-- `generate.py`: rewrites the dumps and `shop.db` (deterministic). `build.sh`: the two build commands below in one script.
+- `app/`: a tiny fictional app (SQLAlchemy models and raw SQL in `shop/`, a TypeORM entity in `web/`, report queries in
+  `sql/`) for the code index. It is never run; keygraph only reads it as text.
+- `queries.jsonl`: seven logged query runs (SQL, timing, who ran it and the business question) for the query log,
+  including one failed run on a table that does not exist.
+- `generate.py`: rewrites the dumps and `shop.db` (deterministic). `build.sh`: the build commands below in one script.
 
 ## Run it
 
@@ -32,6 +36,10 @@ From the `keygraph/` folder (use `uv run keygraph` instead of `keygraph` when yo
     keygraph profile --dir examples/shop/out --source sqlite --url sqlite:///examples/shop/shop.db --bare-tables \
       --tables shop.customers,shop.orders,shop.order_items,shop.products,billing.payments,shop.categories,billing.vouchers
 
+    keygraph code index examples/shop/app --name shop-app --dir examples/shop/out
+    keygraph queries import examples/shop/queries.jsonl --dir examples/shop/out
+    keygraph render --queries --dir examples/shop/out
+
     keygraph ui --dir examples/shop/out            # open the explorer
 
 Then ask it things:
@@ -42,6 +50,10 @@ Then ask it things:
     keygraph search "in transit" --dir examples/shop/out                   # finds a status label
     keygraph describe shop.customers --dir examples/shop/out               # email values are withheld
     keygraph areas --include-mirrors --dir examples/shop/out               # shows the reporting mirror
+    keygraph code where shop.orders.status --dir examples/shop/out          # declared, written, read and used in app/
+    keygraph code what shop/orders.py:17 --dir examples/shop/out            # what one line of code touches
+    keygraph queries top --table shop.orders --dir examples/shop/out       # how orders were queried before
+    keygraph queries slow --dir examples/shop/out                          # median and p95 per query
 
 Bare names such as `customers` are ambiguous here because `reporting.customers` copies `shop.customers`; give the schema.
 

@@ -129,6 +129,28 @@
   const icon = (n, cls = '') => `<svg class="kg-icon ${cls}" viewBox="0 0 16 16" aria-hidden="true">${I[n]}</svg>`;
   const bigIcon = n => `<svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
   const band = c => KGTHEME.band(c);
+  /* code index: "Used in code" (absent unless a repo was indexed) */
+  const K = D.k || { r: [], t: {} };
+  const Q = D.q || {};  /* query log: "Queries" (absent unless the build passed --queries) */
+  const CODE_KINDS = ['declares table', 'declares column', 'writes', 'reads', 'uses'];
+  const codeT = t => K.t[t] || null;
+  const codeC = (t, c) => { const x = K.t[t]; return (x && x[2][c]) || null; };
+  const codeTotal = x => (x ? x[0].reduce((a, b) => a + b, 0) : 0);
+  function codeSection(x, t, ref, open) {
+    if (!x) return '';
+    const n = codeTotal(x), refs = x[1].slice(0, 20);
+    const counts = x[0].map((v, i) => (v ? `<span class="kg-chip"><span>${esc(CODE_KINDS[i])}</span><span class="kg-faint">${v}</span></span>` : '')).join('');
+    const rows = refs.map(r => `<div class="kg-coderef" data-coderef style="margin:0 0 8px"><code class="kg-mono" style="font-size:11.5px">${esc(K.r[r[0]])}:${esc(r[1])}:${r[2]}</code> <span class="kg-faint">${esc(CODE_KINDS[r[3]])}${r[5] >= 0 ? ' · ' + esc(cname(t, r[5])) : ''}</span> ${conf(r[4])}${r.length > 6 ? `<pre class="kg-code" data-snippet style="margin:4px 0 0">${esc(r[6])}</pre>` : ''}</div>`).join('');
+    const more = n > refs.length ? `<p class="kg-faint" style="margin:6px 0 0;font:var(--kg-type-caption)">${n - refs.length} more: <code class="kg-mono">keygraph code where ${esc(ref)}</code></p>` : '';
+    return `<details class="kg-section" data-code ${open ? 'open' : ''}><summary>Used in code<span class="kg-section-count">${n}</span></summary><div class="kg-section-body"><div class="kg-flags" style="flex-wrap:wrap;margin-bottom:10px">${counts}</div>${rows}${more}</div></details>`;
+  }
+  const fmtMs = v => (v == null ? '-' : Math.round(v).toLocaleString('en-US') + ' ms');
+  function querySection(t, open) {
+    const qs = Q[t];
+    if (!qs || !qs.length) return '';
+    const rows = qs.map(q => `<div class="kg-queryref" data-queryref style="margin:0 0 12px"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:baseline"><code class="kg-mono" style="font-size:11.5px">${esc(q.fp)}</code><span class="kg-faint">${q.runs} run${q.runs === 1 ? '' : 's'} · median ${fmtMs(q.median_ms)} · p95 ${fmtMs(q.p95_ms)}</span></div>${q.context ? `<p style="margin:4px 0 0">${esc(q.context)}</p>` : ''}<pre class="kg-code" style="margin:4px 0 0;white-space:pre-wrap">${esc(q.sql)}</pre></div>`).join('');
+    return `<details class="kg-section" data-queries ${open ? 'open' : ''}><summary>Queries<span class="kg-section-count">${qs.length}</span></summary><div class="kg-section-body">${rows}</div></details>`;
+  }
   const conf = c => `<span class="kg-conf" data-band="${band(c)}" title="confidence ${c.toFixed(2)} (${band(c)})"><span class="kg-conf-meter"><i></i><i></i><i></i><i></i></span>${c.toFixed(2)}</span>`;
   const keyTag = k => `<span class="kg-key kg-key--${k.split(' ')[0].toLowerCase()}">${esc(k)}</span>`;
   const WARN_TXT = { hub: 'hub', fan_out: 'fan-out', log: 'log or scratch table' };
@@ -598,7 +620,7 @@
       <div class="kg-panel-meta"><span><b>${n}</b> tables</span><span class="kg-mono" style="font-size:11.5px">${esc(area.id)}</span></div>
       <p class="kg-faint" style="margin:10px 0 0;font:var(--kg-type-small)">Click a box to see it here. Shift-click a second box to find a path.</p></div>
      <div class="kg-panel-body">
-      <details class="kg-section" open><summary>Tables<span class="kg-section-count">${n}</span></summary><div class="kg-section-body--flush">${list.map(t => `<div class="kg-level" style="grid-template-columns:minmax(0,1fr) auto;padding:4px 20px">${entNF(t, 30)}<span class="kg-faint" style="font:var(--kg-type-caption)">${deg[t]} rel.</span></div>`).join('')}${list.length < n ? `<div class="kg-relcollapsed" data-group-collapsed style="padding:0 20px">${n - list.length} more tables<a data-act="show-all">Show all</a></div>` : ''}</div></details>
+      <details class="kg-section" open><summary>Tables<span class="kg-section-count">${n}</span></summary><div class="kg-section-body--flush">${list.map(t => `<div class="kg-level" style="grid-template-columns:minmax(0,1fr) auto;padding:4px 20px">${entNF(t, 30)}<span class="kg-faint" style="font:var(--kg-type-caption)">${deg[t]} rel.${codeT(t) ? ` · <span data-incode>${codeTotal(codeT(t))} in code</span>` : ''}</span></div>`).join('')}${list.length < n ? `<div class="kg-relcollapsed" data-group-collapsed style="padding:0 20px">${n - list.length} more tables<a data-act="show-all">Show all</a></div>` : ''}</div></details>
       <details class="kg-section" open><summary>Neighbouring areas<span class="kg-section-count">${nbAreas.length}</span></summary><div class="kg-section-body--flush">${nbAreas.map(([ai, c]) => `<a class="kg-level" href="${hA(ai)}" style="text-decoration:none;color:inherit"><span class="kg-swatch" style="--kg-glyph-color:${color(ai)};margin-left:6px"></span><span>${esc(AREAS[ai].name)}</span><span class="kg-conf">${c}</span></a>`).join('') || '<p class="kg-muted" style="margin:8px 20px;font:var(--kg-type-small)">None.</p>'}</div></details>
       <details class="kg-section" open><summary>Hub references<span class="kg-section-count">${hubs.size}</span></summary><div class="kg-section-body">${[...hubs.entries()].sort((a, b) => b[1].n - a[1].n).map(([t, x]) => `<div class="kg-hubline" style="margin:0 0 6px">${entNF(t, 26)}<span class="kg-faint">via ${esc([...x.cols].slice(0, 4).join(', '))} (${x.n})</span></div>`).join('') || '<p class="kg-muted" style="margin:0;font:var(--kg-type-small)">None.</p>'}</div></details>
      </div>`;
@@ -620,6 +642,8 @@
         ${sameArea.slice(0, 12).map(({ h, e }) => { const far = h.rev ? e[0] : e[1]; return `<div class="kg-rel"><div class="kg-rel-line"><span class="kg-rel-dir">${icon(h.rev ? 'arrowL' : 'arrowR', 'kg-icon--sm')}</span>${entNF(far, 28)}${conf(e[4])}</div><div class="kg-rel-join">${esc(tname(e[0]))}.${esc(colsTxt(e[0], e[2]))}<span class="o">=</span>${esc(tname(e[1]))}.${esc(colsTxt(e[1], e[3]))}</div></div>`; }).join('') || '<p class="kg-muted" style="margin:8px 20px;font:var(--kg-type-small)">None above the confidence floor.</p>'}
         ${sameArea.length > 12 ? `<div class="kg-relcollapsed" style="padding:0 20px">${sameArea.length - 12} more<a href="${hT(t)}">Open table</a></div>` : ''}
       </div></details>
+      ${codeSection(codeT(t), t, tid(t), true)}
+      ${querySection(t, false)}
      </div>`;
   }
   const relCount = t => adj[t].filter(h => E[h.ei][4] >= floor()).length;
@@ -814,6 +838,8 @@
         <div class="kg-boxed"><table class="kg-table kg-table--clickable kg-cols-grid"><thead><tr><th>Column</th><th>Type</th><th>Keys</th><th>Flags</th><th>Values</th><th style="text-align:right">Empty</th></tr></thead><tbody>${rows}</tbody></table></div>
         <h2>Keys and indexes <span class="kg-section-count">${keys.length}</span></h2>
         ${keys.length ? `<div class="kg-boxed"><table class="kg-table"><thead><tr><th style="width:1%">Kind</th><th>Columns, in order</th><th>Name</th></tr></thead><tbody>${keys.map(k => `<tr><td>${keyTag(k.kind)}</td><td class="kg-c-mono">${k.cols.map((x, i) => `${i ? '<span class="kg-faint"> → </span>' : ''}${esc(x)}`).join('')}</td><td class="kg-c-type">${esc(k.name)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="kg-callout kg-callout--pitfall">' + icon('warn') + '<div><p><b>No primary key or index.</b> Joins on this table scan it.</p></div></div>'}
+        ${codeT(t) ? `<div class="kg-boxed" style="margin-top:24px;background:var(--kg-surface)">${codeSection(codeT(t), t, tid(t), true)}</div>` : ''}
+        ${Q[t] ? `<div class="kg-boxed" style="margin-top:24px;background:var(--kg-surface)">${querySection(t, true)}</div>` : ''}
         <div class="kg-two">${relGroupsHtml(t, sum, 'out')}${relGroupsHtml(t, sum, 'in')}</div>
       </div></div>`,
       panelColumn(t, state.panelCol.c));
@@ -893,6 +919,7 @@
         ${cd.unseen.length ? `<div class="kg-callout" style="margin-top:12px">${icon('warn')}<div><p>Documented but never seen in the sample: <b>${esc(cd.unseen.join(', '))}</b>.</p></div></div>` : ''}</div></details>` : ''}
       ${profRows.length ? `<details class="kg-section" open><summary>Profile</summary><div class="kg-section-body"><dl class="kg-kv">${profRows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl></div></details>` : ''}
       ${ctxRows.length || ms.length ? `<details class="kg-section" open><summary>Use</summary><div class="kg-section-body"><dl class="kg-kv">${ctxRows.map(([k, v]) => `<dt>${k}</dt><dd>${k === 'Source' ? esc(v) : md(v)}</dd>`).join('')}${ms.length ? `<dt>Metrics</dt><dd>${ms.map(m => `<span class="kg-entity"><span class="kg-glyph kg-glyph--metric"></span><span class="kg-entity-name" style="font-family:var(--kg-font-sans);font-size:13px">${esc(m.n)}</span></span>`).join('<br>')}</dd>` : ''}</dl></div></details>` : ''}
+      ${codeSection(codeC(t, c), t, tid(t) + '.' + col[0], !compactRefs)}
       ${col[5] ? `<details class="kg-section"><summary>Details</summary><div class="kg-section-body"><p class="kg-mono" style="margin:0;font-size:12px">${esc(col[5])}</p></div></details>` : ''}
       ${compactRefs ? `<details class="kg-section" ${refs.length ? 'open' : ''}><summary>References<span class="kg-section-count">${refs.length || 'none'}</span></summary>${refs.length ? `<div class="kg-section-body--flush">${refs.slice(0, 10).map(h => { const e = E[h.ei], far = h.rev ? e[0] : e[1]; return `<div class="kg-rel"><div class="kg-rel-line"><span class="kg-rel-dir">${icon(h.rev ? 'arrowL' : 'arrowR', 'kg-icon--sm')}</span>${entNF(far, 28)}${conf(e[4])}</div><div class="kg-rel-join">${esc(tname(e[0]))}.${esc(colsTxt(e[0], e[2]))}<span class="o">=</span>${esc(tname(e[1]))}.${esc(colsTxt(e[1], e[3]))}</div></div>`; }).join('')}${refs.length > 10 ? `<div class="kg-relcollapsed" style="padding:0 20px">${refs.length - 10} more<a href="${hC(t, c)}">Open column</a></div>` : ''}</div>` : ''}</details>` : ''}`;
   }

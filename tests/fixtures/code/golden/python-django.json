@@ -1,0 +1,9 @@
+{
+ "refs": [
+  ["models.py", 5, "declare_column", "app.payments", "amount", "amount", "django-field", 1.0],
+  ["models.py", 6, "declare_column", "app.payments", "gateway_ref", "reference", "django-db-column", 1.0],
+  ["models.py", 7, "declare_column", "app.payments", "order_id", "order", "django-field", 1.0],
+  ["models.py", 10, "declare_table", "app.payments", null, "Payment", "django-db-table", 1.0]
+ ],
+ "unresolved": []
+}

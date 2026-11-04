@@ -1,0 +1,28 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id    Int     @id
+  title String
+  price Decimal @map("price")
+  items OrderItem[]
+
+  @@map("products")
+}
+
+model OrderItem {
+  id        Int     @id
+  orderId   Int     @map("order_id")
+  product   Product @relation(fields: [productId], references: [id])
+  productId Int     @map("product_id")
+  qty       Int
+
+  @@map("order_items")
+}
+
+enum Status {
+  NEW
+  PAID
+}

@@ -1,0 +1,12 @@
+{
+ "refs": [
+  ["shipment.ts", 3, "declare_table", "app.shipments", null, "Shipment", "typeorm-entity", 1.0],
+  ["shipment.ts", 6, "declare_column", "app.shipments", "id", "id", "typeorm-column", 1.0],
+  ["shipment.ts", 8, "declare_column", "app.shipments", "order_id", "orderId", "typeorm-column", 1.0],
+  ["shipment.ts", 12, "declare_column", "app.shipments", "carrier", "carrier", "typeorm-column", 1.0],
+  ["shipment.ts", 14, "declare_column", "app.shipments", "tracking_no", "trackingNo", "typeorm-column", 1.0],
+  ["shipment.ts", 18, "declare_table", "app.customers", null, "Customer", "typeorm-entity-options", 1.0],
+  ["shipment.ts", 21, "declare_column", "app.customers", "email", "email", "typeorm-column", 1.0]
+ ],
+ "unresolved": []
+}

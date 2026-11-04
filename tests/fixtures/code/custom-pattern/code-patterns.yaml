@@ -1,0 +1,14 @@
+patterns:
+  - name: fiction-table
+    languages: [php]
+    kind: declare_table
+    regex: "Schema::table\\(\\s*'(?P<table>[A-Za-z0-9_]+)'"
+  - name: fiction-column
+    languages: [php]
+    kind: declare_column
+    regex: "[A-Za-z]+Column::create\\(\\s*'(?P<column>[A-Za-z0-9_]+)'"
+  - name: fiction-field
+    languages: [php]
+    kind: use
+    confidence: 0.85
+    regex: "getField\\(\\s*'(?P<column>[A-Za-z0-9_]+)'"

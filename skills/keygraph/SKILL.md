@@ -1,6 +1,6 @@
 ---
 name: keygraph
-description: Use for database join paths, missing or undeclared foreign keys, schema and ER diagram questions, schema context for text-to-SQL, finding which table holds a business concept, and what enum or status codes mean; also when an MCP database-schema server is wanted. keygraph maps keys, indexes and relations between tables (declared, and inferred with a confidence score and evidence), plus searchable business context and sampled value profiles. Use it before writing a multi-table SQL join or an index-friendly WHERE clause, and to build the graph from a live database or information_schema dumps. Read-only, deterministic, no LLM calls.
+description: Use for database join paths, missing or undeclared foreign keys, schema and ER diagram questions, schema context for text-to-SQL, finding which table holds a business concept, and what enum or status codes mean; also when an MCP database-schema server is wanted. keygraph maps keys, indexes and relations between tables (declared, and inferred with a confidence score and evidence), plus searchable business context and sampled value profiles. Use it before writing a multi-table SQL join or an index-friendly WHERE clause, and to build the graph from a live database or information_schema dumps. Also use it to find where a table or column is declared, written, read or used in source code (keygraph code where/what) and how a table was queried before (keygraph queries). Deterministic, no LLM calls; it never writes to the database.
 ---
 
 # keygraph
@@ -16,7 +16,9 @@ keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIO
 4. To understand one column: `keygraph explain T.col`.
 All query commands take `--json`. Table names resolve leniently: a bare name works when unique across schemas, otherwise give `schema.table`.
 
-MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`) instead of the CLI; they return the same JSON as `--json` and are read-only.
+5. Code and past queries: `keygraph code where T.col` lists ORM declarations, SQL writes and reads and property uses with file, line and confidence; `keygraph code what path:line` (or `--symbol getStatus`) goes from code to tables. `keygraph queries for T`, `queries top --table T`, `queries slow` and `queries search "<question>"` show earlier queries with their business question and timing. After running a query, log it with `keygraph queries add --sql f.sql --source <db> --ms <ms> --context "<question>"`. Index code with `keygraph code index REPO --name NAME [--patterns code-patterns.yaml]`.
+
+MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`, `code_where`, `code_what`, `query_for`, `query_top`, `query_search`, `query_submit`) instead of the CLI; they return the same JSON as `--json`. All are read-only except `query_submit`, which only logs a query you ran.
 
 ## Read confidence honestly
 

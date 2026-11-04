@@ -14,13 +14,14 @@
 - [Build a data analyst agent with keygraph](https://github.com/alikarami76/keygraph/blob/main/README.md#how-do-i-build-a-data-analyst-agent-with-keygraph): the search, describe, path, keys, write SQL, check loop and how to plug it into any agent that can call MCP tools or run a CLI.
 - [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md): the command sequence (search, describe, path, keys), how to read confidence, what not to do.
 - [Claude Code skill](https://github.com/alikarami76/keygraph/blob/main/skills/keygraph/SKILL.md): when to use each command and how to build and extend the graph.
-- [MCP server setup](https://github.com/alikarami76/keygraph/blob/main/README.md#mcp): nine read-only tools and configs for Claude Code, Claude Desktop, Cursor and Codex.
+- [MCP server setup](https://github.com/alikarami76/keygraph/blob/main/README.md#mcp): fifteen tools (fourteen read-only, one that logs queries) and configs for Claude Code, Claude Desktop, Cursor and Codex.
 - [Use with AI agents](https://github.com/alikarami76/keygraph/blob/main/README.md#use-with-ai-agents): MCP, CLI --json and the generated areas/ and tables/ markdown.
 
 ## Concepts
 
 - [How relations are inferred](https://github.com/alikarami76/keygraph/blob/main/README.md#how-relations-are-inferred): confidence, evidence, hubs, areas, path penalties, mirrors.
 - [Business context and value profiles](https://github.com/alikarami76/keygraph/blob/main/README.md#business-context-and-value-profiles): concepts, status codes, metrics, sampled profiles and the PII rule.
+- [Code index and query log](https://github.com/alikarami76/keygraph/blob/main/README.md#code-index-and-query-log): link source code (ORM declarations, SQL, property uses) to tables and columns, and log the queries people and agents ran with timing and business question.
 - [Comparison](https://github.com/alikarami76/keygraph/blob/main/README.md#comparison): keygraph next to SchemaSpy, dbdocs, DataHub, OpenMetadata, database IDE diagrams, dbdiagram and schema linking.
 - [FAQ](https://github.com/alikarami76/keygraph/blob/main/README.md#faq): common questions about join paths, foreign keys, safety and MCP setup.
 

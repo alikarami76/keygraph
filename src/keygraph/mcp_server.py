@@ -12,6 +12,8 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
+from . import code as CI
+from . import queries as QL
 from . import query as Q
 from . import search as S
 from .cli import area_result, describe_result, load_graph, path_result
@@ -19,13 +21,17 @@ from .context import ContextDB
 from .docs_out import table_file
 from .graph import Graph
 
-INSTRUCTIONS = """keygraph maps the keys of a database and the relations between its tables. Everything is read-only
-and deterministic: it answers from a prebuilt graph and never queries the database.
+INSTRUCTIONS = """keygraph maps the keys of a database and the relations between its tables. It is deterministic and
+answers from a prebuilt graph; it never queries the database. Every tool is read-only except `query_submit`.
 Start with `search` (find tables by business meaning) or `areas`, then `describe` a table, and use `path` before writing
 any multi-table JOIN. Relations are either declared foreign keys (confidence 1.0) or inferred from names and key shapes;
 inferred relations carry a confidence and the evidence behind it, so check anything below about 0.8 (and every fan-out
 hop, where one row becomes many) with a small SELECT. Value profiles are sampled, may be stale, and never contain raw
-values for PII columns. Table names resolve leniently, but when a bare name exists in several schemas, give schema.table."""
+values for PII columns. Table names resolve leniently, but when a bare name exists in several schemas, give schema.table.
+When code was indexed, `code_where` lists where a table or column is declared, written, read and used in code, and
+`code_what` lists the tables and columns a file, line or symbol touches. The query log answers how a table was
+queried before: `query_for`, `query_top` and `query_search`. `query_submit` is the only tool that writes: it logs a
+query you ran (SQL, source, timing and the business question) into the query tables and nothing else."""
 
 
 MAX_DEPTH = 3  # neighbors beyond 3 hops returns most of a large graph
@@ -123,6 +129,51 @@ def build_server(dir: str | Path) -> MCPServer:
             prefix = t + "."
             cols = {k[len(prefix):]: v for k, v in ctx.load_profiles().items() if k.startswith(prefix)}
         return {"table": t, "columns": cols}
+
+    db = out / "keygraph.db"
+
+    @srv.tool()
+    def code_where(table: str, column: str | None = None, kind: str | None = None, limit: int = 50) -> dict:
+        """Where a table or one column appears in indexed source code: ORM declarations, SQL that writes or reads it,
+        and uses of its properties, declarations first, each with repo, path, line, rule and confidence. kind filters
+        to one of declare_table, declare_column, sql_write, sql_read, use. Returns empty refs when no repo was indexed."""
+        ref = f"{table}.{column}" if column else table
+        return run(CI.where, db, ref, kind, None, 0.0, max(1, min(int(limit), 500)))
+
+    @srv.tool()
+    def code_what(path: str | None = None, line: int | None = None, symbol: str | None = None, repo: str | None = None) -> dict:
+        """The tables and columns a source file (or one line of it) or a symbol touches, from the code index. Give a
+        path relative to the repo root (a trailing part such as models/order.py also works) and optionally a line, or
+        a symbol such as getStatus. With a line, also returns the declarations of the entity the file declares."""
+        return run(CI.what, db, path, line, symbol, repo)
+
+    @srv.tool()
+    def query_for(table: str, column: str | None = None) -> dict:
+        """Logged queries that touched a table or column, each with its business question, normalized SQL, runs,
+        median and p95 ms and the role of the column (filter, join, group, read, write). Use it to see how a table
+        was queried before writing a new query."""
+        return run(QL.for_ref, db, f"{table}.{column}" if column else table)
+
+    @srv.tool()
+    def query_top(by: str = "runs", table: str | None = None, limit: int = 10) -> dict:
+        """The most used logged queries, by runs, recent use or number of people, optionally only those touching one
+        table. Each comes with its business question, normalized SQL and timing (median, p95, recent trend)."""
+        return run(QL.top, db, by, table, max(1, min(int(limit), 100)))
+
+    @srv.tool()
+    def query_search(text: str, limit: int = 10) -> dict:
+        """Full-text search over the business questions and normalized SQL of logged queries ("late orders",
+        "refund rate"). Returns matching queries with their tables and timing."""
+        return run(QL.search, db, text, max(1, min(int(limit), 100)))
+
+    @srv.tool()
+    def query_submit(sql: str, source: str, ms: float | None = None, rows: int | None = None, context: str = "",
+                     tags: list[str] | None = None, by: str = "") -> dict:
+        """Log one query you ran so later questions can reuse it: the SQL, where it ran (source), how long it took
+        (ms), the rows it returned and the business question it answered (context). Literal values are replaced by ?
+        and secret-looking values are masked before storing. This is the only tool that writes, and it writes only the
+        query log tables. Returns the query's fingerprint and the tables it touched."""
+        return run(QL.add, db, sql, source, ms, rows, context, tags or [], by)
 
     def _read(rel: str) -> str:
         p = (out / rel).resolve()

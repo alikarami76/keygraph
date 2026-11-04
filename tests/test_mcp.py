@@ -7,11 +7,15 @@ import pytest
 
 pytest.importorskip("mcp")
 
+from keygraph import code  # noqa: E402
+from keygraph import queries as QL  # noqa: E402
 from keygraph.cli import main  # noqa: E402
 from keygraph.mcp_server import build_server  # noqa: E402
+from tests.codekit import CODE_FIX  # noqa: E402
 from tests.test_example_shop import _build  # noqa: E402
 
-TOOLS = {"search", "describe", "keys", "explain", "path", "neighbors", "areas", "area", "profile_summary"}
+TOOLS = {"search", "describe", "keys", "explain", "path", "neighbors", "areas", "area", "profile_summary", "code_where", "code_what",
+         "query_for", "query_top", "query_search", "query_submit"}
 
 
 @pytest.fixture(scope="module")
@@ -127,7 +131,8 @@ def test_serving_never_writes(tmp_path, out):
     before = {p.name: p.stat().st_mtime_ns for p in d.rglob("*") if p.is_file()}
     s = build_server(d)
     for tool, args in (("search", {"query": "orders"}), ("describe", {"table": "shop.orders"}),
-                       ("area", {"name_or_table": "Ordering"}), ("profile_summary", {"table": "shop.orders"})):
+                       ("area", {"name_or_table": "Ordering"}), ("profile_summary", {"table": "shop.orders"}),
+                       ("code_where", {"table": "shop.orders"}), ("query_top", {}), ("query_for", {"table": "shop.orders"})):
         err, _ = call(s, tool, **args)
         assert not err, tool
     assert not (d / "keygraph.db").exists()
@@ -153,7 +158,8 @@ def test_old_db_without_new_tables_reads_as_empty(tmp_path, out):
     stamp = (d / "keygraph.db").read_bytes()
     s = build_server(d)
     for tool, args in (("search", {"query": "orders"}), ("describe", {"table": "shop.orders"}),
-                       ("area", {"name_or_table": "Ordering"}), ("profile_summary", {"table": "shop.orders"})):
+                       ("area", {"name_or_table": "Ordering"}), ("profile_summary", {"table": "shop.orders"}),
+                       ("code_where", {"table": "shop.orders"}), ("query_top", {}), ("query_for", {"table": "shop.orders"})):
         err, msg = call(s, tool, **args)
         assert not err, (tool, msg)
     assert (d / "keygraph.db").read_bytes() == stamp
@@ -193,3 +199,44 @@ class _Tracked:
 def test_neighbors_depth_is_capped(srv):
     err, deep = call(srv, "neighbors", table="shop.orders", depth=50)
     assert not err and max(int(k) for k in deep["levels"]) <= 3
+
+
+def test_code_tools_match_the_python_api(tmp_path, out):
+    import shutil
+    d = tmp_path / "built"
+    shutil.copytree(out, d)
+    code.index_repo(d / "keygraph.db", CODE_FIX / "php-doctrine", "php")
+    s = build_server(d)
+    err, got = call(s, "code_where", table="shop.orders", column="status")
+    assert not err and got == code.where(d / "keygraph.db", "shop.orders.status", limit=50)
+    assert [r["kind"] for r in got["refs"]] == ["declare_column", "use", "use"]
+    err, got = call(s, "code_what", path="Order.php", line=19)
+    assert not err and got["files"][0]["entity"]["table"] == "shop.orders"
+    err, msg = call(s, "code_where", table="nosuch")
+    assert err and "unknown table" in msg
+
+
+def test_code_tools_without_an_index_are_empty(srv):
+    err, got = call(srv, "code_where", table="shop.orders")
+    assert not err and got["refs"] == [] and got["total"] == 0
+    err, got = call(srv, "code_what", symbol="getStatus")
+    assert not err and got == {"symbol": "getStatus", "refs": []}
+
+
+def test_query_submit_then_read(tmp_path, out):
+    import shutil
+    d = tmp_path / "built"
+    shutil.copytree(out, d)
+    s = build_server(d)
+    err, got = call(s, "query_submit", sql="SELECT id FROM shop.orders WHERE status = 3", source="sqlite:shop", ms=40,
+                    context="paid orders", by="agent")
+    assert not err and got["tables"] == ["shop.orders"]
+    err, top = call(s, "query_top", table="shop.orders")
+    assert not err and top == QL.top(d / "keygraph.db", table="shop.orders")
+    assert top["queries"][0]["context"] == "paid orders"
+    err, found = call(s, "query_for", table="shop.orders")
+    assert not err and found["queries"][0]["fp"] == got["fp"]
+    err, hits = call(s, "query_search", text="paid")
+    assert not err and hits["queries"][0]["fp"] == got["fp"]
+    err, msg = call(s, "query_submit", sql="", source="x")
+    assert err and "empty SQL" in msg

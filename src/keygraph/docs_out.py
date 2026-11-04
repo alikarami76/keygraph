@@ -97,7 +97,8 @@ def _plural(n: int, word: str) -> str:
 
 
 def _table_md(graph: Graph, t: str, areas: list[dict], name_of: dict, ctx_notes: dict,
-              touching: dict[str, list[dict]] | None = None, of: dict[str, str] | None = None) -> str:
+              touching: dict[str, list[dict]] | None = None, of: dict[str, str] | None = None, code: dict | None = None,
+              queries: dict | None = None) -> str:
     n, s = graph.nodes[t], relation_summary(graph, t, areas, edges=None if touching is None else touching.get(t, []), of=of)
     note = ctx_notes.get(t, {})
     out = [f"# {t}", "", f"Area: {name_of.get(s['area'], '-')}", ""]
@@ -116,7 +117,43 @@ def _table_md(graph: Graph, t: str, areas: list[dict], name_of: dict, ctx_notes:
             out.append("- (none)")
     if s["hub_labels"]:
         out += ["", "Hub references: " + ", ".join(f"{h['to']} via {', '.join(h['columns'])}" for h in s["hub_labels"])]
+    out += code_section((code or {}).get(t))
+    out += query_section((queries or {}).get(t))
     return "\n".join(out) + "\n"
+
+
+CODE_GROUPS = (("Declared in", ("declare_table", "declare_column")), ("Written by", ("sql_write",)), ("Read by", ("sql_read",)))
+
+
+def code_section(t: dict | None) -> list[str]:
+    """Markdown lines for a table's "Used in code" section from its code summary entry (store.CodeStore.summary)."""
+    if not t:
+        return []
+    total = sum(t["n"].values())
+    kinds = ", ".join(f"{k} {n}" for k, n in t["n"].items() if n)
+    out = ["", "## Used in code", "", f"{_plural(total, 'ref')} ({kinds})."]
+    for title, kinds_ in CODE_GROUPS:
+        refs = [r for r in t["refs"] if r["kind"] in kinds_]
+        if refs:
+            out += ["", f"{title}:", ""]
+            out += [f"- `{r['repo']}:{r['path']}:{r['line']}`" + (f" {r['column']}" if r["column"] else "") for r in refs[:20]]
+    return out
+
+
+def _ms(v) -> str:
+    return "-" if v is None else f"{v:,.0f} ms"
+
+
+def query_section(rows: list[dict] | None) -> list[str]:
+    """Markdown lines for a table's "Queries" section: its most-run logged queries."""
+    if not rows:
+        return []
+    out = ["", "## Queries", ""]
+    for q in rows:
+        why = f": {q['context']}" if q["context"] else ""
+        out += [f"- `{q['fp']}` {_plural(q['runs'], 'run')}, median {_ms(q['median_ms'])}, p95 {_ms(q['p95_ms'])}{why}",
+                "", "  ```sql", f"  {q['sql']}", "  ```", ""]
+    return out[:-1]
 
 
 def _degrees(graph: Graph) -> dict[str, int]:
@@ -153,7 +190,8 @@ def _neighbours(graph: Graph, areas: list[dict]) -> dict[str, dict[str, int]]:
     return res
 
 
-def write_docs(out: Path, graph: Graph, areas: list[dict], ctx_dump: dict | None) -> dict:
+def write_docs(out: Path, graph: Graph, areas: list[dict], ctx_dump: dict | None, code: dict | None = None,
+               queries: dict | None = None) -> dict:
     out = Path(out)
     (out / "areas").mkdir(parents=True, exist_ok=True)
     (out / "tables").mkdir(parents=True, exist_ok=True)
@@ -194,6 +232,6 @@ def write_docs(out: Path, graph: Graph, areas: list[dict], ctx_dump: dict | None
         written.append(f"areas/{fn}.md")
     (out / "areas" / "index.md").write_text("\n".join(idx) + "\n", encoding="utf-8")
     for t in graph.nodes:
-        (out / "tables" / table_file(t)).write_text(_table_md(graph, t, areas, name_of, ctx_notes, touching, of), encoding="utf-8")
+        (out / "tables" / table_file(t)).write_text(_table_md(graph, t, areas, name_of, ctx_notes, touching, of, code, queries), encoding="utf-8")
         written.append(f"tables/{table_file(t)}")
     return {"areas": len(areas), "tables": len(graph.nodes), "files": written}

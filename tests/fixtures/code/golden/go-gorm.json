@@ -1,0 +1,9 @@
+{
+ "refs": [
+  ["models.go", 4, "declare_column", "app.orders", "id", "ID", "gorm-column-tag", 1.0],
+  ["models.go", 5, "declare_column", "app.orders", "customer_id", "CustomerID", "gorm-column-tag", 1.0],
+  ["models.go", 6, "declare_column", "app.orders", "status", "State", "gorm-column-tag", 1.0],
+  ["models.go", 9, "declare_table", "app.orders", null, "Order", "gorm-tablename", 1.0]
+ ],
+ "unresolved": []
+}

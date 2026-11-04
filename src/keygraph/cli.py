@@ -89,9 +89,34 @@ def _drop_stale_pages(out: Path, written: list[str]) -> None:
     mf.write_text(json.dumps(sorted(keep)), encoding="utf-8")
 
 
-def render(out: Path, g: Graph, ctx: ContextDB | None) -> dict:
-    """Write graph.json, RELATIONS_REPORT.md and keygraph.html."""
+def _code_summary(ctx: ContextDB | None, snippets: bool) -> dict:
+    if not ctx:
+        return {}
+    from .code.store import CodeStore
+    with CodeStore(ctx.path, readonly=True) as st:
+        return st.summary(snippets=snippets)
+
+
+def _query_summary(ctx: ContextDB | None) -> dict:
+    if not ctx:
+        return {}
+    from .queries.store import QueryStore
+    with QueryStore(ctx.path, readonly=True) as st:
+        return st.summary()
+
+
+def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = None, queries: bool | None = None) -> dict:
+    """Write graph.json, RELATIONS_REPORT.md and keygraph.html. snippets / queries: put code snippets and the query
+    log into the explorer and docs; None keeps the choice an earlier build stored in graph.json (render_options)."""
     out.mkdir(parents=True, exist_ok=True)
+    opts = dict(g.data.get("render_options") or {})
+    if snippets is not None:
+        opts["snippets"] = bool(snippets)
+    if queries is not None:
+        opts["queries"] = bool(queries)
+    g.data["render_options"] = {k: opts[k] for k in sorted(opts)}
+    code = _code_summary(ctx, opts.get("snippets", False))
+    qlog = _query_summary(ctx) if opts.get("queries") else {}
     cur = ctx.curation() if ctx else {"areas": [], "hubs": {}, "mirrors": {}}
     warns: list[str] = list(cur.get("warnings", []))
     names: dict[str, list[str]] = {}
@@ -117,18 +142,19 @@ def render(out: Path, g: Graph, ctx: ContextDB | None) -> dict:
     g.data["warnings"] = [w for w in g.data.get("warnings", []) if not w.startswith(CUR_PREFIX)]
     g.data["warnings"] += [CUR_PREFIX + w for w in warns + cwarns]
     dump = ctx.dump() if ctx else None  # one dump for the docs and the HTML (write_docs only reads it)
-    docs = write_docs(out, g, areas, dump)
+    docs = write_docs(out, g, areas, dump, code=code, queries=qlog)
     _drop_stale_pages(out, docs["files"])
     g.save(out / "graph.json")
     (out / "RELATIONS_REPORT.md").write_text(write_report(g, ctx), encoding="utf-8")
-    html = build_html(g, dump)
+    html = build_html(g, dump, code=code, queries=qlog)
     (out / "keygraph.html").write_text(html, encoding="utf-8")
     return {"graph.json": (out / "graph.json").stat().st_size, "RELATIONS_REPORT.md": (out / "RELATIONS_REPORT.md").stat().st_size,
             "keygraph.html": len(html.encode("utf-8"))}
 
 
 def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, context: list[str] | None = None,
-                 notes: list[dict] | None = None, options: Options | None = None, verbose=True) -> dict:
+                 notes: list[dict] | None = None, options: Options | None = None, verbose=True, snippets: bool = False,
+                 queries: bool = False) -> dict:
     out = Path(out)
     t0 = time.time()
     ov = Overrides.load(overrides) if overrides else None
@@ -144,7 +170,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
     if prof:
         g.data["profiles"] = prof
     S.apply_context_to_graph(g, ctx)
-    sizes = render(out, g, ctx)
+    sizes = render(out, g, ctx, snippets=snippets, queries=queries)
     result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
               "warnings": g.data["warnings"][:10] + ctx.warnings[:10]}
     ctx.close()
@@ -157,7 +183,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
 
 def cmd_scan(a):
     from .adapters.live import scan_url
-    run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context)
+    run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries)
 
 
 def cmd_load(a):
@@ -171,7 +197,7 @@ def cmd_load(a):
         cm["_flatten"] = a.flatten
     sch = load_dump(a.columns, a.statistics, a.key_columns, a.default_schema, cm, _json_arg(a.statistics_map),
                     _json_arg(a.kcu_map), filt, tables=a.tables)
-    run_pipeline(sch, a.dir, a.overrides, a.context)
+    run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries)
 
 
 def cmd_render(a):
@@ -180,7 +206,7 @@ def cmd_render(a):
     ctx.index_graph(g)
     ctx.reindex()
     g.data["profiles"] = ctx.load_profiles() or g.data.get("profiles", {})
-    print(json.dumps(render(Path(a.dir), g, ctx)))
+    print(json.dumps(render(Path(a.dir), g, ctx, snippets=a.snippets or None, queries=a.queries or None)))
     ctx.close()
 
 
@@ -361,6 +387,78 @@ def cmd_mcp(a):
     build_server(a.dir).run("stdio")
 
 
+def _code_db(a) -> Path:
+    load_graph(a.dir)  # a clear message when nothing was built
+    return Path(a.dir) / "keygraph.db"
+
+
+def _split_path_line(ref: str) -> tuple[str, int | None]:
+    head, sep, tail = ref.rpartition(":")
+    return (head, int(tail)) if sep and tail.isdigit() and head else (ref, None)
+
+
+def cmd_code(a):
+    from . import code as C
+    from .code import text as T
+    db = _code_db(a)
+    if a.code_cmd == "index":
+        if a.name and len(a.name) != len(a.repos):
+            raise ValueError(f"give one --name per repo ({len(a.repos)} repos, {len(a.name)} names)")
+        names = a.name or [None] * len(a.repos)
+        res = [C.index_repo(db, r, n, a.patterns or [], a.exclude or [], a.full, a.max_file_kb, a.max_uses, a.dialect)
+               for r, n in zip(a.repos, names)]
+        g = _load(a)
+        ctx = _ctx(a, g)
+        render(Path(a.dir), g, ctx, snippets=a.snippets or None)
+        ctx.close()
+        _emit(a, {"repos": res}, "\n".join(T.format_index(r) for r in res))
+    elif a.code_cmd == "where":
+        r = C.where(db, a.ref, a.kind, a.repo, a.min_confidence, a.limit)
+        _emit(a, r, T.format_where(r))
+    elif a.code_cmd == "what":
+        if not a.path and not a.symbol:
+            raise ValueError("give PATH[:LINE] or --symbol NAME")
+        path, line = _split_path_line(a.path) if a.path else (None, None)
+        r = C.what(db, path, line, a.symbol, a.repo)
+        _emit(a, r, T.format_what(r))
+    else:
+        r = C.stats(db)
+        _emit(a, r, T.format_stats(r))
+
+
+def cmd_queries(a):
+    from . import queries as QL
+    from .queries import text as T
+    db = Path(a.dir) / "keygraph.db"
+    if a.q_cmd == "add":
+        sql = sys.stdin.read() if a.sql == "-" else Path(a.sql).read_text(encoding="utf-8")
+        r = QL.add(db, sql, a.source, a.ms, a.rows, a.context or "", a.tags or "", a.by or "", a.at, a.error,
+                   a.keep_literals, a.dialect)
+        _emit(a, r, f"logged run {r['run']} as {r['fp']} ({', '.join(r['tables']) or 'no known tables'})"
+                    + (f"; unresolved: {', '.join(r['unresolved'])}" if r["unresolved"] else ""))
+    elif a.q_cmd == "import":
+        r = QL.import_jsonl(db, a.file, a.keep_literals, a.dialect)
+        _emit(a, r, f"imported {r['added']} runs" + "".join(f"\n  line {e['line']}: {e['error']}" for e in r["errors"]))
+    elif a.q_cmd == "top":
+        r = QL.top(db, a.by, a.table, a.limit)
+        _emit(a, r, T.format_list(f"top queries by {a.by}" + (f" touching {r['table']}" if r["table"] else ""), r["queries"]))
+    elif a.q_cmd == "slow":
+        r = QL.slow(db, a.limit, a.min_runs)
+        _emit(a, r, T.format_list("slowest queries by median time", r["queries"]))
+    elif a.q_cmd == "for":
+        r = QL.for_ref(db, a.ref)
+        _emit(a, r, T.format_list(f"queries touching {r['table']}" + (f".{r['column']}" if r["column"] else ""), r["queries"]))
+    elif a.q_cmd == "search":
+        r = QL.search(db, " ".join(a.text), a.limit)
+        _emit(a, r, T.format_list(f"queries matching '{r['query']}'", r["queries"]))
+    elif a.q_cmd == "show":
+        r = QL.show(db, a.fp)
+        _emit(a, r, T.format_show(r))
+    else:
+        r = QL.stats(db)
+        _emit(a, r, T.format_stats(r))
+
+
 def cmd_ui(a):
     p = (Path(a.dir) / "keygraph.html").resolve()
     if not p.exists():
@@ -382,6 +480,11 @@ def main(argv=None) -> int:
     def build_opts(p):
         p.add_argument("--overrides", help="YAML/JSON overrides file")
         p.add_argument("--context", action="append", help="context YAML/JSON file or directory to import (repeatable)")
+        render_opts(p)
+
+    def render_opts(p):
+        p.add_argument("--snippets", action="store_true", help="include code snippets in keygraph.html (default: locations only)")
+        p.add_argument("--queries", action="store_true", help="include the query log in keygraph.html and the table pages")
 
     p = add("scan", cmd_scan, "scan a live database through SQLAlchemy (metadata only)")
     p.add_argument("--url", required=True)
@@ -400,7 +503,7 @@ def main(argv=None) -> int:
     p.add_argument("--tables", help="information_schema.TABLES dump (engine, rows, sizes, comment)")
     p.add_argument("--where", action="append", help="keep only COLUMNS rows with field=value (repeatable)")
     build_opts(p)
-    add("render", cmd_render, "rewrite report and explorer from graph.json + keygraph.db")
+    render_opts(add("render", cmd_render, "rewrite report and explorer from graph.json + keygraph.db"))
     p = add("probe", cmd_probe, "sample value overlap for inferred edges (SELECT only)")
     p.add_argument("--url", required=True)
     p.add_argument("--sample", type=int, default=500)
@@ -472,6 +575,79 @@ def main(argv=None) -> int:
     p.add_argument("--out", required=True)
     add("mcp", cmd_mcp, "serve keygraph to AI agents over MCP (stdio); needs keygraph[mcp]")
     add("ui", cmd_ui, "open keygraph.html in the browser")
+    dialects = sorted({"mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite"})
+    pc = sub.add_parser("code", help="link source code to tables and columns (index, where, what, stats)")
+    pc.set_defaults(fn=cmd_code)
+    cs = pc.add_subparsers(dest="code_cmd", required=True)
+
+    def code_cmd(name, help_):
+        p = cs.add_parser(name, help=help_)
+        p.add_argument("--dir", "--out", dest="dir", default=DEFAULT_DIR, help="built keygraph output directory")
+        p.add_argument("--json", action="store_true")
+        return p
+
+    p = code_cmd("index", "index one or more repos (read as text, never executed)")
+    p.add_argument("repos", nargs="+", metavar="REPO")
+    p.add_argument("--name", action="append", help="short repo name, one per REPO in order (default: the folder name)")
+    p.add_argument("--patterns", action="append", help="code-patterns YAML/JSON file (repeatable); <dir>/code-patterns.yaml is always read")
+    p.add_argument("--exclude", action="append", help="glob of paths to skip (repeatable)")
+    p.add_argument("--full", action="store_true", help="re-read every file instead of only changed ones")
+    p.add_argument("--max-file-kb", type=int, default=1024)
+    p.add_argument("--max-uses", type=int, default=500, help="use refs kept per column per repo")
+    p.add_argument("--dialect", choices=dialects, help="SQL dialect for parsing (with keygraph[code])")
+    p.add_argument("--snippets", action="store_true", help="also show code snippets in keygraph.html")
+    p = code_cmd("where", "data -> code: where a table or column is declared, written, read and used")
+    p.add_argument("ref", metavar="TABLE[.COLUMN]")
+    p.add_argument("--kind", choices=["declare_table", "declare_column", "sql_write", "sql_read", "use"])
+    p.add_argument("--repo")
+    p.add_argument("--min-confidence", type=float, default=0.0)
+    p.add_argument("--limit", type=int)
+    p = code_cmd("what", "code -> data: the tables and columns a file, line or symbol touches")
+    p.add_argument("path", nargs="?", metavar="PATH[:LINE]")
+    p.add_argument("--symbol")
+    p.add_argument("--repo")
+    code_cmd("stats", "per repo: files, refs by kind, unresolved names, top tables")
+    pq = sub.add_parser("queries", help="query log: SQL that was run, its timing and business question (add, import, top, ...)")
+    pq.set_defaults(fn=cmd_queries)
+    qs = pq.add_subparsers(dest="q_cmd", required=True)
+
+    def q_cmd(name, help_):
+        p = qs.add_parser(name, help=help_)
+        p.add_argument("--dir", "--out", dest="dir", default=DEFAULT_DIR, help="built keygraph output directory")
+        p.add_argument("--json", action="store_true")
+        return p
+
+    p = q_cmd("add", "log one query run")
+    p.add_argument("--sql", required=True, help="file holding the SQL, or - for stdin")
+    p.add_argument("--source", required=True, help="where it ran, e.g. mysql:shop or warehouse")
+    p.add_argument("--ms", type=float, help="run time in milliseconds")
+    p.add_argument("--rows", type=int, help="rows returned or changed")
+    p.add_argument("--context", help="the business question the query answered")
+    p.add_argument("--tags", help="comma-separated tags")
+    p.add_argument("--by", help="who ran it")
+    p.add_argument("--at", help="ISO time it ran (default now)")
+    p.add_argument("--error", help="error text when the run failed")
+    p.add_argument("--keep-literals", action="store_true", help="store literal values (secret-looking values stay masked)")
+    p.add_argument("--dialect", choices=dialects)
+    p = q_cmd("import", "log many runs from a JSONL file (sql, source, ms, rows, context, tags, by, at, error)")
+    p.add_argument("file")
+    p.add_argument("--keep-literals", action="store_true")
+    p.add_argument("--dialect", choices=dialects)
+    p = q_cmd("top", "most used queries")
+    p.add_argument("--by", choices=["runs", "recent", "people"], default="runs")
+    p.add_argument("--table")
+    p.add_argument("--limit", type=int, default=10)
+    p = q_cmd("slow", "slowest queries: median and p95 ms, and the recent trend")
+    p.add_argument("--limit", type=int, default=10)
+    p.add_argument("--min-runs", type=int, default=1)
+    p = q_cmd("for", "queries that touch a table or column")
+    p.add_argument("ref", metavar="TABLE[.COLUMN]")
+    p = q_cmd("search", "full-text search over business context and SQL")
+    p.add_argument("text", nargs="+")
+    p.add_argument("--limit", type=int, default=10)
+    p = q_cmd("show", "one query fingerprint with its runs")
+    p.add_argument("fp")
+    q_cmd("stats", "runs, distinct queries, sources and unresolved tables")
     a, extra = ap.parse_known_args(argv)
     if extra:
         # Python 3.11 argparse stops filling `path`/`fields` once an option (--kind) appears between

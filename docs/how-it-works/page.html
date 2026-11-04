@@ -49,7 +49,7 @@ aside.notes ul{margin:0;font-size:9pt}
 <h1>How keygraph works</h1>
 <p class="lead">From a database to a map that people and AI agents can use. Each step shows real output from the demo webshop in examples/shop.</p>
 <img class="wide" src="assets/how-it-works-light.png" alt="The four stages: sources, keys and relations, context and profiles, outputs">
-<ol class="toc"><li>What it is</li><li>Connect a source</li><li>Keys, indexes and inferred relations</li><li>Hubs and areas</li><li>Business context and value profiles</li><li>The six explorer views</li><li>How an agent uses it</li></ol>
+<ol class="toc"><li>What it is</li><li>Connect a source</li><li>Keys, indexes and inferred relations</li><li>Hubs and areas</li><li>Business context and value profiles</li><li>Code index and query log</li><li>The six explorer views</li><li>How an agent uses it</li></ol>
 <p class="small">Open source, MIT licence. Everything shown here is fictional.</p>
 </section>
 <section class="page ">
@@ -80,7 +80,7 @@ aside.notes ul{margin:0;font-size:9pt}
 <p>Dumps use information_schema field names. <code>--columns-map</code>, <code>--flatten</code> and <code>--where</code> adapt other shapes. Without STATISTICS, keygraph falls back to COLUMN_KEY. Without KEY_COLUMN_USAGE, every relation is inferred.</p>
 </div><div>
 <h3>What it printed for the demo</h3><pre class="cli">$ keygraph load --dir out --columns ... --context context.yaml
-keygraph: 35 tables, 224 columns, 70 indexes, 56 edges {&#x27;inferred&#x27;: 38, &#x27;declared&#x27;: 18} -&gt; examples/shop/out/ (0.0s)</pre>
+keygraph: 35 tables, 224 columns, 70 indexes, 56 edges {&#x27;inferred&#x27;: 38, &#x27;declared&#x27;: 18} -&gt; examples/shop/out/ (0.4s)</pre>
 <h3>Sources</h3>
 <table class="t"><tr><th>Source</th><th>How</th></tr>
 <tr><td>MySQL, MariaDB</td><td>information_schema</td></tr><tr><td>PostgreSQL</td><td>information_schema, pg_catalog</td></tr>
@@ -196,12 +196,12 @@ tables:
 <pre class="cli">$ keygraph search revenue --dir examples/shop/out
 Search: revenue
   metrics: average order value, net revenue
-1. shop.orders  (score 15.66, verified)
+1. shop.orders  (score 15.78, verified)
      grain/summary: one row per order
      pk: id   filter on: id, customer_id, placed_at
      why: metric &#x27;net revenue&#x27;; metric &#x27;average order value&#x27;; table notes match
      pitfalls: Status 1 rows are baskets that are not paid yet, so leave them out of revenue.
-2. shop.order_items  (score 7.47, verified)
+2. shop.order_items  (score 7.51, verified)
      grain/summary: one row per variant on an order
      pk: id   filter on: id, seller_id, order_id, variant_id
      why: metric &#x27;net revenue&#x27;</pre>
@@ -229,35 +229,58 @@ Search: revenue
 <p>One bounded SELECT per table, never a full scan. Each profile records when it was taken, how many rows and by which method, so a reader knows how fresh and approximate it is.</p></div><div>
 <h3>Personal data stays out</h3>
 <pre class="cli">$ keygraph describe shop.customers  (3 of 8 columns)
-    email varchar(190) NOT NULL - Login and contact address [PII]  [60 rows sampled (recent n=10000, 2026-11-03); null 0%; 60 distinct; PII, values withheld; looks like email]
-    first_name varchar(80) NOT NULL  [60 rows sampled (recent n=10000, 2026-11-03); null 0%; 8 distinct; PII, values withheld]
-    status tinyint NOT NULL - Account state codes: 1=active, 2=blocked  [60 rows sampled (recent n=10000, 2026-11-03); null 0%; 2 distinct; range 1..2, median 1; top: 1 (47), 2 (13)]</pre>
+    email varchar(190) NOT NULL - Login and contact address [PII]  [60 rows sampled (recent n=10000, 2026-11-04); null 0%; 60 distinct; PII, values withheld; looks like email]
+    first_name varchar(80) NOT NULL  [60 rows sampled (recent n=10000, 2026-11-04); null 0%; 8 distinct; PII, values withheld]
+    status tinyint NOT NULL - Account state codes: 1=active, 2=blocked  [60 rows sampled (recent n=10000, 2026-11-04); null 0%; 2 distinct; range 1..2, median 1; top: 1 (47), 2 (13)]</pre>
 <p>PII columns are recognised by name (email, phone, name, address, token ...), by value pattern, or by a <code>pii</code> flag. For them keygraph keeps counts, empty rate, length and the pattern name. It never stores a top value, a minimum or a maximum.</p></div></div></div>
 <footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">8</span></footer>
+</section><section class="page ">
+<header><div class="kicker">Step 5</div><h1>Code and past queries link back to the same tables</h1><p class="lead">keygraph can read your repositories as text and log the queries people and agents ran. Both are linked to the tables and columns of the graph, so a column page answers where it is used and how it was queried.</p></header>
+<div class="body"><div class="cols2"><div>
+<h3>Where a column lives in code</h3>
+<pre class="cli">$ keygraph code where shop.orders.status
+shop.orders.status: 5 code refs (declare_column 1, sql_write 1, sql_read 1, use 2)
+  shop-app:shop/models.py:20  declare_column shop.orders.status  1.00  sqlalchemy-column  status
+  shop-app:shop/orders.py:17  sql_write      shop.orders.status  0.95  sql:sqlglot
+  shop-app:shop/orders.py:8  sql_read       shop.orders.status  0.95  sql:sqlglot
+  shop-app:shop/orders.py:12  use            shop.orders.status  0.40  use:symbol  status
+  shop-app:shop/orders.py:13  use            shop.orders.status  0.40  use:symbol  status</pre>
+<p>ORM declarations come first, then SQL that writes and reads the column, then uses of its property. Each line names the rule that found it and a confidence. Code is never imported or run.</p></div><div>
+<h3>How the table was queried before</h3>
+<pre class="cli">$ keygraph queries top --table shop.orders
+top queries by runs touching shop.orders
+0887c908651c57e4  3 runs, 2 people, median 47 ms, p95 51 ms
+  why: Paid orders this month
+  sql: select o.id, o.total from shop.orders o where o.status = ? and o.placed_at &gt;= ?
+381600506fcebf80  1 runs, 1 people, median 380 ms, p95 380 ms
+  why: Top customers by number of orders
+  sql: select c.id, count (*) as orders from shop.customers c join shop.orders o on o.customer_id = c.id group by c.id order by orders desc limit ?</pre>
+<p>Queries that differ only in literal values share one fingerprint. Literals are masked before storing, and each query keeps the business question it answered, its run count and its median and p95 time.</p></div></div></div>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">9</span></footer>
 </section><section class="page viewpage">
 <header><div class="kicker">Explorer 1 of 6 · Areas</div><h1>The Areas view is the map of the whole database</h1><p class="lead">Start here when you do not know where something lives. Each box is a business area; the number on a line is how many relations join two areas.</p></header>
 <div class="body"><div class="viewrow"><figure class="shot"><img src="shots/areas.png" alt="Area map of the demo with four areas and a side panel"></figure><aside class="notes"><h3>What to look for</h3><ul><li>Each box shows the area name, its table count, one square per table and its three busiest tables.</li><li>Line thickness follows the number of relations between two areas. Hubs never draw lines here.</li><li>The side panel counts relations by kind, lists the hubs and the mirror schema, and opens the area curation help.</li><li>Click a box to open that area.</li></ul></aside></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">9</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">10</span></footer>
 </section><section class="page viewpage">
 <header><div class="kicker">Explorer 2 of 6 · Area</div><h1>The Area view draws one area as a table diagram</h1><p class="lead">Boxes are tables listing their key columns. Lines attach to the exact column that joins, so you can see which column does the work.</p></header>
 <div class="body"><div class="viewrow"><figure class="shot"><img src="shots/area.png" alt="ER diagram of the Ordering area"></figure><aside class="notes"><h3>What to look for</h3><ul><li>Solid lines are declared foreign keys. Dashed lines are inferred, with the confidence on the line.</li><li>The pill on <code>orders</code> reads 'users': the hub reference, shown as a label and not as a line.</li><li>'+7 columns' says how much is hidden. Open the table to see all of it.</li><li>Neighbouring tables from other areas wait in the strip at the bottom. An area never draws more than about 40 boxes, and over 25 tables it first shows the 25 most connected.</li></ul></aside></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">10</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">11</span></footer>
 </section><section class="page viewpage">
 <header><div class="kicker">Explorer 3 of 6 · Path</div><h1>The Path view finds the join between two tables</h1><p class="lead">Pick two tables and get ranked routes, a copyable JOIN, and a warning at every step that can multiply rows.</p></header>
 <div class="body"><div class="viewrow"><figure class="shot"><img src="shots/path.png" alt="Best route from customers to shipments with SQL and evidence"></figure><aside class="notes"><h3>What to look for</h3><ul><li>The best route is customers, orders, shipments: two declared joins.</li><li>Both steps carry a fan-out warning. One customer has many orders, so summing a customer column over this join counts it many times. The SQL comment says to aggregate first.</li><li>Routes through a hub, a one-to-many step or a scratch table (<code>*_shadow</code>, <code>*_log</code>) score lower. The side panel shows each step's evidence.</li></ul></aside></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">11</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">12</span></footer>
 </section><section class="page viewpage">
 <header><div class="kicker">Explorer 4 of 6 · Table</div><h1>The Table view explains one table as a page</h1><p class="lead">This is the page to read before you query a table: what a row is, what to avoid, which metrics use it and how its columns look.</p></header>
 <div class="body"><div class="viewrow"><figure class="shot"><img src="shots/table.png" alt="Table page for shop.orders"></figure><aside class="notes"><h3>What to look for</h3><ul><li>The header gives the row grain, row estimate, column and relation counts and the date column.</li><li>The orange box is the pitfall from the context file. The purple items are metrics that use this table, with their expressions.</li><li>The column grid shows keys, flags, value ranges and how often a column is empty.</li><li>Relations below the grid are grouped by column and area; groups over 8 items collapse.</li></ul></aside></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">12</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">13</span></footer>
 </section><section class="page viewpage">
 <header><div class="kicker">Explorer 5 of 6 · Column</div><h1>The Column view shows what a column holds and how it is used</h1><p class="lead">For status columns this is where the documented codes meet the real data.</p></header>
 <div class="body"><div class="viewrow"><figure class="shot"><img src="shots/column.png" alt="Column page for orders.status with value frequencies"></figure><aside class="notes"><h3>What to look for</h3><ul><li>The bars compare the documented codes with the sampled values. Code 9 appears in 6.7% of rows and the context file does not know it, so it is flagged.</li><li>The profile block says when and how the sample was taken. 'Null means' comes from the context file.</li><li>The side panel lists the indexes that cover the column and the joins it takes part in.</li></ul></aside></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">13</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">14</span></footer>
 </section><section class="page viewpage">
 <header><div class="kicker">Explorer 6 of 6 · Search</div><h1>Search finds tables, columns, concepts and values by meaning</h1><p class="lead">Type a business word. Results are grouped by type and each says why it matched.</p></header>
 <div class="body"><div class="viewrow"><figure class="shot"><img src="shots/search.png" alt="Search results for revenue"></figure><aside class="notes"><h3>What to look for</h3><ul><li>Metrics, concepts, tables, columns and profiled values come from one index, so a status label such as 'in transit' finds the column that stores it.</li><li>A reason chip shows the match: name, synonym, context, enum label or profiled value.</li><li>Press Enter to open the top result in the view that fits it. The side panel previews the highlighted one.</li></ul></aside></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">14</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">15</span></footer>
 </section><section class="page ">
 <header><div class="kicker">For agents</div><h1>An agent uses the same graph through a short command sequence</h1><p class="lead">Every command prints plain text or JSON (<code>--json</code>), and the build also writes markdown and Mermaid pages that an agent can read like any other file.</p></header>
 <div class="body"><div class="cols2"><div>
@@ -295,5 +318,5 @@ graph.json            everything, machine readable</pre>
     %% orders hub ref to shop.users via created_by_id</pre>
 <p>The <code>keygraph</code> skill in <code>skills/keygraph/SKILL.md</code> tells an agent when to use each command and how to read confidence: use 0.8 and above freely, check 0.6 to 0.8 against the evidence, and verify anything lower, ambiguous or marked fan-out with a small SELECT.</p>
 <p class="callout">Corrections go back in: <code>context add</code> and an overrides file (<code>confirm</code>, <code>reject</code>, <code>add</code>) make the next build better.</p></div></div></div>
-<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">15</span></footer>
+<footer><img class="fmark" src="assets/keygraph-mark.svg" alt=""><span>keygraph &middot; how it works</span><span class="pn">16</span></footer>
 </section>

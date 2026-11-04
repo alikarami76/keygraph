@@ -1,0 +1,10 @@
+{
+ "refs": [
+  ["BugReportEntity.php", 8, "declare_table", "app.bug_reports", null, "BugReportEntity", "fiction-table", 0.9],
+  ["BugReportEntity.php", 9, "declare_column", "app.bug_reports", "id", null, "fiction-column", 0.9],
+  ["BugReportEntity.php", 10, "declare_column", "app.bug_reports", "title", null, "fiction-column", 0.9],
+  ["BugReportEntity.php", 11, "declare_column", "app.bug_reports", "steps_to_recreate", null, "fiction-column", 0.9],
+  ["BugReportEntity.php", 17, "use", "app.bug_reports", "title", null, "fiction-field", 0.85]
+ ],
+ "unresolved": []
+}

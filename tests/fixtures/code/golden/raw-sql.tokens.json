@@ -1,0 +1,13 @@
+{
+ "refs": [
+  ["Repo.php", 7, "sql_read", "app.order_items", null, null, "sql:tokens", 0.7],
+  ["repo.py", 3, "sql_read", "app.orders", null, null, "sql:tokens", 0.7],
+  ["repo.py", 4, "sql_read", "app.customers", null, null, "sql:tokens", 0.7],
+  ["repo.py", 10, "sql_write", "app.orders", null, null, "sql:tokens", 0.7],
+  ["report.sql", 3, "sql_read", "app.payments", null, null, "sql:tokens", 0.7],
+  ["report.sql", 6, "sql_write", "app.shipments", null, null, "sql:tokens", 0.7]
+ ],
+ "unresolved": [
+  ["repo.py", 14, "sql_write", "order_archive", "sql:tokens"]
+ ]
+}

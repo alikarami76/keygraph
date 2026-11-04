@@ -29,7 +29,35 @@ def _col(c: dict) -> list:
     return [c["name"], c["type"], int(c.get("nullable", True)), c.get("default"), c.get("values") or None, note]
 
 
-def compact(graph: Graph, ctx_dump: dict | None = None) -> dict:
+KIND_IDX = {"declare_table": 0, "declare_column": 1, "sql_write": 2, "sql_read": 3, "use": 4}
+
+
+def _code(graph: Graph, tidx: dict, code: dict) -> dict:
+    """Code refs per table for the "Used in code" sections: {"r": repos, "t": {table index: [counts, refs, columns]}}.
+    counts are per kind in KIND_IDX order; a ref is [repo index, path, line, kind index, confidence, column index or -1]
+    plus the snippet when the summary carries one; columns is {column index: [counts, refs]}."""
+    repos = sorted({r["repo"] for t in code.values() for r in t["refs"]} |
+                   {r["repo"] for t in code.values() for c in t["columns"].values() for r in c["refs"]})
+    ridx = {r: i for i, r in enumerate(repos)}
+    out: dict = {}
+    for tid in sorted(code):
+        if tid not in tidx:
+            continue
+        cols = {c["name"]: i for i, c in enumerate(graph.nodes[tid]["columns"])}
+
+        def ref(r: dict) -> list:
+            x = [ridx[r["repo"]], r["path"], r["line"], KIND_IDX[r["kind"]], r["confidence"], cols.get(r["column"], -1)]
+            return x + [r["snippet"]] if "snippet" in r else x
+
+        t = code[tid]
+        counts = lambda n: [n.get(k, 0) for k in KIND_IDX]  # noqa: E731
+        out[str(tidx[tid])] = [counts(t["n"]), [ref(r) for r in t["refs"]],
+                               {str(cols[c]): [counts(v["n"]), [ref(r) for r in v["refs"]]]
+                                for c, v in sorted(t["columns"].items()) if c in cols}]
+    return {"r": repos, "t": out}
+
+
+def compact(graph: Graph, ctx_dump: dict | None = None, code: dict | None = None, queries: dict | None = None) -> dict:
     schemas = sorted({n["schema"] for n in graph.nodes.values()})
     sidx = {s: i for i, s in enumerate(schemas)}
     ids = sorted(graph.nodes)
@@ -88,8 +116,13 @@ def compact(graph: Graph, ctx_dump: dict | None = None) -> dict:
                     p = {k: v for k, v in p.items() if k not in ("top_values", "numeric", "dates", "length")}
                 prof[f"{tidx[tid]}:{names.index(col)}"] = p
     c["p"] = prof
-    return {"v": 2, "s": schemas, "t": tables, "e": edges, "a": areas, "al": links, "mi": graph.data.get("mirrors") or {},
-            "c": c, "st": graph.data["stats"]}
+    out = {"v": 2, "s": schemas, "t": tables, "e": edges, "a": areas, "al": links, "mi": graph.data.get("mirrors") or {},
+           "c": c, "st": graph.data["stats"]}
+    if code:
+        out["k"] = _code(graph, tidx, code)
+    if queries:
+        out["q"] = {str(tidx[t]): q for t, q in sorted(queries.items()) if t in tidx}
+    return out
 
 
 def _svg(name: str) -> str:
@@ -102,10 +135,11 @@ def _js(name: str) -> str:
     return (STATIC / name).read_text(encoding="utf-8").replace("</script", "<\\/script")
 
 
-def build_html(graph: Graph, ctx_dump: dict | None = None, gzip_over: int = 300_000) -> str:
-    payload = json.dumps(compact(graph, ctx_dump), ensure_ascii=False, separators=(",", ":"))
+def build_html(graph: Graph, ctx_dump: dict | None = None, gzip_over: int = 300_000, code: dict | None = None,
+               queries: dict | None = None) -> str:
+    payload = json.dumps(compact(graph, ctx_dump, code, queries), ensure_ascii=False, separators=(",", ":"))
     if len(payload) > gzip_over:
-        data = "GZ:" + base64.b64encode(gzip.compress(payload.encode("utf-8"), 9)).decode("ascii")
+        data = "GZ:" + base64.b64encode(gzip.compress(payload.encode("utf-8"), 9, mtime=0)).decode("ascii")
     else:
         data = payload.replace("<", "\\u003c")  # JSON-safe; no "</script" or "<!--" can end or alter the block
     lic = "\n\n".join((STATIC / f).read_text(encoding="utf-8") for f in ("DAGRE_LICENSE", "OFL-Inter.txt", "OFL-JetBrainsMono.txt"))

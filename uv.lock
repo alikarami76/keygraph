@@ -395,10 +395,13 @@ wheels = [
 
 [[package]]
 name = "keygraph"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+code = [
+    { name = "sqlglot" },
+]
 live = [
     { name = "sqlalchemy" },
 ]
@@ -423,8 +426,9 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2,<3" },
     { name = "pyyaml", marker = "extra == 'yaml'", specifier = ">=6" },
     { name = "sqlalchemy", marker = "extra == 'live'", specifier = ">=2.0" },
+    { name = "sqlglot", marker = "extra == 'code'", specifier = ">=30,<31" },
 ]
-provides-extras = ["live", "yaml", "mcp"]
+provides-extras = ["live", "yaml", "mcp", "code"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1069,6 +1073,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/66/25/2182431a4955adfeab69a89e7e4e81eaabbfbf1846ff8634b0f9448fd6cd/sqlalchemy-2.1.6-cp315-cp315t-win_amd64.whl", hash = "sha256:a053a9d9c9ccc9b72d90ecdcbabcbe57446defc7e8c52fc9978188f78742ac19", size = 2510428, upload-time = "2026-10-21T18:11:59.23Z" },
     { url = "https://files.pythonhosted.org/packages/b3/69/e290384d311e6e2c495734673bdbd2e358dc6725e7c1525326eb8e34af8d/sqlalchemy-2.1.6-cp315-cp315t-win_arm64.whl", hash = "sha256:61dc3fa488208a2f03e0e25ad32950dc024545291acc7348f2e550ea1bc5abb4", size = 2429115, upload-time = "2026-10-21T18:48:28.987Z" },
     { url = "https://files.pythonhosted.org/packages/c1/69/c75534e336b06b3fd3f76de73d89736510800e60c77c58d4e4ce18389018/sqlalchemy-2.1.6-py3-none-any.whl", hash = "sha256:106878cf3795cd3d357e2e858609f9e44f20f19b2d8e48a3532bef3f90b03fbe", size = 2063055, upload-time = "2026-10-21T18:42:10.234Z" },
+]
+
+[[package]]
+name = "sqlglot"
+version = "30.29.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/26/ede384f80617864ff6a87701b921f887c5b156976e10594cfb72d12f7545/sqlglot-30.29.0.tar.gz", hash = "sha256:67bef76a4cbd29607b8859c65c213f39c086246c35c96cb96140ca7f8e7515d1", size = 6177381, upload-time = "2026-11-03T11:49:51.324Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/b0/d7f3f0169fdf0261e924bfd37149aa5cb98798aec330fe0e94721a68a2a1/sqlglot-30.29.0-py3-none-any.whl", hash = "sha256:16e47cc30c48bbf66bd24a680cb6edc2203d4ed4644acf84dd377109ecbe70fc", size = 804206, upload-time = "2026-11-03T11:49:49.284Z" },
 ]
 
 [[package]]

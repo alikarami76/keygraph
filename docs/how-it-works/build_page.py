@@ -169,6 +169,17 @@ page("Step 4b", "Value profiles show what is really in the columns",
 {cli("describe", "shop.customers", "--dir", OUT, pick=["email varchar", "first_name", "status tinyint"], show="keygraph describe shop.customers  (3 of 8 columns)")}
 <p>PII columns are recognised by name (email, phone, name, address, token ...), by value pattern, or by a <code>pii</code> flag. For them keygraph keeps counts, empty rate, length and the pattern name. It never stores a top value, a minimum or a maximum.</p></div></div>''')
 
+# ---- code index and query log
+page("Step 5", "Code and past queries link back to the same tables",
+     "keygraph can read your repositories as text and log the queries people and agents ran. Both are linked to the tables and columns of the graph, so a column page answers where it is used and how it was queried.",
+     f'''<div class="cols2"><div>
+<h3>Where a column lives in code</h3>
+{cli("code", "where", "shop.orders.status", "--dir", OUT, show="keygraph code where shop.orders.status")}
+<p>ORM declarations come first, then SQL that writes and reads the column, then uses of its property. Each line names the rule that found it and a confidence. Code is never imported or run.</p></div><div>
+<h3>How the table was queried before</h3>
+{cli("queries", "top", "--table", "shop.orders", "--dir", OUT, show="keygraph queries top --table shop.orders")}
+<p>Queries that differ only in literal values share one fingerprint. Literals are masked before storing, and each query keeps the business question it answered, its run count and its median and p95 time.</p></div></div>''')
+
 # ---- 9-14 explorer views
 def view(kicker, title, lead, name, alt, items, extra=""):
     page(kicker, title, lead, f'<div class="viewrow">{shot(name, alt)}{notes("What to look for", items, extra)}</div>', "viewpage")
@@ -250,7 +261,7 @@ cover = '''<section class="page cover">
 <h1>How keygraph works</h1>
 <p class="lead">From a database to a map that people and AI agents can use. Each step shows real output from the demo webshop in examples/shop.</p>
 <img class="wide" src="assets/how-it-works-light.png" alt="The four stages: sources, keys and relations, context and profiles, outputs">
-<ol class="toc"><li>What it is</li><li>Connect a source</li><li>Keys, indexes and inferred relations</li><li>Hubs and areas</li><li>Business context and value profiles</li><li>The six explorer views</li><li>How an agent uses it</li></ol>
+<ol class="toc"><li>What it is</li><li>Connect a source</li><li>Keys, indexes and inferred relations</li><li>Hubs and areas</li><li>Business context and value profiles</li><li>Code index and query log</li><li>The six explorer views</li><li>How an agent uses it</li></ol>
 <p class="small">Open source, MIT licence. Everything shown here is fictional.</p>
 </section>'''
 

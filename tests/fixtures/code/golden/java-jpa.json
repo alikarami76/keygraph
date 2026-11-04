@@ -1,0 +1,9 @@
+{
+ "refs": [
+  ["src/Payment.java", 6, "declare_table", "app.payments", null, "Payment", "jpa-table", 1.0],
+  ["src/Payment.java", 9, "declare_column", "app.payments", "id", "id", "jpa-column", 1.0],
+  ["src/Payment.java", 12, "declare_column", "app.payments", "order_id", "orderId", "jpa-column", 1.0],
+  ["src/Payment.java", 16, "declare_column", "app.payments", "status", "status", "jpa-column", 1.0]
+ ],
+ "unresolved": []
+}

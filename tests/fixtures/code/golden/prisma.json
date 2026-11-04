@@ -1,0 +1,14 @@
+{
+ "refs": [
+  ["schema.prisma", 7, "declare_column", "app.products", "id", "id", "prisma-field", 1.0],
+  ["schema.prisma", 8, "declare_column", "app.products", "title", "title", "prisma-field", 1.0],
+  ["schema.prisma", 9, "declare_column", "app.products", "price", "price", "prisma-field-map", 1.0],
+  ["schema.prisma", 12, "declare_table", "app.products", null, "Product", "prisma-map", 1.0],
+  ["schema.prisma", 16, "declare_column", "app.order_items", "id", "id", "prisma-field", 1.0],
+  ["schema.prisma", 17, "declare_column", "app.order_items", "order_id", "orderId", "prisma-field-map", 1.0],
+  ["schema.prisma", 19, "declare_column", "app.order_items", "product_id", "productId", "prisma-field-map", 1.0],
+  ["schema.prisma", 20, "declare_column", "app.order_items", "qty", "qty", "prisma-field", 1.0],
+  ["schema.prisma", 22, "declare_table", "app.order_items", null, "OrderItem", "prisma-map", 1.0]
+ ],
+ "unresolved": []
+}

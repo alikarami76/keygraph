@@ -332,7 +332,7 @@ class ContextDB:
         return {f"{r['table_id']}.{r['col']}": json.loads(r["profile"]) for r in self.db.execute("SELECT * FROM column_profile")}
 
     def reindex(self) -> None:
-        self.db.execute("DELETE FROM search_fts WHERE kind NOT IN ('table','column')")
+        self.db.execute("DELETE FROM search_fts WHERE kind NOT IN ('table','column','query')")  # the query log keeps its own rows
         rows = []
         for r in self.db.execute("SELECT * FROM column_profile"):
             p = json.loads(r["profile"])
@@ -371,7 +371,7 @@ class ContextDB:
         def run(match: str, boost: float) -> None:
             try:
                 cur = self.db.execute(
-                    "SELECT kind, ref, bm25(search_fts, 0.0, 0.0, 3.0, 1.0) AS s FROM search_fts WHERE search_fts MATCH ? "
+                    "SELECT kind, ref, bm25(search_fts, 0.0, 0.0, 3.0, 1.0) AS s FROM search_fts WHERE search_fts MATCH ? AND kind != 'query' "
                     "ORDER BY s LIMIT ?", (match, limit))
             except sqlite3.OperationalError:
                 return
