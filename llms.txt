@@ -1,6 +1,6 @@
 # keygraph
 
-> keygraph maps how the tables in your database connect (keys, indexes, declared and inferred foreign keys, business context and value profiles) so people and AI agents can find the right join path and the right data. Open source (MIT), Python 3.11+, read-only, no LLM calls. Works with MySQL/MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase, MongoDB and information_schema dumps; serves agents through MCP, a CLI with --json, a Claude Code skill and markdown files.
+> keygraph is an open-source, read-only schema map that gives data analyst agents, text-to-SQL agents and other LLM agents schema context: join paths, keys, grain and status codes, through an MCP server or CLI. It maps how the tables in your database connect (keys, indexes, declared and inferred foreign keys, business context and value profiles) so people and AI agents can find the right join path and the right data. Open source (MIT), Python 3.11+, read-only, no LLM calls. Works with MySQL/MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase, MongoDB and information_schema dumps; serves agents through MCP, a CLI with --json, a Claude Code skill and markdown files.
 
 ## Start here
 
@@ -11,6 +11,7 @@
 
 ## For AI agents
 
+- [Build a data analyst agent with keygraph](https://github.com/alikarami76/keygraph/blob/main/README.md#how-do-i-build-a-data-analyst-agent-with-keygraph): the search, describe, path, keys, write SQL, check loop and how to plug it into any agent that can call MCP tools or run a CLI.
 - [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md): the command sequence (search, describe, path, keys), how to read confidence, what not to do.
 - [Claude Code skill](https://github.com/alikarami76/keygraph/blob/main/skills/keygraph/SKILL.md): when to use each command and how to build and extend the graph.
 - [MCP server setup](https://github.com/alikarami76/keygraph/blob/main/README.md#mcp): nine read-only tools and configs for Claude Code, Claude Desktop, Cursor and Codex.

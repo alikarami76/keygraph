@@ -5,7 +5,9 @@
 
 # keygraph
 
-keygraph maps how the tables in your database connect: keys, indexes, declared and inferred foreign keys, business context and value profiles. People and AI agents use the map to find the right join path and the right data. It reads only metadata, makes no LLM calls, and gives the same output for the same input.
+keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input.
+
+**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Nine read-only MCP tools. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
 
 [![PyPI](https://img.shields.io/pypi/v/keygraph)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph)](https://pypi.org/project/keygraph/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
 
@@ -39,6 +41,27 @@ An agent that writes SQL needs to know which tables exist, how they join, what o
 | Shows which joins are guesses | no | no | yes, with confidence and reason |
 | Business meaning of codes and grain | no | rediscovered, then lost | stored, curated, reused |
 | Personal data in prompts | no | often | masked |
+
+## How do I build a data analyst agent with keygraph?
+
+Build the map once with `keygraph scan`, then let your agent look up tables, join paths and keys through MCP or the CLI before it writes any SQL. keygraph works with any agent that can call MCP tools or run a CLI, including Claude Code and the Claude Agent SDK, and agents written with LangChain, LlamaIndex or your own tool-calling loop. It exposes three interfaces (MCP, CLI `--json` and markdown files) and no framework-specific plugins.
+
+**The problem it solves.** An LLM that writes SQL against a database it has never seen tends to fail in three ways. It invents joins from column names that look alike. It misses the grain of a table, so a sum over order lines is counted twice. It misreads codes, such as treating `status = 4` as something other than "cancelled". The query runs, returns a number, and nothing says the number is wrong.
+
+**The loop.** An agent that uses keygraph follows the same six steps for each question. The order is the one recommended in [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md).
+
+1. `search` the business term (for example "net revenue") to find candidate tables and see why each one matched.
+2. `describe` each candidate to read its grain, keys, columns, status codes and pitfalls.
+3. `path` between the tables to get ranked join routes with confidence, evidence, fan-out warnings and a `JOIN` snippet. Do not write a join from column-name guesses when `path` can answer it.
+4. `keys` on the large tables to pick filters that match an index, leading with the first column of an index.
+5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile.
+6. Check the result against what the map said: aggregate before a fan-out join, treat relations below 0.6 confidence as unverified, and verify them with a small `SELECT`.
+
+Register the MCP server once and the nine tools appear in your agent (the configs for other clients are in [MCP](#mcp)):
+
+    claude mcp add keygraph -- uvx --from 'keygraph[mcp]' keygraph mcp --dir /abs/path/to/out
+
+If your agent cannot use MCP, have it run the same commands with `--json`, for example `keygraph path orders shipments --json`, or let it read `areas/<area>.md` and `tables/<schema.table>.md` as ordinary files. When the agent confirms what a table or status code means, `keygraph context add` saves it, so the next question starts from better context.
 
 ## When to use keygraph
 
@@ -282,8 +305,23 @@ Build the graph with `keygraph scan` or `keygraph load`. Every column that looks
 ### How do I get an ER diagram from an existing database?
 Build the graph and open `keygraph.html`, or read `areas/<area>.md`, which contains a Mermaid ER diagram for each business area. Large databases are split into areas. The Mermaid diagram draws at most an area's 25 most connected tables and says so on the page when it leaves tables out; the explorer's canvas never draws more than 40 boxes. In the explorer, declared foreign keys are solid lines and inferred ones are dashed.
 
-### How do I give an LLM schema context for text-to-SQL?
+### How do I give an LLM my database schema for text-to-SQL?
 Connect the keygraph MCP server, or let the agent call the CLI with `--json`. The agent should search, describe the tables, ask for the path before writing a join, and use `keys` for index-friendly filters. Grain, status codes, pitfalls and fan-out warnings come with the answers, which are the things a model otherwise has to guess. See [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md).
+
+### How do I stop a text-to-SQL agent from joining the wrong tables?
+Have the agent ask keygraph for the path before it writes a join. `keygraph path A B` (or the MCP `path` tool) returns ranked routes built from declared and inferred foreign keys, each hop with a confidence and the evidence behind it. Routes through hub, log, archive or scratch tables rank lower, and every fan-out hop is flagged so the agent aggregates before joining. Anything below 0.6 confidence should be checked with a small `SELECT` before it is trusted.
+
+### Can an LLM agent query my database through keygraph?
+No. keygraph has no query tool, and the MCP server never runs SQL. The agent reads the map, writes SQL, and runs it with whatever read-only database access you give it separately.
+
+### Does keygraph send my data to an LLM?
+No. keygraph calls no LLM and makes no network requests beyond the connection to the database you choose. Whatever your agent does with the answers is up to the agent. Value profiles never store raw values for personal data (the PII rule above), so profiled output is safer to hand to a model, but treat profiles as samples.
+
+### How is keygraph different from a semantic layer, dbt or a data catalog?
+keygraph is a smaller tool with a narrower job. It reads an existing database and builds a map of keys, joins and business meaning as a folder of files. It does not define metrics for dashboards, transform data, track lineage, run a server or manage governance, which is what DataHub, OpenMetadata and similar catalogs are for (see the [comparison](#comparison)). The metrics and status codes you record in keygraph's context file help search and agents, but keygraph does not compute them. This README does not compare keygraph with dbt or semantic-layer products feature by feature.
+
+### Which databases and agent frameworks does keygraph work with?
+Databases: MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, plus `information_schema` dumps (see [Supported sources](#supported-sources)). Agents: anything that can call MCP tools or run a command-line tool. There are no official plugins for specific frameworks.
 
 ### How do I find which table holds some data?
 Run `keygraph search "net revenue"`. Search ranks tables by names, synonyms, concepts, metrics, notes, column codes and profiled values, and each hit says why it matched, what one row is, and which columns to filter on. Business meaning comes from the context file you provide, so the better it is, the better the answers.

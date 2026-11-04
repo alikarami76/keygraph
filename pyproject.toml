@@ -5,16 +5,16 @@ build-backend = "hatchling.build"
 [project]
 name = "keygraph"
 version = "0.2.0"
-description = "keygraph maps how the tables in your database connect (keys, indexes, declared and inferred foreign keys, business context and value profiles) so people and AI agents can find the right join path and the right data."
+description = "Read-only schema map for data analyst agents and text-to-SQL: join paths, keys, grain and status codes for LLM agents through an MCP server or CLI. Deterministic, no LLM calls."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Ali Karami", email = "52026333+alikarami76@users.noreply.github.com" }]
 keywords = [
-    "database", "schema", "foreign-keys", "er-diagram", "erd", "data-catalog", "text-to-sql", "sql",
-    "join-path", "ai-agents", "llm", "mcp", "claude-code", "mysql", "postgresql", "clickhouse",
-    "mongodb", "metabase", "data-profiling", "schema-inference",
+    "text-to-sql", "data-analyst-agent", "ai-agents", "llm-agents", "mcp", "mcp-server", "schema-context", "join-path",
+    "database-schema", "foreign-keys", "er-diagram", "data-catalog", "schema-inference", "data-profiling", "claude-code",
+    "chat-with-database", "sql", "mysql", "postgresql", "clickhouse", "mongodb", "metabase", "sqlite", "erd", "llm",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
