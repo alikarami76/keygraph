@@ -284,7 +284,9 @@ JPA/Hibernate, GORM, Rails), SQL in string literals and `.sql` files (parsed wit
 `keygraph[code]`, matched by table name otherwise), and uses of the declared properties (`order.status`,
 `getStatus()`). Every link records the rule that made it and a confidence. Common names such as `id` or `status`
 count only in files that name the entity or the table. Names that match no table are listed as unresolved, so you can
-see the gaps.
+see the gaps. With sqlglot, every equality join in that SQL (`a.x = b.y`, in `JOIN ... ON` or the `WHERE` of an
+implicit join) is stored as evidence of a relation: `keygraph render` raises the confidence of an existing edge to
+0.95 or adds a new one marked `"source": "code"`; joins in logged queries add evidence the same way.
 
 ```bash
 keygraph code index ./api ./web --name api --name web      # incremental: unchanged files are not re-read

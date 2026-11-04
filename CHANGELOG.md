@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 - 2026-11-04
+
+- Inference matches a column to a sibling table that shares this table's name prefix: `ad_campaign_banners.campaign_id` -> `ad_campaigns`, `promo_banner_stats.banner_id` -> `promo_banners`.
+- Links seen in code: equality joins in SQL found by the code index (`code_joins`, needs sqlglot) and in logged queries become evidence at render time. An edge between the same columns rises to confidence 0.95; otherwise a new inferred edge with `source` "code" is added (`keygraph.code_links.merge_code_joins`).
+
 ## 0.3.0 - 2026-11-04
 
 - Code index (`keygraph code index | where | what | stats`): links source code to the tables and columns of a built graph, read as text and never executed. Built-in rules for Doctrine, SQLAlchemy, Django, TypeORM, Prisma, JPA/Hibernate, GORM and Rails; SQL in string literals and `.sql` files, parsed with sqlglot (`keygraph[code]`) or matched by table name without it; uses of declared properties with a common-name guard; every link carries its rule and a confidence. Incremental re-index by file hash; names that match no table are reported as unresolved.

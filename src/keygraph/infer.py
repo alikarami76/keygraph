@@ -198,6 +198,19 @@ class Inferer:
                 for tid, pref in self.lookup.get(f, []):
                     self._add(c, tid, 0.60 if allrole else 0.50,
                               f"role prefix '{'_'.join(words[:i])}' stripped, '{rest}' matches table name")
+        tparts = t.name.lower().split("_")
+        for i in range(len(tparts) - 1, 0, -1):  # ad_campaign_banners.campaign_id -> ad_campaigns (shared name prefix)
+            pre = "_".join(tparts[:i])
+            if pre.endswith("_" + stem) or pre == stem:
+                cands = [pre]
+            else:
+                cands = [pre + "_" + stem]
+            hits = {tid for x in cands for f in forms(x) for tid, _ in self.lookup.get(f, [])
+                    if tid != t.id and tid.startswith(t.schema + ".")}
+            for tid in sorted(hits):
+                self._add(c, tid, 0.68, f"column name '{colname}' matches table name with this table's prefix '{pre}_'")
+            if hits:
+                break
         for tid in self.pkname.get(colname.lower(), []):
             if tid != t.id:
                 self._add(c, tid, 0.70, f"column name '{colname}' equals the primary key name of {tid}")

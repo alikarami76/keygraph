@@ -19,6 +19,8 @@ CREATE INDEX IF NOT EXISTS code_refs_table ON code_refs(table_id, column_name);
 CREATE INDEX IF NOT EXISTS code_refs_path ON code_refs(repo, path, line);
 CREATE INDEX IF NOT EXISTS code_refs_symbol ON code_refs(symbol);
 CREATE TABLE IF NOT EXISTS code_unresolved(repo TEXT, path TEXT, line INT, kind TEXT, name TEXT, rule TEXT);
+CREATE TABLE IF NOT EXISTS code_joins(repo TEXT, path TEXT, line INT, a_table TEXT, a_col TEXT, b_table TEXT, b_col TEXT);
+CREATE INDEX IF NOT EXISTS code_joins_path ON code_joins(repo, path);
 """
 TABLES = ("code_repos", "code_files", "code_refs", "code_unresolved")
 KIND_SQL = "CASE kind " + " ".join(f"WHEN '{k}' THEN {i}" for k, i in KIND_ORDER.items()) + " END"
@@ -72,7 +74,7 @@ class CodeStore:
         return r[0] if r else None
 
     def drop_repo(self, repo: str) -> None:
-        for t in ("code_files", "code_refs", "code_unresolved"):
+        for t in ("code_files", "code_refs", "code_unresolved", "code_joins"):
             self.db.execute(f"DELETE FROM {t} WHERE repo=?", (repo,))
         self.db.execute("DELETE FROM code_repos WHERE name=?", (repo,))
 
@@ -84,15 +86,16 @@ class CodeStore:
                 for r in self.db.execute("SELECT path, decl_lines FROM code_files WHERE repo=?", (repo,))}
 
     def delete_file(self, repo: str, path: str) -> None:
-        for t in ("code_files", "code_refs", "code_unresolved"):
+        for t in ("code_files", "code_refs", "code_unresolved", "code_joins"):
             self.db.execute(f"DELETE FROM {t} WHERE repo=? AND path=?", (repo, path))
 
     def replace_file(self, repo: str, path: str, sha1: str, lang: str, decl_lines: list[int], refs: list[CodeRef],
-                     unresolved: list[Unresolved]) -> None:
+                     unresolved: list[Unresolved], joins: list[tuple] = ()) -> None:
         """Store one file's extraction (everything except uses, which the second pass rewrites per repo)."""
         self.delete_file(repo, path)
         self.db.execute("INSERT INTO code_files VALUES(?,?,?,?,?)", (repo, path, sha1, lang, json.dumps(decl_lines)))
         self.add_refs(refs)
+        self.db.executemany("INSERT INTO code_joins VALUES(?,?,?,?,?,?,?)", sorted(set(joins)))
         self.db.executemany("INSERT INTO code_unresolved VALUES(?,?,?,?,?,?)",
                             [(u.repo, u.path, u.line, u.kind, u.name, u.rule) for u in sorted(unresolved, key=Unresolved.sort_key)])
 
@@ -100,6 +103,14 @@ class CodeStore:
         self.db.executemany("INSERT INTO code_refs VALUES(?,?,?,?,?,?,?,?,?,?)",
                             [(r.repo, r.path, r.line, r.kind, r.table_id, r.column, r.symbol, r.rule, r.confidence, r.snippet)
                              for r in sorted(refs, key=CodeRef.sort_key)])
+
+    def joins(self) -> list[tuple]:
+        """(repo, path, line, a_table, a_col, b_table, b_col), sorted; [] when the table is missing (older database)."""
+        try:
+            return [tuple(r) for r in self.db.execute("SELECT * FROM code_joins ORDER BY repo, path, line, a_table, a_col, "
+                                                      "b_table, b_col")]
+        except sqlite3.OperationalError:
+            return []
 
     def delete_uses(self, repo: str) -> None:
         self.db.execute("DELETE FROM code_refs WHERE repo=? AND kind='use' AND rule LIKE 'use:%'", (repo,))

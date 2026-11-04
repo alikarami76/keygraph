@@ -247,3 +247,79 @@ def sql_refs(repo: str, path: str, lang: str, text: str, vocab: Vocab, dialect: 
             seen.add(r.key())
             out.append(r)
     return sorted(out, key=CodeRef.sort_key), sorted(set(unres), key=Unresolved.sort_key), sorted(spans)
+
+
+def _resolved_alias(tree) -> dict[str, str]:
+    ctes = {c.alias_or_name.lower() for c in tree.find_all(exp.CTE)}
+    alias: dict[str, str] = {}
+    for t in tree.find_all(exp.Table):
+        if t.name and t.name.lower() not in ctes:
+            alias.setdefault(t.alias_or_name.lower(), _name(t))
+            alias.setdefault(t.name.lower(), _name(t))
+    return alias
+
+
+def _side(col, alias: dict[str, str], vocab: Vocab) -> tuple[str, str] | None:
+    """(table id, real column) for one side of a comparison, or None when it does not resolve to one real column."""
+    if not col.name or col.name == "*":
+        return None
+    if col.table:
+        names = [alias[col.table.lower()]] if col.table.lower() in alias else []
+    else:
+        names = sorted(set(alias.values()))
+    found = set()
+    for n in names:
+        ids = vocab.resolve_table(n)
+        if len(ids) != 1:
+            continue
+        real = vocab.column(ids[0], col.name)
+        if real:
+            found.add((ids[0], real))
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def sql_joins(sql: str, vocab: Vocab, dialect: str | None = None) -> list[tuple[str, str, str, str]]:
+    """Equality joins `a.x = b.y` of one SQL text (JOIN ... ON, and WHERE of implicit joins) where both sides resolve
+    to real columns: sorted, de-duplicated (left_table_id, left_col, right_table_id, right_col) with the smaller
+    (table, column) first. Literals, other comparisons and unresolved columns are ignored; [] without sqlglot."""
+    if sqlglot is None or vocab is None:
+        return []
+    try:
+        trees = sqlglot.parse(neutralize(sql), read=DIALECTS.get(dialect or "", None))
+    except Exception:  # noqa: BLE001 - any parse failure means no joins
+        return []
+    out: set[tuple[str, str, str, str]] = set()
+    for tree in trees:
+        if tree is None or isinstance(tree, exp.Command):
+            continue
+        alias = _resolved_alias(tree)
+        if not alias:
+            continue
+        for eq in tree.find_all(exp.EQ):
+            if not (isinstance(eq.this, exp.Column) and isinstance(eq.expression, exp.Column)):
+                continue
+            node = eq.parent
+            while node is not None and not isinstance(node, (exp.Join, exp.Where, exp.Having)):
+                node = node.parent
+            if not isinstance(node, (exp.Join, exp.Where)):
+                continue
+            a, b = _side(eq.this, alias, vocab), _side(eq.expression, alias, vocab)
+            if a and b and a != b:
+                a, b = sorted([a, b])
+                out.add((a[0], a[1], b[0], b[1]))
+    return sorted(out)
+
+
+def sql_join_refs(repo: str, path: str, lang: str, text: str, vocab: Vocab, dialect: str | None = None,
+                  lines: Lines | None = None) -> list[tuple[str, str, int, str, str, str, str]]:
+    """(repo, path, line, a_table, a_col, b_table, b_col) for every join in the SQL of one file, sorted."""
+    if sqlglot is None:
+        return []
+    L = lines or Lines(text)
+    out = set()
+    for off, sql in statements(text, lang):
+        for at, ac, bt, bc in sql_joins(sql, vocab, dialect):
+            pair = rf"\b{re.escape(ac)}\b\s*=\s*[\w.`\"\[\]]*\b{re.escape(bc)}\b|\b{re.escape(bc)}\b\s*=\s*[\w.`\"\[\]]*\b{re.escape(ac)}\b"
+            m = re.search(pair, sql, re.I) or re.search(r"\b" + re.escape(ac) + r"\b", sql, re.I)
+            out.add((repo, path, L.line(off + (m.start() if m else 0)), at, ac, bt, bc))
+    return sorted(out)

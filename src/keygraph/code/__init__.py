@@ -19,7 +19,7 @@ from ..graph import Graph
 from .patterns import PatternError, builtin_rules, load_patterns, run_rules
 from .refs import KINDS, CodeRef
 from . import sql as _sql
-from .sql import sql_refs
+from .sql import sql_join_refs, sql_refs
 from .store import CodeStore
 from .uses import build_index, find_uses
 from .vocab import Vocab
@@ -48,7 +48,7 @@ def index_repo(db_path: str | Path, root: str | Path, name: str | None = None, p
     vocab = Vocab.load(db_path)
     rules = builtin_rules() + load_patterns(_patterns(db_path, patterns))
     fp = hashlib.sha1(json.dumps([__version__, vocab.fingerprint(), [r.spec() for r in rules], dialect or "",
-                                  _sql.sqlglot is not None],
+                                  _sql.sqlglot is not None, "joins"],
                                  sort_keys=True).encode()).hexdigest()
     t0 = time.time()
     changed = deleted = 0
@@ -72,7 +72,7 @@ def index_repo(db_path: str | Path, root: str | Path, name: str | None = None, p
             keyed = {r.key(): r for r in srefs}
             keyed.update({r.key(): r for r in res.refs})  # a declaration wins over SQL on the same line
             st.replace_file(name, f.path, sha, f.lang, sorted(set(res.decl_lines) | set(slines)), list(keyed.values()),
-                            res.unresolved + sunres)
+                            res.unresolved + sunres, sql_join_refs(name, f.path, f.lang, text, vocab, dialect, L))
             changed += 1
         for path in sorted(set(known) - set(seen)):
             st.delete_file(name, path)

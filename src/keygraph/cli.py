@@ -11,6 +11,7 @@ import webbrowser
 from pathlib import Path
 
 from .areas import apply_curation, area_links, cluster_areas
+from .code_links import merge_code_joins
 from .context import ContextDB
 from .docs_out import write_docs
 from .explorer import build_html
@@ -135,6 +136,8 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
             warns.append(f"mirrors.yaml: '{m}: {o}' ignored: unknown schema")
     mark_mirrors(g, detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
                                    never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns))
+    if ctx:
+        merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
     mark_hubs(g, detect_hubs(g, include=names["include"], exclude=names["exclude"]))
     areas, cwarns = apply_curation(g, cluster_areas(g), cur["areas"])
     g.data["areas"], g.data["area_links"] = areas, area_links(g, areas)
