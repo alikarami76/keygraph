@@ -12,10 +12,10 @@ from pathlib import Path
 
 from .areas import apply_curation, area_links, cluster_areas
 from .code_links import merge_code_joins
-from .context import ContextDB
+from .context import ContextDB, read_copy_globs
 from .docs_out import write_docs
 from .explorer import build_html
-from .mirrors import detect_mirrors, mark_mirrors
+from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
 from .hubs import detect_hubs, mark_hubs
 from .graph import AmbiguousTable, Graph, UnknownTable, build_graph
 from .infer import Options
@@ -134,8 +134,10 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
     for m, o in mcur.items():
         if o in (False, None) and m not in schemas:
             warns.append(f"mirrors.yaml: '{m}: {o}' ignored: unknown schema")
+    g.data["copy_schemas"] = sorted(dict.fromkeys(cur.get("copies") or []))
     mark_mirrors(g, detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
                                    never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns))
+    transfer_mirror_edges(g)  # relations of the original tables, copied onto their mirror copies
     if ctx:
         merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
     mark_hubs(g, detect_hubs(g, include=names["include"], exclude=names["exclude"]))
@@ -157,10 +159,13 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
 
 def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, context: list[str] | None = None,
                  notes: list[dict] | None = None, options: Options | None = None, verbose=True, snippets: bool = False,
-                 queries: bool = False) -> dict:
+                 queries: bool = False, copy_schemas: list[str] | None = None) -> dict:
     out = Path(out)
     t0 = time.time()
     ov = Overrides.load(overrides) if overrides else None
+    options = options or Options()
+    globs = list(dict.fromkeys(list(copy_schemas or []) + read_copy_globs(context)))
+    options.copy_schemas.extend(x for x in globs if x not in options.copy_schemas)  # inference runs before context import
     g = build_graph(schema, ov, options)
     ctx = ContextDB(out / "keygraph.db", g)
     ctx.index_graph(g)
@@ -168,6 +173,8 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
         ctx.clear_curation()  # rules from files that are no longer imported must not apply
     for path in context or []:
         ctx.import_path(path)
+    if copy_schemas:
+        ctx.add_copy_schemas(copy_schemas)
     ctx.reindex()
     prof = ctx.load_profiles()
     if prof:
@@ -186,7 +193,8 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
 
 def cmd_scan(a):
     from .adapters.live import scan_url
-    run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries)
+    run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
+                 copy_schemas=getattr(a, "copy_schema", None))
 
 
 def cmd_load(a):
@@ -200,7 +208,8 @@ def cmd_load(a):
         cm["_flatten"] = a.flatten
     sch = load_dump(a.columns, a.statistics, a.key_columns, a.default_schema, cm, _json_arg(a.statistics_map),
                     _json_arg(a.kcu_map), filt, tables=a.tables)
-    run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries)
+    run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
+                 copy_schemas=getattr(a, "copy_schema", None))
 
 
 def cmd_render(a):
@@ -408,10 +417,13 @@ def cmd_code(a):
         if a.name and len(a.name) != len(a.repos):
             raise ValueError(f"give one --name per repo ({len(a.repos)} repos, {len(a.name)} names)")
         names = a.name or [None] * len(a.repos)
-        res = [C.index_repo(db, r, n, a.patterns or [], a.exclude or [], a.full, a.max_file_kb, a.max_uses, a.dialect)
+        res = [C.index_repo(db, r, n, a.patterns or [], a.exclude or [], a.full, a.max_file_kb, a.max_uses, a.dialect,
+                          copy_schemas=a.copy_schema or ())
                for r, n in zip(a.repos, names)]
         g = _load(a)
         ctx = _ctx(a, g)
+        if a.copy_schema:
+            ctx.add_copy_schemas(list(dict.fromkeys(a.copy_schema)))
         render(Path(a.dir), g, ctx, snippets=a.snippets or None)
         ctx.close()
         _emit(a, {"repos": res}, "\n".join(T.format_index(r) for r in res))
@@ -483,6 +495,8 @@ def main(argv=None) -> int:
     def build_opts(p):
         p.add_argument("--overrides", help="YAML/JSON overrides file")
         p.add_argument("--context", action="append", help="context YAML/JSON file or directory to import (repeatable)")
+        p.add_argument("--copy-schema", action="append", metavar="GLOB",
+                       help="glob of schemas that are copies of another database, e.g. 'ods_*' (repeatable)")
         render_opts(p)
 
     def render_opts(p):
@@ -599,6 +613,8 @@ def main(argv=None) -> int:
     p.add_argument("--max-uses", type=int, default=500, help="use refs kept per column per repo")
     p.add_argument("--dialect", choices=dialects, help="SQL dialect for parsing (with keygraph[code])")
     p.add_argument("--snippets", action="store_true", help="also show code snippets in keygraph.html")
+    p.add_argument("--copy-schema", action="append", metavar="GLOB",
+                   help="glob of schemas that are copies, e.g. 'ods_*': bare names prefer other tables (repeatable)")
     p = code_cmd("where", "data -> code: where a table or column is declared, written, read and used")
     p.add_argument("ref", metavar="TABLE[.COLUMN]")
     p.add_argument("--kind", choices=["declare_table", "declare_column", "sql_write", "sql_read", "use"])

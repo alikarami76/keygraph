@@ -25,7 +25,10 @@ def dicts(rows: list, names: list[str]) -> list[dict]:
     for r in rows:
         if isinstance(r, dict):
             low = {k.lower(): v for k, v in r.items()}
-            out.append({n: r[n] if n in r else low.get(n.lower()) for n in names})
+            if any(n in r or n.lower() in low for n in names):
+                out.append({n: r[n] if n in r else low.get(n.lower()) for n in names})
+            else:  # a tool keyed rows by the query's own column names (TABLE_SCHEMA, ...): use the column order
+                out.append(dict(zip(names, r.values())))
         else:
             out.append(dict(zip(names, r)))
     return out

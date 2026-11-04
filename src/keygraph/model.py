@@ -147,3 +147,8 @@ def parse_enum_members(type_str: str) -> list[str]:
         name = lit.group(1).replace("''", "'").replace("\\'", "'")
         out.append(f"{name}={lit.group(2)}" if lit.group(2) is not None and m.group(1).lower().startswith("enum") and m.group(1).lower() != "enum" else name)
     return out
+
+def is_copy_schema(schema: str, globs) -> bool:
+    """True when `schema` matches one of the declared copy-schema globs (fnmatch, case-insensitive)."""
+    from fnmatch import fnmatchcase
+    return any(fnmatchcase(schema.lower(), str(g).lower()) for g in globs or ())

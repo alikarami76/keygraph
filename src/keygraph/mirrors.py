@@ -107,3 +107,42 @@ def mark_mirrors(graph: Graph, mirrors: dict[str, str]) -> None:
 
 def mirror_tables(graph: Graph) -> set[str]:
     return {t for t, n in graph.nodes.items() if n.get("mirror_of")}
+
+
+def transfer_mirror_edges(graph: Graph) -> int:
+    """Copy each relation between two original tables onto their copies in a mirror schema, when both tables
+    have a copy there with the same columns and the copy column has no relation yet. Returns the edges added.
+    Needs mark_mirrors first; edges touching mirror tables stay out of areas, as before."""
+    from keygraph.graph import edge_id
+    nodes = graph.nodes
+    copy_of = {(n["schema"], n["table"]): n for n in nodes.values() if n.get("mirror_of")}
+    have = {(e["from"], tuple(e["from_columns"])) for e in graph.edges}
+    added = []
+    for e in list(graph.edges):
+        a, b = nodes.get(e["from"]), nodes.get(e["to"])
+        if not a or not b or a.get("mirror_of") or b.get("mirror_of"):
+            continue
+        for m in sorted({s for s, _ in copy_of}):
+            ca, cb = copy_of.get((m, a["table"])), copy_of.get((m, b["table"]))
+            if not ca or not cb or ca["mirror_of"] != a["schema"] or cb["mirror_of"] != b["schema"]:
+                continue
+            fcols = {c["name"] for c in ca["columns"]}
+            tcols = {c["name"] for c in cb["columns"]}
+            if not set(e["from_columns"]) <= fcols or not set(e["to_columns"]) <= tcols:
+                continue
+            if (ca["id"], tuple(e["from_columns"])) in have:
+                continue
+            have.add((ca["id"], tuple(e["from_columns"])))
+            ne = {**{k: v for k, v in e.items() if k not in ("constraint", "overrides")},
+                  "kind": "inferred", "status": "inferred", "from": ca["id"], "to": cb["id"],
+                  "confidence": round(e["confidence"] * 0.95, 2), "ambiguous": e.get("ambiguous", False),
+                  "evidence": [f"copy of {e['from']}({','.join(e['from_columns'])}) -> "
+                               f"{e['to']}({','.join(e['to_columns'])}) in the original schema"],
+                  "source": "mirror"}
+            ne["id"] = edge_id(ne)
+            added.append(ne)
+    if added:
+        graph.edges.extend(added)
+        graph.edges.sort(key=lambda x: x["id"])
+        graph.refresh_stats()
+    return len(added)

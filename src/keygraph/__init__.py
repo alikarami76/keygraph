@@ -5,4 +5,4 @@ from .model import Column, ForeignKey, Index, Schema, Table
 from .infer import Options
 
 __all__ = ["Graph", "build_graph", "Column", "ForeignKey", "Index", "Schema", "Table", "Options"]
-__version__ = "0.3.1"
+__version__ = "0.3.2"

@@ -38,14 +38,14 @@ def _patterns(db_path: Path, patterns) -> list[Path]:
 
 def index_repo(db_path: str | Path, root: str | Path, name: str | None = None, patterns=(), exclude=(),
                full: bool = False, max_file_kb: int = 1024, max_uses: int = 500, dialect: str | None = None,
-               now: str | None = None) -> dict:
+               now: str | None = None, copy_schemas=()) -> dict:
     """Index one repo into keygraph.db. Unchanged files (same sha1, same rules and vocabulary) are not re-read for
     declarations and SQL; the uses pass always runs over the whole repo. Returns counts, unresolved and caps."""
     db_path, root = Path(db_path), Path(root)
     if not root.is_dir():
         raise ValueError(f"repo root {root} is not a directory")
     name = name or root.resolve().name
-    vocab = Vocab.load(db_path)
+    vocab = Vocab.load(db_path, copy_schemas)
     rules = builtin_rules() + load_patterns(_patterns(db_path, patterns))
     fp = hashlib.sha1(json.dumps([__version__, vocab.fingerprint(), [r.spec() for r in rules], dialect or "",
                                   _sql.sqlglot is not None, "joins"],

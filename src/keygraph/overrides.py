@@ -15,6 +15,7 @@ class Overrides:
     confirm: list[dict] = field(default_factory=list)
     reject: list[dict] = field(default_factory=list)
     add: list[dict] = field(default_factory=list)
+    copy_schemas: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> "Overrides":
@@ -31,12 +32,14 @@ class Overrides:
         ra = {k: ([v] if isinstance(v, str) else list(v)) for k, v in (raw.get("role_aliases") or {}).items()}
         return cls(aliases=dict(raw.get("aliases") or {}), role_aliases=ra, prefixes=list(raw.get("prefixes") or []),
                    confirm=list(raw.get("confirm") or []), reject=list(raw.get("reject") or []),
-                   add=list(raw.get("add") or []))
+                   add=list(raw.get("add") or []),
+                   copy_schemas=[str(x) for x in ([raw["copies"]] if isinstance(raw.get("copies"), str) else raw.get("copies") or [])])
 
     def configure(self, opts) -> None:
         opts.aliases.update(self.aliases)
         opts.role_aliases.update(self.role_aliases)
         opts.prefixes.extend(p for p in self.prefixes if p not in opts.prefixes)
+        opts.copy_schemas.extend(g for g in self.copy_schemas if g not in opts.copy_schemas)
 
 
 def parse_ref(ref: str) -> tuple[str, list[str]]:

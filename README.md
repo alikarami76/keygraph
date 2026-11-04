@@ -249,6 +249,8 @@ Each inferred relation carries a confidence between 0 and 1 and the evidence lin
 
 **Mirrors.** A schema that holds copies of another schema's tables (a nightly reporting copy, say) is detected, marked as a mirror, and kept out of areas, hub counts and join paths so nothing is counted twice. `--include-mirrors` brings it back.
 
+**Related and copy schemas.** When a column's candidates are all in other schemas, a related schema wins: one whose name contains the source schema's name as whole `_` tokens (`app` and `ods_app`, `app_v2`), in either direction (evidence "target is in related schema"). Schemas that are copies of another database but are not detected mirrors can be declared by glob, in the context file (`copies: ["ods_*", "ch_*"]`, or the same list under `mirrors:`), in the overrides file (`copies:`), or with `--copy-schema GLOB` on `scan`, `load` and `code index`. Code names prefer non-copy tables, and inference prefers non-copy targets (evidence "target schema is a declared copy"). Copies declared this way stay visible in areas.
+
 An overrides file (YAML or JSON) supports `aliases`, `role_aliases`, `prefixes`, `confirm`, `reject` and `add`:
 
 ```yaml

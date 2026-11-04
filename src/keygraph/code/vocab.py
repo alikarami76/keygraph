@@ -7,6 +7,8 @@ import json
 import re
 from pathlib import Path
 
+from ..model import is_copy_schema
+
 COMMON = frozenset({"id", "name", "type", "status", "title", "code", "value", "key", "data", "created_at", "updated_at",
                     "deleted_at", "description", "state", "date", "amount", "price", "count"})
 _QUOTES = "`\"[]'"
@@ -37,7 +39,7 @@ def variants(name: str) -> list[str]:
 
 
 class Vocab:
-    """Tables and columns of a built graph. Mirror-schema tables are only used when no other table matches."""
+    """Tables and columns of a built graph. Mirror and copy-schema tables are only used when no other table matches."""
 
     def __init__(self, tables: dict[str, list[str]], mirrors: set[str] | frozenset[str] = frozenset()):
         self.tables = {t: list(cols) for t, cols in sorted(tables.items())}
@@ -54,17 +56,19 @@ class Vocab:
                 self._by_col.setdefault(c, []).append(t)
 
     @classmethod
-    def from_graph(cls, data: dict) -> "Vocab":
+    def from_graph(cls, data: dict, copy_schemas=()) -> "Vocab":
+        """Copy schemas (declared globs stored in the graph, plus `copy_schemas`) are treated like mirrors."""
+        globs = list(data.get("copy_schemas") or []) + list(copy_schemas or [])
         tables = {n["id"]: [c["name"] for c in n["columns"]] for n in data["nodes"]}
-        return cls(tables, {n["id"] for n in data["nodes"] if n.get("mirror_of")})
+        return cls(tables, {n["id"] for n in data["nodes"] if n.get("mirror_of") or is_copy_schema(n["schema"], globs)})
 
     @classmethod
-    def load(cls, db_path: str | Path) -> "Vocab":
+    def load(cls, db_path: str | Path, copy_schemas=()) -> "Vocab":
         """The vocabulary of the graph.json that sits next to keygraph.db."""
         g = Path(db_path).parent / "graph.json"
         if not g.exists():
             raise ValueError(f"no graph at {g}; build the graph (keygraph load or scan) before indexing code")
-        return cls.from_graph(json.loads(g.read_text(encoding="utf-8")))
+        return cls.from_graph(json.loads(g.read_text(encoding="utf-8")), copy_schemas)
 
     def _prefer(self, ids: list[str]) -> list[str]:
         real = [t for t in ids if t not in self.mirrors]

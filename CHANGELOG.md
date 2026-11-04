@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 - 2026-11-04
+
+- Inference prefers a related schema (`app` -> `ods_app`, `app_v2`) when a column's candidates are all in other schemas, and schemas can be declared copies by glob (`copies: ["ods_*"]` in the context or overrides file, `--copy-schema GLOB` on `scan`, `load` and `code index`): the code index prefers non-copy tables and inference prefers non-copy targets.
+- SQL Server adapter: every metadata column is named in the query, so command tools that return rows keyed by column name (instead of tuples) read columns, keys and indexes instead of empty rows.
+- Inference for databases without foreign keys. A table with no primary or unique key but an `id` column is treated as keyed on `id` as a link target (evidence "assumed key", scored 0.1 below a real primary key; no index is invented).
+- Log tables: in `<base>_log`, `_logs`, `_history` and `_audit` tables, `entity_id`, `record_id` and `object_id` point at `<base>` (same schema, then the schema without a trailing `_log`, then a single unique match elsewhere).
+- Relations between original tables are copied onto their copies in a mirror schema when the copy has none (confidence x 0.95, `source` "mirror"). Mirror tables stay out of areas as before.
+
 ## 0.3.1 - 2026-11-04
 
 - Inference matches a column to a sibling table that shares this table's name prefix: `ad_campaign_banners.campaign_id` -> `ad_campaigns`, `promo_banner_stats.banner_id` -> `promo_banners`.

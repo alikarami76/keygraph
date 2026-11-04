@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .model import Schema, Table, type_family, type_length
+from .model import Schema, Table, is_copy_schema, type_family, type_length
 
 DEFAULT_ROLE_WORDS = {
     "created", "updated", "deleted", "modified", "approved", "rejected", "assigned", "owner",
@@ -19,6 +19,8 @@ BY_ROLES = {"created_by", "updated_by", "deleted_by", "modified_by", "approved_b
             "reviewer", "requester", "updater"}
 SELF_ROLES = {"parent", "prev", "previous", "next", "original", "root", "master", "superseded"}
 POLY_SUFFIXES = ("type", "class", "table", "kind")
+LOG_SUFFIXES = ("_logs", "_log", "_history", "_audit")
+LOG_COLUMNS = {"entity_id", "record_id", "object_id"}
 
 
 @dataclass
@@ -30,6 +32,7 @@ class Options:
     role_aliases: dict[str, list[str]] = field(default_factory=dict)  # role stem -> table names
     role_words: set[str] = field(default_factory=lambda: set(DEFAULT_ROLE_WORDS))
     auto_prefixes: bool = True
+    copy_schemas: list[str] = field(default_factory=list)  # fnmatch globs of schemas that are copies (replicas, BI caches)
 
 
 def singular(w: str) -> str:
@@ -71,6 +74,17 @@ def extract_stem(col: str) -> str | None:
     return None
 
 
+def related_schemas(a: str, b: str) -> bool:
+    """Two different schema names are related when one, split on '_', contains the other's whole token run
+    (app ~ ods_app, app_replica, app_v2; ods_app ~ app). A partial token never counts (app is not related to apple)."""
+    x, y = a.lower().split("_"), b.lower().split("_")
+    if x == y:
+        return False
+    short, long_ = (x, y) if len(x) < len(y) else (y, x)
+    n = len(short)
+    return any(long_[i:i + n] == short for i in range(len(long_) - n + 1))
+
+
 def _ref(opts_ref: str, schema: Schema, prefer_schema: str) -> str | None:
     if opts_ref in schema.tables:
         return opts_ref
@@ -79,6 +93,14 @@ def _ref(opts_ref: str, schema: Schema, prefer_schema: str) -> str | None:
     if same:
         return same[0]
     return hits[0] if len(hits) == 1 else None
+
+
+def log_base(name: str) -> str | None:
+    n = name.lower()
+    for suf in LOG_SUFFIXES:
+        if n.endswith(suf) and len(n) > len(suf):
+            return n[: -len(suf)]
+    return None
 
 
 def _is_indexed_leading(t: Table, cols: list[str]) -> str | None:
@@ -106,6 +128,9 @@ def target_key(t: Table, stem: str, colname: str):
         if len(u) == 1 and (u[0].lower() in (colname.lower(), "id", stem + "_id")):
             return u, "unique key", 0.03
     if not pk and not t.unique_keys:
+        idc = next((c.name for c in t.columns if c.name.lower() == "id"), None)
+        if idc:  # no keys declared at all: assume 'id' is the key, scored a little below a real primary key
+            return [idc], "assumed key: no keys declared, 'id' column", -0.02
         return None
     for u in ([pk] if pk else []) + t.unique_keys:
         if len(u) > 1 and u[0].lower() == colname.lower() and t.column(u[0]):
@@ -156,6 +181,28 @@ class Inferer:
             if len(pk) == 1 and pk[0].lower() != "id":
                 self.pkname.setdefault(pk[0].lower(), []).append(t.id)
 
+    def _log_subject(self, t: Table) -> str | None:
+        """The table a log/history/audit table is about: '<base>_log' -> '<base>', looked up in the same
+        schema, then in the schema with a trailing '_log' removed, then as a single unique match anywhere."""
+        base = log_base(t.name)
+        sch_base = t.schema[:-4] if t.schema.lower().endswith("_log") and len(t.schema) > 4 else None
+        if base is None and sch_base:
+            base = t.name.lower()  # a table of a '<app>_log' schema describes the same-named table of '<app>'
+        if base is None:
+            return None
+        fm = forms(base)
+        hits = [x for x in self.s.tables.values() if x.id != t.id and x.name.lower() in fm]
+        order = [t.schema] + ([sch_base] if sch_base else [])
+        if log_base(t.name) is None:
+            order = [sch_base]
+        for sch in order:
+            h = sorted(x.id for x in hits if x.schema == sch)
+            if h:
+                return h[0]
+        if log_base(t.name) is not None and len(hits) == 1:
+            return hits[0].id
+        return None
+
     # --- candidate generation -------------------------------------------------
     def _add(self, cands: dict, tid: str, base: float, reason: str) -> None:
         cur = cands.get(tid)
@@ -186,6 +233,10 @@ class Inferer:
                 tid == t.id for f in forms("_".join(words[1:])) for tid, _ in self.lookup.get(f, []))):
             self._add(c, t.id, 0.8 if words[0] == "parent" else 0.7,
                       f"self-reference: '{colname}' points at this table's own key")
+        if colname.lower() in LOG_COLUMNS:
+            tid = self._log_subject(t)
+            if tid:
+                self._add(c, tid, 0.70, f"log table '{t.name}' names its subject table; '{colname}' points at it")
         for f in forms(stem):
             for tid, pref in self.lookup.get(f, []):
                 self._add(c, tid, 0.72 if not pref else 0.68,
@@ -260,6 +311,25 @@ class Inferer:
         return {"to": tid, "to_columns": tcols, "confidence": conf, "evidence": ev,
                 "partial": tboost < 0}
 
+    def _cross_schema(self, t: Table, scored: list[dict]) -> list[dict]:
+        """No candidate is in the column's own schema. Candidates in a related schema (ods_app for app) win over
+        unrelated ones; then candidates in a declared copy schema lose a little to non-copy ones."""
+        if not scored:
+            return scored
+        related = [r for r in scored if related_schemas(t.schema, r["to"].split(".")[0])]
+        if related:
+            for r in related:
+                r["confidence"] += 0.06
+                r["evidence"].append(f"target is in related schema '{r['to'].split('.')[0]}'")
+            scored = related
+        copies = [r for r in scored if is_copy_schema(r["to"].split(".")[0], self.o.copy_schemas)]
+        if copies and len(copies) < len(scored):
+            for r in copies:
+                r["confidence"] -= 0.05
+                r["evidence"].append("target schema is a declared copy")
+                r["_copy"] = True
+        return scored
+
     def run(self) -> list[dict]:
         edges: list[dict] = []
         poly_cols: dict[str, list[dict]] = {}
@@ -287,12 +357,16 @@ class Inferer:
                         scored.append(r)
                 if scored and any(r["to"].split(".")[0] == t.schema for r in scored):
                     scored = [r for r in scored if r["to"].split(".")[0] == t.schema] or scored
+                else:
+                    scored = self._cross_schema(t, scored)
                 scored.sort(key=lambda r: (-r["confidence"], r["to"]))
                 scored = scored[: self.o.top_k]
-                amb = len(scored) >= 2 and scored[0]["confidence"] - scored[1]["confidence"] < 0.12
+                rivals = [r for r in scored if not r.get("_copy")] if any(r.get("_copy") for r in scored) else scored
+                amb = len(rivals) >= 2 and rivals[0]["confidence"] - rivals[1]["confidence"] < 0.12
                 kept = 0
                 for r in scored:
-                    if amb:
+                    r.pop("_copy", None) if r not in rivals else None
+                    if amb and r in rivals:
                         r["confidence"] -= 0.10
                         r["evidence"].append(f"ambiguous: {len(scored)} candidate targets within a close score")
                     r["confidence"] = round(max(0.05, min(0.95, r["confidence"])), 2)

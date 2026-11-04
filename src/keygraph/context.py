@@ -75,6 +75,40 @@ def safe_source(src) -> str:
     return s
 
 
+def copy_globs_split(raw: dict) -> tuple[dict, list]:
+    """A context file's mirrors mapping and its copy-schema globs. Globs come from a top-level `copies:` list or
+    from a `copies:` list inside `mirrors:` (a schema literally named copies can still be written as copies: orig)."""
+    mirrors = raw.get("mirrors")
+    globs: list = []
+    if isinstance(mirrors, dict) and isinstance(mirrors.get("copies"), (list, str)):
+        mirrors = dict(mirrors)
+        v = mirrors.pop("copies")
+        globs += [v] if isinstance(v, str) else list(v)
+    top = raw.get("copies")
+    globs += [top] if isinstance(top, str) else list(top or []) if isinstance(top, list) else []
+    return (mirrors if mirrors else {}), [g for g in dict.fromkeys(globs) if g]
+
+
+def read_copy_globs(paths) -> list[str]:
+    """Copy-schema globs declared in context files, read before the graph is built (inference needs them).
+    Unreadable files are skipped here; the later import reports them."""
+    out: list[str] = []
+    for path in paths or []:
+        p = Path(path)
+        for f in sorted(f for f in ([p] if p.is_file() else p.rglob("*")) if f.suffix.lower() in (".yaml", ".yml", ".json")):
+            try:
+                text = f.read_text(encoding="utf-8")
+                if f.suffix.lower() == ".json":
+                    raw = json.loads(text)
+                else:
+                    import yaml
+                    raw = yaml.safe_load(text) or {}
+                out += [g for g in copy_globs_split(raw)[1] if g not in out] if isinstance(raw, dict) else []
+            except Exception:  # noqa: BLE001
+                continue
+    return out
+
+
 class ContextDB:
     def __init__(self, path: str | Path, graph=None, readonly: bool = False):
         """readonly: open an existing file without writing to it; a missing file gives an empty in-memory context."""
@@ -201,6 +235,13 @@ class ContextDB:
         self.reindex()
         return counts
 
+    def add_copy_schemas(self, globs: list[str], source: str = "--copy-schema") -> None:
+        """Remember copy-schema globs given on the command line, next to those from context files."""
+        self.db.execute("DELETE FROM curation WHERE source=?", (source,))
+        if globs:
+            self.db.execute("INSERT INTO curation VALUES('copies',?,?)", (json.dumps(list(globs)), source))
+        self.db.commit()
+
     def clear_curation(self) -> None:
         """Forget all curation rules (a build that imports context starts from the files it imports now)."""
         self.db.execute("DELETE FROM curation")
@@ -211,8 +252,11 @@ class ContextDB:
         self.db.execute("DELETE FROM curation WHERE source=?", (source,))
         for rule in raw.get("areas") or []:
             self.db.execute("INSERT INTO curation VALUES('area',?,?)", (json.dumps(rule, ensure_ascii=False), source))
-        if raw.get("mirrors"):
-            self.db.execute("INSERT INTO curation VALUES('mirrors',?,?)", (json.dumps(raw["mirrors"], ensure_ascii=False), source))
+        mirrors, copies = copy_globs_split(raw)
+        if mirrors:
+            self.db.execute("INSERT INTO curation VALUES('mirrors',?,?)", (json.dumps(mirrors, ensure_ascii=False), source))
+        if copies:
+            self.db.execute("INSERT INTO curation VALUES('copies',?,?)", (json.dumps(copies, ensure_ascii=False), source))
         if raw.get("hubs"):
             self.db.execute("INSERT INTO curation VALUES('hubs',?,?)", (json.dumps(raw["hubs"], ensure_ascii=False), source))
         self.db.commit()
@@ -228,7 +272,7 @@ class ContextDB:
     def curation(self) -> dict:
         """Area rules, hub and mirror overrides from the imported files. Malformed entries (user-written YAML)
         are skipped with a line in out["warnings"], never raised."""
-        out: dict = {"areas": [], "hubs": {"include": [], "exclude": []}, "mirrors": {}, "warnings": []}
+        out: dict = {"areas": [], "hubs": {"include": [], "exclude": []}, "mirrors": {}, "copies": [], "warnings": []}
         warn = out["warnings"].append
         for r in self.db.execute("SELECT * FROM curation ORDER BY source, rowid"):
             body, src = json.loads(r["body"]), safe_source(r["source"])
@@ -245,6 +289,11 @@ class ContextDB:
                     if "name" in rule:
                         rule["name"] = str(rule["name"])
                     out["areas"].append(rule)
+            elif r["kind"] == "copies":  # fnmatch globs of schemas that are copies (replicas, warehouses, BI caches)
+                if isinstance(body, list):
+                    out["copies"] += [str(g) for g in body if str(g) not in out["copies"]]
+                else:
+                    warn(f"{src}: copies ignored: expected a list of schema globs")
             elif r["kind"] == "mirrors":  # {mirror schema: original schema, or false for "never a mirror"}
                 if isinstance(body, dict):
                     out["mirrors"].update({str(k): v for k, v in body.items()})

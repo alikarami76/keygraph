@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "keygraph"
-version = "0.3.1"
+version = "0.3.2"
 description = "Read-only schema map for data analyst agents and text-to-SQL: join paths, keys, grain and status codes for LLM agents through an MCP server or CLI. Deterministic, no LLM calls."
 readme = "README.md"
 requires-python = ">=3.11"

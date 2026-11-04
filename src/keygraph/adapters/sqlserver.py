@@ -6,25 +6,25 @@ from __future__ import annotations
 from ..model import Column, ForeignKey, Index, Schema
 from .base import Source, dicts, guarded
 
-COLS = ("SELECT TOP 200000 c.TABLE_SCHEMA, c.TABLE_NAME, c.COLUMN_NAME, c.ORDINAL_POSITION, c.DATA_TYPE + CASE WHEN c.CHARACTER_MAXIMUM_LENGTH IS NOT NULL "
-        "THEN '(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar(10)) + ')' ELSE '' END, c.IS_NULLABLE, c.COLUMN_DEFAULT, c.COLLATION_NAME, c.CHARACTER_SET_NAME "
+COLS = ("SELECT TOP 200000 c.TABLE_SCHEMA AS [schema], c.TABLE_NAME AS [table], c.COLUMN_NAME AS [column], c.ORDINAL_POSITION AS [pos], c.DATA_TYPE + CASE WHEN c.CHARACTER_MAXIMUM_LENGTH IS NOT NULL "
+        "THEN '(' + CAST(c.CHARACTER_MAXIMUM_LENGTH AS varchar(10)) + ')' ELSE '' END AS [type], c.IS_NULLABLE AS [nullable], c.COLUMN_DEFAULT AS [default], c.COLLATION_NAME AS [collation], c.CHARACTER_SET_NAME AS [charset] "
         "FROM INFORMATION_SCHEMA.COLUMNS c JOIN INFORMATION_SCHEMA.TABLES t ON t.TABLE_SCHEMA=c.TABLE_SCHEMA AND t.TABLE_NAME=c.TABLE_NAME "
         "WHERE t.TABLE_TYPE='BASE TABLE' ORDER BY 1,2,4")
 COLN = ["schema", "table", "column", "pos", "type", "nullable", "default", "collation", "charset"]
-IDX = ("SELECT TOP 200000 s.name, t.name, i.name, i.is_unique, i.is_primary_key, c.name, ic.key_ordinal FROM sys.indexes i "
+IDX = ("SELECT TOP 200000 s.name AS [schema], t.name AS [table], i.name AS [index], i.is_unique AS [unique], i.is_primary_key AS [primary], c.name AS [col], ic.key_ordinal AS [ord] FROM sys.indexes i "
        "JOIN sys.tables t ON t.object_id=i.object_id JOIN sys.schemas s ON s.schema_id=t.schema_id "
        "JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.is_included_column=0 "
        "JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id WHERE i.name IS NOT NULL ORDER BY 1,2,3,7")
 IDXN = ["schema", "table", "index", "unique", "primary", "col", "ord"]
-FK = ("SELECT TOP 100000 s.name, t.name, fk.name, c.name, rs.name, rt.name, rc.name, fkc.constraint_column_id FROM sys.foreign_key_columns fkc "
+FK = ("SELECT TOP 100000 s.name AS [schema], t.name AS [table], fk.name AS [name], c.name AS [col], rs.name AS [ref_schema], rt.name AS [ref_table], rc.name AS [ref_col], fkc.constraint_column_id AS [ord] FROM sys.foreign_key_columns fkc "
       "JOIN sys.foreign_keys fk ON fk.object_id=fkc.constraint_object_id JOIN sys.tables t ON t.object_id=fkc.parent_object_id "
       "JOIN sys.schemas s ON s.schema_id=t.schema_id JOIN sys.columns c ON c.object_id=fkc.parent_object_id AND c.column_id=fkc.parent_column_id "
       "JOIN sys.tables rt ON rt.object_id=fkc.referenced_object_id JOIN sys.schemas rs ON rs.schema_id=rt.schema_id "
       "JOIN sys.columns rc ON rc.object_id=fkc.referenced_object_id AND rc.column_id=fkc.referenced_column_id ORDER BY 1,2,3,8")
 FKN = ["schema", "table", "name", "col", "ref_schema", "ref_table", "ref_col", "ord"]
-ROWS = ("SELECT TOP 200000 s.name, t.name, SUM(p.rows) FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id "
+ROWS = ("SELECT TOP 200000 s.name AS [schema], t.name AS [table], SUM(p.rows) AS [rows] FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id "
         "JOIN sys.partitions p ON p.object_id=t.object_id AND p.index_id IN (0,1) GROUP BY s.name, t.name")
-CHECKS = "SELECT TOP 100000 s.name, t.name, k.name, k.definition FROM sys.check_constraints k JOIN sys.tables t ON t.object_id=k.parent_object_id JOIN sys.schemas s ON s.schema_id=t.schema_id"
+CHECKS = "SELECT TOP 100000 s.name AS [schema], t.name AS [table], k.name AS [name], k.definition AS [expr] FROM sys.check_constraints k JOIN sys.tables t ON t.object_id=k.parent_object_id JOIN sys.schemas s ON s.schema_id=t.schema_id"
 
 
 class SQLServerSource(Source):
