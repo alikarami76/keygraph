@@ -1,20 +1,43 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "keygraph"
-version = "0.1.0"
-description = "Map a database's keys and the relations between tables (declared and inferred) so join paths can be found deterministically."
+version = "0.2.0"
+description = "keygraph maps how the tables in your database connect (keys, indexes, declared and inferred foreign keys, business context and value profiles) so people and AI agents can find the right join path and the right data."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
-authors = [{ name = "Ali Karami" }]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ali Karami", email = "52026333+alikarami76@users.noreply.github.com" }]
+keywords = [
+    "database", "schema", "foreign-keys", "er-diagram", "erd", "data-catalog", "text-to-sql", "sql",
+    "join-path", "ai-agents", "llm", "mcp", "claude-code", "mysql", "postgresql", "clickhouse",
+    "mongodb", "metabase", "data-profiling", "schema-inference",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Environment :: Console",
+    "Topic :: Database",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = []
 
 [project.optional-dependencies]
 live = ["sqlalchemy>=2.0"]
 yaml = ["pyyaml>=6"]
+mcp = ["mcp>=2,<3"]
+
+[project.urls]
+Homepage = "https://github.com/alikarami76/keygraph"
+Documentation = "https://github.com/alikarami76/keygraph#readme"
+Issues = "https://github.com/alikarami76/keygraph/issues"
+Changelog = "https://github.com/alikarami76/keygraph/blob/main/CHANGELOG.md"
 
 [project.scripts]
 keygraph = "keygraph.cli:main"
@@ -25,10 +48,18 @@ dev = [
     "sqlalchemy>=2.0",
     "pyyaml>=6",
     "playwright>=1.64.1",
+    "mcp>=2,<3",
 ]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src", "/README.md", "/LICENSE", "/CHANGELOG.md", "/CITATION.cff", "/AGENTS.md", "/llms.txt", "/pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/keygraph"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"

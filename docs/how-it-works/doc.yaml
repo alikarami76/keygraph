@@ -1,0 +1,9 @@
+template: custom
+name: how-it-works
+lang: en
+meta: {title: How keygraph works, subtitle: From a database to a map for people and AI agents, author: keygraph, keywords: [keygraph, database, relations, join paths]}
+html: page.html
+page: {size: A4, orientation: landscape, margins: "0"}
+header: ""
+footer: ""
+fonts: {body: [Inter]}

@@ -1,0 +1,34 @@
+# keygraph
+
+> keygraph maps how the tables in your database connect (keys, indexes, declared and inferred foreign keys, business context and value profiles) so people and AI agents can find the right join path and the right data. Open source (MIT), Python 3.11+, read-only, no LLM calls. Works with MySQL/MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase, MongoDB and information_schema dumps; serves agents through MCP, a CLI with --json, a Claude Code skill and markdown files.
+
+## Start here
+
+- [README](https://github.com/alikarami76/keygraph/blob/main/README.md): what keygraph is, when to use it, quickstart in three commands.
+- [When to use keygraph](https://github.com/alikarami76/keygraph/blob/main/README.md#when-to-use-keygraph): join paths, missing foreign keys, ER diagrams, schema context for text-to-SQL, status codes.
+- [Supported sources](https://github.com/alikarami76/keygraph/blob/main/README.md#supported-sources): what each database source reads and the read-only guarantee.
+
+## For AI agents
+
+- [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md): the command sequence (search, describe, path, keys), how to read confidence, what not to do.
+- [Claude Code skill](https://github.com/alikarami76/keygraph/blob/main/skills/keygraph/SKILL.md): when to use each command and how to build and extend the graph.
+- [MCP server setup](https://github.com/alikarami76/keygraph/blob/main/README.md#mcp): nine read-only tools and configs for Claude Code, Claude Desktop, Cursor and Codex.
+- [Use with AI agents](https://github.com/alikarami76/keygraph/blob/main/README.md#use-with-ai-agents): MCP, CLI --json and the generated areas/ and tables/ markdown.
+
+## Concepts
+
+- [How relations are inferred](https://github.com/alikarami76/keygraph/blob/main/README.md#how-relations-are-inferred): confidence, evidence, hubs, areas, path penalties, mirrors.
+- [Business context and value profiles](https://github.com/alikarami76/keygraph/blob/main/README.md#business-context-and-value-profiles): concepts, status codes, metrics, sampled profiles and the PII rule.
+- [Comparison](https://github.com/alikarami76/keygraph/blob/main/README.md#comparison): keygraph next to SchemaSpy, dbdocs, DataHub, OpenMetadata, database IDE diagrams, dbdiagram and schema linking.
+- [FAQ](https://github.com/alikarami76/keygraph/blob/main/README.md#faq): common questions about join paths, foreign keys, safety and MCP setup.
+
+## Examples and docs
+
+- [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md): a fictional 35-table webshop you can build and query in a minute.
+- [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf): a guided tour with screenshots of every explorer view.
+- [Design system](https://github.com/alikarami76/keygraph/blob/main/design/DESIGN.md): the explorer's visual design rules.
+
+## Optional
+
+- [Changelog](https://github.com/alikarami76/keygraph/blob/main/CHANGELOG.md): release notes.
+- [License](https://github.com/alikarami76/keygraph/blob/main/LICENSE): MIT.

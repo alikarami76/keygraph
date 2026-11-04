@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Callable, Iterable
 
-from ..model import Column, ForeignKey, Index, Schema
+from ..model import Column, ForeignKey, Index, Schema, parse_enum_members
 
 # Canonical field names are the MySQL information_schema ones. A mapping renames YOUR fields to these:
 # {"schema": "database", "table": "table", "column": "column", "raw": "raw"} style is expressed as
@@ -63,14 +63,14 @@ def load_dump(columns: str | Path | list | None = None, statistics: str | Path |
               key_columns: str | Path | list | None = None, default_schema: str = "main",
               columns_map: dict | None = None, statistics_map: dict | None = None,
               kcu_map: dict | None = None, row_filter: Callable[[dict], bool] | None = None,
-              schema_map: Callable[[dict], str] | None = None) -> Schema:
+              schema_map: Callable[[dict], str] | None = None, tables: str | Path | list | None = None,
+              tables_map: dict | None = None) -> Schema:
     """Build a Schema. Each argument is a path or an already-loaded list of row dicts.
 
     Missing STATISTICS: indexes fall back to COLUMN_KEY (PRI/UNI/MUL), marked approximate.
     Missing KEY_COLUMN_USAGE: no declared foreign keys (everything is inferred).
     """
     cm, sm, km = columns_map or {}, statistics_map or {}, kcu_map or {}
-    flat_c = cm.get("_flatten", [])
     sch = Schema()
 
     def rows_of(src, mp):
@@ -98,6 +98,15 @@ def load_dump(columns: str | Path | list | None = None, statistics: str | Path |
         t.columns.append(Column(str(cname), str(ctype), not (str(_get(r, "IS_NULLABLE", cm, "YES")).upper() == "NO"),
                                 int(_get(r, "ORDINAL_POSITION", cm, len(t.columns) + 1) or 0),
                                 str(_get(r, "COLUMN_KEY", cm, "") or "")))
+        c = t.columns[-1]
+        dv = _get(r, "COLUMN_DEFAULT", cm)
+        c.default = None if dv is None else str(dv)
+        c.extra = str(_get(r, "EXTRA", cm, "") or "")
+        c.charset = str(_get(r, "CHARACTER_SET_NAME", cm, "") or "")
+        c.collation = str(_get(r, "COLLATION_NAME", cm, "") or "")
+        c.comment = str(_get(r, "COLUMN_COMMENT", cm, "") or "")
+        c.generated = str(_get(r, "GENERATION_EXPRESSION", cm, "") or "")
+        c.values = parse_enum_members(str(ctype))
     stat_rows = rows_of(statistics, sm)
     if stat_rows is not None:
         groups: dict[tuple, dict] = {}
@@ -146,4 +155,15 @@ def load_dump(columns: str | Path | list | None = None, statistics: str | Path |
             if t is not None:
                 pairs = [g[k] for k in sorted(g)]
                 t.foreign_keys.append(ForeignKey(cn, [p[0] for p in pairs], rs, rt, [p[1] for p in pairs]))
+    trows = rows_of(tables, tables_map or {})
+    for r in trows or []:
+        t = sch.tables.get(f"{tschema(r, tables_map or {})}.{_get(r, 'TABLE_NAME', tables_map or {})}")
+        if t is None:
+            continue
+        g = lambda k: _get(r, k, tables_map or {})  # noqa: E731
+        info = {"engine": g("ENGINE"), "rows_estimate": g("TABLE_ROWS"), "data_bytes": g("DATA_LENGTH"),
+                "index_bytes": g("INDEX_LENGTH"), "comment": g("TABLE_COMMENT"), "partitioning": g("PARTITIONING"),
+                "create_options": g("CREATE_OPTIONS")}
+        t.info.update({k: (int(v) if k.endswith(("estimate", "bytes")) and str(v).isdigit() else v)
+                       for k, v in info.items() if v not in (None, "")})
     return sch

@@ -44,8 +44,12 @@ def build_graph(schema: Schema, overrides: Overrides | None = None, options: Opt
     for t in sorted(schema.tables.values(), key=lambda x: x.id):
         nodes.append({
             "id": t.id, "schema": t.schema, "table": t.name,
+            "info": t.info,
             "columns": [{"name": c.name, "type": c.type, "family": type_family(c.type), "nullable": c.nullable,
-                         **({"key": c.key} if c.key else {})}
+                         **({"key": c.key} if c.key else {}),
+                         **{k: v for k, v in (("default", c.default), ("extra", c.extra), ("charset", c.charset),
+                                              ("collation", c.collation), ("comment", c.comment), ("values", c.values),
+                                              ("generated", c.generated)) if v not in (None, "", [])}}
                         for c in sorted(t.columns, key=lambda c: (c.position, c.name))],
             "primary_key": t.primary_key,
             "unique_keys": [{"name": ix.name, "columns": ix.columns, **({"approximate": True} if ix.approximate else {})}

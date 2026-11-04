@@ -13,6 +13,13 @@ class Column:
     nullable: bool = True
     position: int = 0
     key: str = ""  # PRI / UNI / MUL as reported by MySQL COLUMNS, or ""
+    default: str | None = None
+    extra: str = ""  # auto_increment, on update ..., VIRTUAL GENERATED
+    charset: str = ""
+    collation: str = ""
+    comment: str = ""
+    values: list[str] = field(default_factory=list)  # enum / set members
+    generated: str = ""  # generation expression
 
 
 @dataclass
@@ -40,6 +47,7 @@ class Table:
     columns: list[Column] = field(default_factory=list)
     indexes: list[Index] = field(default_factory=list)
     foreign_keys: list[ForeignKey] = field(default_factory=list)
+    info: dict = field(default_factory=dict)  # engine, rows_estimate, data_bytes, partitioning, comment, checks, sorting_key ...
 
     @property
     def id(self) -> str:
@@ -83,7 +91,7 @@ _INT = {"tinyint", "smallint", "mediumint", "int", "integer", "bigint", "serial"
 _DEC = {"decimal", "numeric", "money", "dec", "fixed"}
 _FLT = {"float", "double", "real", "float4", "float8", "float32", "float64"}
 _STR = {"char", "varchar", "text", "tinytext", "mediumtext", "longtext", "character", "nvarchar",
-        "nchar", "string", "citext", "enum", "set", "uuid", "ntext", "fixedstring", "varchar2"}
+        "nchar", "string", "citext", "enum", "enum8", "enum16", "set", "uuid", "ntext", "fixedstring", "varchar2"}
 _DATE = {"date", "datetime", "timestamp", "timestamptz", "time", "year", "datetime2", "date32"}
 _BIN = {"blob", "tinyblob", "mediumblob", "longblob", "binary", "varbinary", "bytea"}
 _BOOL = {"bool", "boolean", "bit"}
@@ -97,7 +105,8 @@ def type_family(type_str: str) -> str:
     t = (type_str or "").lower().strip()
     if not t:
         return "unknown"
-    t = re.sub(r"^(nullable|lowcardinality)\(", "", t).rstrip(")")
+    while re.match(r"^(nullable|lowcardinality)\(", t):
+        t = re.sub(r"^(nullable|lowcardinality)\(", "", t).rstrip(")")
     first = re.split(r"[\s(]", t, maxsplit=1)[0]
     if first == "double" or first == "character" and "varying" in t:
         return "float" if first == "double" else "string"
@@ -123,3 +132,18 @@ def type_family(type_str: str) -> str:
 def type_length(type_str: str) -> int | None:
     m = re.search(r"\((\d+)\)", type_str or "")
     return int(m.group(1)) if m else None
+
+
+def parse_enum_members(type_str: str) -> list[str]:
+    """Members of MySQL enum('a','b') / set(...), ClickHouse Enum8('a' = 1, 'b' = 2) (possibly wrapped in
+    Nullable/LowCardinality). Returns [] for other types. ClickHouse members keep their numeric code as 'a=1'."""
+    t = (type_str or "").strip()
+    m = re.search(r"\b(enum|set|enum8|enum16)\s*\((.*)\)", t, re.I | re.S)
+    if not m:
+        return []
+    body = m.group(2)
+    out = []
+    for lit in re.finditer(r"'((?:[^'\\]|\\.|'')*)'(?:\s*=\s*(-?\d+))?", body):
+        name = lit.group(1).replace("''", "'").replace("\\'", "'")
+        out.append(f"{name}={lit.group(2)}" if lit.group(2) is not None and m.group(1).lower().startswith("enum") and m.group(1).lower() != "enum" else name)
+    return out

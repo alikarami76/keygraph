@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 
-from .context import ContextDB
+from .context import ContextDB, safe_source
 from .graph import Graph
-from .query import filter_columns, find_paths
+from .query import column_detail, filter_columns, find_paths, table_info_line
 
-WEIGHT = {"concept": 1.0, "table_note": 1.2, "metric": 1.0, "column_ctx": 0.8, "table": 1.0, "column": 0.5}
+WEIGHT = {"concept": 1.0, "table_note": 1.2, "metric": 1.0, "column_ctx": 0.8, "column_value": 0.7, "table": 1.0, "column": 0.5}
 
 
 def apply_context_to_graph(graph: Graph, ctx: ContextDB) -> int:
@@ -27,7 +27,7 @@ def apply_context_to_graph(graph: Graph, ctx: ContextDB) -> int:
         targets = [by_id[r["edge_id"]]] if r["edge_id"] in by_id else [
             e for a in prim.get(r["from_concept"], ()) for b in prim.get(r["to_concept"], ()) for e in pair.get((a, b), [])]
         for e in targets:
-            msg = f"business relation: {r['from_concept']} {r['rel']} {r['to_concept']} (source: {r['source']})"
+            msg = f"business relation: {r['from_concept']} {r['rel']} {r['to_concept']} (source: {safe_source(r['source'])})"
             if msg in e["evidence"]:
                 continue
             e["evidence"].append(msg)
@@ -61,6 +61,8 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
             add(ref, w, "table name matches")
         elif kind == "column":
             add(ref.rsplit(".", 1)[0], w, f"column {ref.rsplit('.', 1)[1]} matches")
+        elif kind == "column_value":
+            add(ref.rsplit(".", 1)[0], w, f"observed values of {ref.rsplit('.', 1)[1]} match")
         elif kind == "column_ctx":
             add(ref.rsplit(".", 1)[0], w, f"column context: {ref.rsplit('.', 1)[1]}")
         elif kind == "table_note":
@@ -130,7 +132,9 @@ def describe(graph: Graph, ctx: ContextDB, ref: str) -> dict:
     nb = neighbors(graph, t, 1)
     return {"table": t, "keys": keys(graph, t), "filter_columns": filter_columns(graph.nodes[t], c["notes"]),
             "context": c, "relations": nb["levels"].get("1", []),
-            "columns": [{"name": x["name"], "type": x["type"], "nullable": x["nullable"]} for x in graph.nodes[t]["columns"]]}
+            "info_line": table_info_line(graph.nodes[t]),
+            "columns": [{**x, "detail": column_detail(x), "profile": (graph.data.get("profiles") or {}).get(f"{t}.{x['name']}")}
+                        for x in graph.nodes[t]["columns"]]}
 
 
 def format_describe(d: dict) -> str:
@@ -142,7 +146,7 @@ def format_describe(d: dict) -> str:
         for k in ("summary", "freshness", "soft_delete", "date_column", "pitfalls"):
             if n.get(k):
                 out.append(f"  {k}: {n[k]}")
-        out.append(f"  context source: {n['source']}  verified: {bool(n['verified'])}")
+        out.append(f"  context source: {safe_source(n['source'])}  verified: {bool(n['verified'])}")
     out.append("  efficient filters: " + (", ".join(d["filter_columns"]) or "n/a"))
     if d["context"]["concepts"]:
         out.append("  concepts: " + ", ".join(f"{l['concept']} ({l['role']})" for l in d["context"]["concepts"]))
@@ -159,7 +163,11 @@ def format_describe(d: dict) -> str:
             extra += " codes: " + ", ".join(f"{k}={v}" for k, v in s["codes"].items())
         if s and s["pii"]:
             extra += " [PII]"
-        out.append(f"    {c['name']} {c['type']}{extra}")
+        pf = c.get("profile")
+        if pf:
+            from .profile import summarize
+            extra += "  [" + summarize(pf) + "]"
+        out.append(f"    {c['name']} {c['detail']}{extra}")
     if d["relations"]:
         out.append("  relations:")
         for x in d["relations"]:

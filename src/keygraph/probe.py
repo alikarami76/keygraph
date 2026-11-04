@@ -77,7 +77,7 @@ def _lit(v) -> str | None:
 
 
 def probe_graph(graph: Graph, runner: SelectOnlyRunner, sample: int = 500, quote: str = '"',
-                max_edges: int = 200, min_conf: float = 0.0, statuses=("inferred",)) -> dict:
+                max_edges: int = 200, min_conf: float = 0.0, statuses=("inferred",), profiles: dict | None = None) -> dict:
     q = lambda name: f"{quote}{name}{quote}"
     qt = lambda tid: ".".join(q(p) for p in tid.split(".", 1)) if not tid.startswith("main.") else q(tid.split(".", 1)[1])
     res = {"probed": 0, "skipped": 0, "errors": []}
@@ -88,6 +88,13 @@ def probe_graph(graph: Graph, runner: SelectOnlyRunner, sample: int = 500, quote
             res["skipped"] += 1
             continue
         fc, tc = e["from_columns"][0], e["to_columns"][0]
+        pf, pt = (profiles or {}).get(f"{e['from']}.{fc}", {}).get("numeric"), (profiles or {}).get(f"{e['to']}.{tc}", {}).get("numeric")
+        if pf and pt and (pf["min"] > pt["max"] or pf["max"] < pt["min"]):
+            e["evidence"].append(f"profile: value ranges do not overlap ({pf['min']:g}..{pf['max']:g} vs {pt['min']:g}..{pt['max']:g})")
+            e["confidence"] = round(e["confidence"] * 0.3, 2)
+            e["status"] = "probed"
+            res["probed"] += 1
+            continue
         try:
             vals = [r[0] for r in runner.run(
                 f"SELECT {q(fc)} FROM {qt(e['from'])} WHERE {q(fc)} IS NOT NULL LIMIT {int(sample)}")]

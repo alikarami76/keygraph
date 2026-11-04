@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use keygraph, please cite it as below."
+title: "keygraph"
+type: software
+version: 0.2.0
+date-released: 2026-11-03
+license: MIT
+url: "https://github.com/alikarami76/keygraph"
+repository-code: "https://github.com/alikarami76/keygraph"
+authors:
+  - family-names: Karami
+    given-names: Ali
+abstract: >-
+  keygraph maps how the tables in a database connect: keys, indexes, declared and inferred
+  foreign keys with confidence and evidence, business context and value profiles. It finds join
+  paths between tables and gives people an offline HTML explorer and AI agents an MCP server,
+  a CLI with JSON output and markdown files. It is read-only and deterministic.
+keywords:
+  - database
+  - schema
+  - foreign keys
+  - join path
+  - ER diagram
+  - text-to-SQL
+  - MCP

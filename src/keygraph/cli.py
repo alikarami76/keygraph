@@ -10,16 +10,22 @@ import time
 import webbrowser
 from pathlib import Path
 
+from .areas import apply_curation, area_links, cluster_areas
 from .context import ContextDB
+from .docs_out import write_docs
 from .explorer import build_html
+from .mirrors import detect_mirrors, mark_mirrors
+from .hubs import detect_hubs, mark_hubs
 from .graph import AmbiguousTable, Graph, UnknownTable, build_graph
 from .infer import Options
 from .model import Schema
 from .overrides import Overrides
 from .report import write_report
+from .summary import relation_summary
 from . import query as Q
 from . import search as S
 
+CUR_PREFIX = "curation: "
 DEFAULT_DIR = os.environ.get("KEYGRAPH_DIR", "keygraph-out")
 
 
@@ -39,23 +45,83 @@ def _emit(args, data, text: str) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=1) if getattr(args, "json", False) else text)
 
 
-def _load(args) -> Graph:
-    path = Path(args.dir) / "graph.json"
+def load_graph(dir) -> Graph:
+    path = Path(dir) / "graph.json"
     if not path.exists():
         raise SystemExit(f"no graph at {path}; run `keygraph scan` or `keygraph load` first")
     return Graph.load(path)
+
+
+def _load(args) -> Graph:
+    return load_graph(args.dir)
 
 
 def _ctx(args, g: Graph) -> ContextDB:
     return ContextDB(Path(args.dir) / "keygraph.db", g)
 
 
+MANIFEST = ".keygraph-pages.json"
+
+
+def _drop_stale_pages(out: Path, written: list[str]) -> None:
+    """Delete only the pages the previous build wrote and this one did not (areas can be renamed).
+
+    The previous build's page list is kept in a manifest. Only *.md files directly inside a real
+    (non-symlink) areas/ or tables/ directory are ever removed, so a user's own files survive.
+    """
+    mf = out / MANIFEST
+    try:
+        old = json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else []
+    except (OSError, ValueError):
+        old = []
+    old = [x for x in old if isinstance(x, str)] if isinstance(old, list) else []
+    keep = set(written)
+    for rel in old:
+        parts = rel.split("/")
+        if rel in keep or len(parts) != 2 or parts[0] not in ("areas", "tables") or not rel.endswith(".md"):
+            continue
+        d = out / parts[0]
+        if d.is_symlink() or not d.is_dir():
+            continue
+        f = d / parts[1]
+        if f.is_file() and not f.is_symlink():
+            f.unlink()
+    mf.write_text(json.dumps(sorted(keep)), encoding="utf-8")
+
+
 def render(out: Path, g: Graph, ctx: ContextDB | None) -> dict:
     """Write graph.json, RELATIONS_REPORT.md and keygraph.html."""
     out.mkdir(parents=True, exist_ok=True)
+    cur = ctx.curation() if ctx else {"areas": [], "hubs": {}, "mirrors": {}}
+    warns: list[str] = list(cur.get("warnings", []))
+    names: dict[str, list[str]] = {}
+    for k in ("include", "exclude"):
+        names[k] = []
+        for t in cur["hubs"].get(k, []):
+            try:
+                g.resolve(t)
+                names[k].append(t)
+            except ValueError as exc:
+                warns.append(f"hubs {k} '{t}' ignored: {exc}")
+    mcur = cur.get("mirrors") or {}
+    schemas = {n["schema"] for n in g.nodes.values()}
+    for m, o in mcur.items():
+        if o in (False, None) and m not in schemas:
+            warns.append(f"mirrors.yaml: '{m}: {o}' ignored: unknown schema")
+    mark_mirrors(g, detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
+                                   never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns))
+    mark_hubs(g, detect_hubs(g, include=names["include"], exclude=names["exclude"]))
+    areas, cwarns = apply_curation(g, cluster_areas(g), cur["areas"])
+    g.data["areas"], g.data["area_links"] = areas, area_links(g, areas)
+    # a re-render reloads graph.json, so drop curation warnings from the previous render first
+    g.data["warnings"] = [w for w in g.data.get("warnings", []) if not w.startswith(CUR_PREFIX)]
+    g.data["warnings"] += [CUR_PREFIX + w for w in warns + cwarns]
+    dump = ctx.dump() if ctx else None  # one dump for the docs and the HTML (write_docs only reads it)
+    docs = write_docs(out, g, areas, dump)
+    _drop_stale_pages(out, docs["files"])
     g.save(out / "graph.json")
     (out / "RELATIONS_REPORT.md").write_text(write_report(g, ctx), encoding="utf-8")
-    html = build_html(g, ctx.dump() if ctx else None)
+    html = build_html(g, dump)
     (out / "keygraph.html").write_text(html, encoding="utf-8")
     return {"graph.json": (out / "graph.json").stat().st_size, "RELATIONS_REPORT.md": (out / "RELATIONS_REPORT.md").stat().st_size,
             "keygraph.html": len(html.encode("utf-8"))}
@@ -69,9 +135,14 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
     g = build_graph(schema, ov, options)
     ctx = ContextDB(out / "keygraph.db", g)
     ctx.index_graph(g)
+    if context:
+        ctx.clear_curation()  # rules from files that are no longer imported must not apply
     for path in context or []:
         ctx.import_path(path)
     ctx.reindex()
+    prof = ctx.load_profiles()
+    if prof:
+        g.data["profiles"] = prof
     S.apply_context_to_graph(g, ctx)
     sizes = render(out, g, ctx)
     result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
@@ -99,7 +170,7 @@ def cmd_load(a):
     if a.flatten:
         cm["_flatten"] = a.flatten
     sch = load_dump(a.columns, a.statistics, a.key_columns, a.default_schema, cm, _json_arg(a.statistics_map),
-                    _json_arg(a.kcu_map), filt)
+                    _json_arg(a.kcu_map), filt, tables=a.tables)
     run_pipeline(sch, a.dir, a.overrides, a.context)
 
 
@@ -108,6 +179,7 @@ def cmd_render(a):
     ctx = _ctx(a, g)
     ctx.index_graph(g)
     ctx.reindex()
+    g.data["profiles"] = ctx.load_profiles() or g.data.get("profiles", {})
     print(json.dumps(render(Path(a.dir), g, ctx)))
     ctx.close()
 
@@ -124,10 +196,51 @@ def cmd_probe(a):
     print(json.dumps(res, indent=1))
 
 
+def cmd_profile(a):
+    from .adapters import open_source
+    from .adapters.fetch import command_runner
+    from .profile import run_profile
+    g = _load(a)
+    ctx = _ctx(a, g)
+    if a.source in ("mongo", "mongodb"):
+        from pymongo import MongoClient  # optional extra
+        src = open_source("mongodb", db=MongoClient(a.url)[a.db])
+    elif a.cmd:
+        src = open_source(a.source, run=command_runner(a.cmd, a.timeout))
+    else:
+        src = open_source(a.source, url=a.url)
+    src.bare = a.bare_tables
+    rep = run_profile(g, src, ctx, tables=[t for t in (a.tables or "").split(",") if t], top_hubs=a.top_hubs, with_context=a.with_context,
+                      total_budget_s=a.total_budget, n=a.sample, strategy=a.strategy, budget_s=a.budget,
+                      skip_over_rows=a.skip_over_rows, force=a.force)
+    ctx.reindex()
+    render(Path(a.dir), g, ctx)
+    ctx.close()
+    print(json.dumps(rep, indent=1, ensure_ascii=False))
+
+
+def path_result(g: Graph, a: str, b: str, max_hops=4, min_confidence=0.6, k=3, include_mirrors=False) -> dict:
+    ps = Q.find_paths(g, a, b, max_hops, min_confidence, k, include_mirrors=include_mirrors)
+    return {"from": g.resolve(a), "to": g.resolve(b), "paths": ps}
+
+
+def describe_result(dir, g: Graph, table: str, readonly: bool = False) -> dict:
+    with ContextDB(Path(dir) / "keygraph.db", g, readonly) as ctx:
+        r = S.describe(g, ctx, table)
+    r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []))
+    return r
+
+
+def area_result(dir, g: Graph, name: str, include_mirrors=False, readonly: bool = False) -> dict:
+    with ContextDB(Path(dir) / "keygraph.db", g, readonly) as ctx:
+        grains = {r["table_id"]: r["grain"] for r in ctx.rows("table_notes") if r.get("grain")}
+    return Q.area_detail(g, name, grains, include_mirrors=include_mirrors)
+
+
 def cmd_path(a):
     g = _load(a)
-    ps = Q.find_paths(g, a.a, a.b, a.max_hops, a.min_confidence, a.k)
-    _emit(a, {"from": g.resolve(a.a), "to": g.resolve(a.b), "paths": ps}, Q.format_paths(a.a, a.b, ps))
+    r = path_result(g, a.a, a.b, a.max_hops, a.min_confidence, a.k, a.include_mirrors)
+    _emit(a, r, Q.format_paths(a.a, a.b, r["paths"]))
 
 
 def cmd_neighbors(a):
@@ -150,18 +263,27 @@ def cmd_keys(a):
 
 def cmd_search(a):
     g = _load(a)
-    ctx = _ctx(a, g)
-    r = S.search(g, ctx, " ".join(a.query), a.limit)
-    ctx.close()
+    with _ctx(a, g) as ctx:
+        r = S.search(g, ctx, " ".join(a.query), a.limit)
     _emit(a, r, S.format_search(r))
 
 
 def cmd_describe(a):
     g = _load(a)
-    ctx = _ctx(a, g)
-    r = S.describe(g, ctx, a.table)
-    ctx.close()
-    _emit(a, r, S.format_describe(r))
+    r = describe_result(a.dir, g, a.table)
+    _emit(a, r, S.format_describe(r) + "\n" + Q.format_relation_summary(r["relation_summary"]))
+
+
+def cmd_areas(a):
+    g = _load(a)
+    rows = Q.list_areas(g, include_mirrors=a.include_mirrors)
+    _emit(a, rows, Q.format_areas(rows))
+
+
+def cmd_area(a):
+    g = _load(a)
+    r = area_result(a.dir, g, a.name, a.include_mirrors)
+    _emit(a, r, Q.format_area(r))
 
 
 def _kv(pairs: list[str]) -> dict:
@@ -231,6 +353,14 @@ def cmd_fetch(a):
     print(f"fetched {len(stats)} index rows and {len(kcu)} foreign-key rows into {out}")
 
 
+def cmd_mcp(a):
+    try:
+        from .mcp_server import build_server
+    except ImportError:
+        raise SystemExit("the MCP server needs the mcp extra: pip install 'keygraph[mcp]' (or uvx --from 'keygraph[mcp]' keygraph mcp)")
+    build_server(a.dir).run("stdio")
+
+
 def cmd_ui(a):
     p = (Path(a.dir) / "keygraph.html").resolve()
     if not p.exists():
@@ -267,6 +397,7 @@ def main(argv=None) -> int:
     p.add_argument("--statistics-map")
     p.add_argument("--kcu-map")
     p.add_argument("--flatten", action="append", help="flatten a nested dict field (e.g. raw) into the row")
+    p.add_argument("--tables", help="information_schema.TABLES dump (engine, rows, sizes, comment)")
     p.add_argument("--where", action="append", help="keep only COLUMNS rows with field=value (repeatable)")
     build_opts(p)
     add("render", cmd_render, "rewrite report and explorer from graph.json + keygraph.db")
@@ -275,6 +406,22 @@ def main(argv=None) -> int:
     p.add_argument("--sample", type=int, default=500)
     p.add_argument("--max-edges", type=int, default=200)
     p.add_argument("--min-confidence", type=float, default=0.0)
+    p = add("profile", cmd_profile, "sample column values (read-only, bounded) and store value insights")
+    p.add_argument("--source", required=True, choices=["mysql", "mariadb", "postgres", "sqlite", "sqlserver", "clickhouse", "mongodb"])
+    p.add_argument("--url", help="SQLAlchemy URL (or Mongo URI)")
+    p.add_argument("--cmd", help="external read-only command template with {sql}, printing JSON rows")
+    p.add_argument("--db", help="Mongo database name")
+    p.add_argument("--tables", help="comma-separated tables")
+    p.add_argument("--top-hubs", type=int, default=0, help="also the N most-connected tables")
+    p.add_argument("--with-context", action="store_true", help="also every table that has context notes")
+    p.add_argument("--sample", type=int, default=10000)
+    p.add_argument("--strategy", default="auto", choices=["auto", "limit", "recent", "tablesample"])
+    p.add_argument("--budget", type=float, default=20.0, help="seconds per table; slower tables are flagged")
+    p.add_argument("--total-budget", type=float, default=600.0)
+    p.add_argument("--skip-over-rows", type=int, default=50_000_000)
+    p.add_argument("--force", action="store_true", help="profile tables over the row limit")
+    p.add_argument("--bare-tables", action="store_true", help="use bare table names (graph schema is only a label)")
+    p.add_argument("--timeout", type=int, default=180)
     p = add("path", cmd_path, "best join paths between two tables")
     p.add_argument("a")
     p.add_argument("b")
@@ -282,6 +429,7 @@ def main(argv=None) -> int:
     p.add_argument("--min-confidence", type=float, default=0.6)
     p.add_argument("-k", type=int, default=3)
     p.add_argument("--json", action="store_true")
+    p.add_argument("--include-mirrors", action="store_true", help="also use tables in mirror schemas (copies of another schema)")
     p = add("neighbors", cmd_neighbors, "tables related to a table")
     p.add_argument("table")
     p.add_argument("--depth", type=int, default=1)
@@ -300,6 +448,13 @@ def main(argv=None) -> int:
     p = add("describe", cmd_describe, "keys plus business context for a table")
     p.add_argument("table")
     p.add_argument("--json", action="store_true")
+    p = add("areas", cmd_areas, "list the business areas (clusters of related tables)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--include-mirrors", action="store_true", help="also use tables in mirror schemas (copies of another schema)")
+    p = add("area", cmd_area, "one area: tables with grain, internal relations, neighbouring areas, hub labels")
+    p.add_argument("name", help="area id, area name (any case) or a table")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--include-mirrors", action="store_true", help="also use tables in mirror schemas (copies of another schema)")
     p = add("context", cmd_context, "import / add / export business context")
     p.add_argument("action", choices=["import", "import-notes", "add", "export", "stats"])
     p.add_argument("path", nargs="?")
@@ -315,8 +470,17 @@ def main(argv=None) -> int:
     p.add_argument("--limit", type=int, default=10000)
     p.add_argument("--timeout", type=int, default=180)
     p.add_argument("--out", required=True)
+    add("mcp", cmd_mcp, "serve keygraph to AI agents over MCP (stdio); needs keygraph[mcp]")
     add("ui", cmd_ui, "open keygraph.html in the browser")
-    a = ap.parse_args(argv)
+    a, extra = ap.parse_known_args(argv)
+    if extra:
+        # Python 3.11 argparse stops filling `path`/`fields` once an option (--kind) appears between
+        # positionals, so the trailing key=value pairs arrive here. Put them back where 3.12+ puts them.
+        if a.cmd != "context" or any(x.startswith("-") for x in extra):
+            ap.error("unrecognized arguments: " + " ".join(extra))
+        if a.path is None:
+            a.path, extra = extra[0], extra[1:]
+        a.fields = list(a.fields or []) + extra
     if a.cmd == "context" and a.action == "add" and not a.kind:
         ap.error("context add needs --kind")
     if a.cmd == "context" and a.action == "add" and a.path:

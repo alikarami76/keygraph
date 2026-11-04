@@ -23,6 +23,10 @@ def normalize(text: str) -> str:
     return re.sub(r"[\s_./\\:;,|()\[\]{}\-]+", " ", text).strip()
 
 
+STOPWORDS = frozenset("a an and are as at be by for from in into is of on or per the to with".split())
+PHRASE_BOOST = 2.0
+
+
 def tokens(text: str) -> list[str]:
     return re.findall(r"\w+", normalize(text))
 
@@ -41,6 +45,11 @@ CREATE TABLE IF NOT EXISTS metrics(name TEXT PRIMARY KEY, definition TEXT, expre
   filters TEXT, caveats TEXT, source TEXT, verified INTEGER, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS table_notes(table_id TEXT PRIMARY KEY, grain TEXT, freshness TEXT, soft_delete TEXT,
   date_column TEXT, recommended_indexes TEXT, pitfalls TEXT, summary TEXT, source TEXT, verified INTEGER, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS column_profile(table_id TEXT, col TEXT, profile TEXT, profiled_at TEXT, sample_size INTEGER, method TEXT,
+  PRIMARY KEY(table_id, col));
+CREATE TABLE IF NOT EXISTS column_details(table_id TEXT, col TEXT, detail TEXT, PRIMARY KEY(table_id, col));
+CREATE TABLE IF NOT EXISTS table_info(table_id TEXT PRIMARY KEY, info TEXT);
+CREATE TABLE IF NOT EXISTS curation(kind TEXT, body JSON, source TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body, tokenize='unicode61');
 """
 
@@ -58,19 +67,51 @@ def _l(v) -> list:
     return v if isinstance(v, list) else [x.strip() for x in str(v).split(",") if x.strip()]
 
 
+def safe_source(src) -> str:
+    """A context source as it may appear in outputs: never an absolute local path (keep the bare file name)."""
+    s = str(src or "").strip()
+    if s.startswith(("/", "~", "\\")) or re.match(r"^[A-Za-z]:[\\/]", s):
+        return re.split(r"[\\/]", s.rstrip("/\\"))[-1]
+    return s
+
+
 class ContextDB:
-    def __init__(self, path: str | Path, graph=None):
+    def __init__(self, path: str | Path, graph=None, readonly: bool = False):
+        """readonly: open an existing file without writing to it; a missing file gives an empty in-memory context."""
         self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(self.path)
+        if readonly and self.path.exists():
+            self.db = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True)
+        elif readonly:
+            self.db = sqlite3.connect(":memory:")
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
+        if not (readonly and self.path.exists()):
+            self.db.executescript(SCHEMA)
+        else:  # a file from an older keygraph may lack newer tables: read them as empty (temp tables, file untouched)
+            have = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
+            for stmt in SCHEMA.split(";"):
+                m = re.search(r"CREATE (?:VIRTUAL )?TABLE IF NOT EXISTS (\w+)", stmt)
+                if m and m.group(1) not in have:
+                    self.db.execute(stmt.replace("IF NOT EXISTS ", "IF NOT EXISTS temp.", 1))
         self.graph = graph
         self.warnings: list[str] = []
 
     def close(self) -> None:
-        self.db.commit()
-        self.db.close()
+        try:
+            self.db.commit()
+        finally:
+            self.db.close()
+
+    def __enter__(self) -> "ContextDB":
+        return self
+
+    def __exit__(self, exc_type, *_) -> None:
+        if exc_type is None:
+            self.close()
+        else:  # leave half-done writes uncommitted, but always release the handle
+            self.db.close()
 
     # --- reference checks --------------------------------------------------------
     def _tid(self, ref: str | None) -> str:
@@ -89,7 +130,7 @@ class ContextDB:
     # --- writes ------------------------------------------------------------------
     def _meta(self, d: dict, default_source: str, default_verified) -> tuple:
         v = d.get("verified", default_verified)
-        return (d.get("source") or default_source or "unknown", 1 if v in (True, 1, "true", "yes") else 0,
+        return (safe_source(d.get("source") or default_source) or "unknown", 1 if v in (True, 1, "true", "yes") else 0,
                 time.strftime("%Y-%m-%dT%H:%M:%S"))
 
     def upsert(self, kind: str, d: dict, source: str = "", verified=False) -> None:
@@ -147,7 +188,11 @@ class ContextDB:
             else:
                 import yaml
                 raw = yaml.safe_load(text) or {}
-            src, ver = raw.get("source") or str(f), raw.get("verified", default_verified)
+            rel = f.relative_to(p).as_posix() if p.is_dir() else f.name
+            if not isinstance(raw, dict):
+                raise ValueError(f"context file {rel}: expected a mapping at the top level, got {type(raw).__name__}")
+            self._save_curation(rel, raw)
+            src, ver = safe_source(raw.get("source")) or rel, raw.get("verified", default_verified)
             for key, kind in (("concepts", "concept"), ("relations", "relation"), ("columns", "column"),
                               ("metrics", "metric"), ("tables", "table")):
                 for item in raw.get(key) or []:
@@ -156,9 +201,61 @@ class ContextDB:
         self.reindex()
         return counts
 
+    def clear_curation(self) -> None:
+        """Forget all curation rules (a build that imports context starts from the files it imports now)."""
+        self.db.execute("DELETE FROM curation")
+        self.db.commit()
+
+    def _save_curation(self, source: str, raw: dict) -> None:
+        """Replace this file's curation rows, so importing the same file again never duplicates rules."""
+        self.db.execute("DELETE FROM curation WHERE source=?", (source,))
+        for rule in raw.get("areas") or []:
+            self.db.execute("INSERT INTO curation VALUES('area',?,?)", (json.dumps(rule, ensure_ascii=False), source))
+        if raw.get("mirrors"):
+            self.db.execute("INSERT INTO curation VALUES('mirrors',?,?)", (json.dumps(raw["mirrors"], ensure_ascii=False), source))
+        if raw.get("hubs"):
+            self.db.execute("INSERT INTO curation VALUES('hubs',?,?)", (json.dumps(raw["hubs"], ensure_ascii=False), source))
+        self.db.commit()
+
     # --- reads -------------------------------------------------------------------
     def rows(self, table: str, where: str = "", args: tuple = ()) -> list[dict]:
-        return [dict(r) for r in self.db.execute(f"SELECT * FROM {table} {where}", args)]
+        out = [dict(r) for r in self.db.execute(f"SELECT * FROM {table} {where}", args)]
+        for r in out:  # rows written before sources were made relative may still hold absolute paths
+            if r.get("source"):
+                r["source"] = safe_source(r["source"])
+        return out
+
+    def curation(self) -> dict:
+        """Area rules, hub and mirror overrides from the imported files. Malformed entries (user-written YAML)
+        are skipped with a line in out["warnings"], never raised."""
+        out: dict = {"areas": [], "hubs": {"include": [], "exclude": []}, "mirrors": {}, "warnings": []}
+        warn = out["warnings"].append
+        for r in self.db.execute("SELECT * FROM curation ORDER BY source, rowid"):
+            body, src = json.loads(r["body"]), safe_source(r["source"])
+            if r["kind"] == "area":
+                if not isinstance(body, dict):
+                    warn(f"{src}: area rule {body!r} ignored: expected a mapping with name, match or merge")
+                elif not any(body.get(k) for k in ("name", "match", "merge")):
+                    warn(f"{src}: area rule {body!r} ignored: it needs a name, a match or a merge")
+                else:
+                    rule = dict(body)
+                    for k in ("match", "pin", "exclude", "merge"):
+                        if k in rule:
+                            rule[k] = [str(x) for x in _l(rule[k]) if x is not None]
+                    if "name" in rule:
+                        rule["name"] = str(rule["name"])
+                    out["areas"].append(rule)
+            elif r["kind"] == "mirrors":  # {mirror schema: original schema, or false for "never a mirror"}
+                if isinstance(body, dict):
+                    out["mirrors"].update({str(k): v for k, v in body.items()})
+                else:
+                    warn(f"{src}: mirrors ignored: expected a mapping of mirror schema to original schema")
+            elif isinstance(body, dict):
+                for k in ("include", "exclude"):
+                    out["hubs"][k] += [str(t) for t in _l(body.get(k)) if str(t) not in out["hubs"][k]]
+            else:
+                warn(f"{src}: hubs ignored: expected a mapping with include and/or exclude lists")
+        return out
 
     def counts(self) -> dict:
         return {t: self.db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
@@ -178,13 +275,13 @@ class ContextDB:
         for c in self.rows("concepts", "ORDER BY name"):
             c["synonyms"] = json.loads(c["synonyms"] or "[]")
             c["links"] = [{"table": l["table_id"], "column": l["col"], "role": l["role"], "note": l["note"],
-                           "source": l["source"], "verified": bool(l["verified"])}
+                           "source": safe_source(l["source"]), "verified": bool(l["verified"])}
                           for l in self.rows("concept_links", "WHERE concept=?", (c["name"],))]
             c["verified"] = bool(c["verified"])
             out["concepts"].append(c)
         for r in self.rows("concept_relations", "ORDER BY from_concept,rel,to_concept"):
             out["relations"].append({"from": r["from_concept"], "rel": r["rel"], "to": r["to_concept"], "edge": r["edge_id"],
-                                     "note": r["note"], "source": r["source"], "verified": bool(r["verified"])})
+                                     "note": r["note"], "source": safe_source(r["source"]), "verified": bool(r["verified"])})
         for r in self.rows("column_semantics", "ORDER BY table_id,col"):
             r["codes"] = json.loads(r["codes"]) if r["codes"] else {}
             r["verified"], r["pii"] = bool(r["verified"]), bool(r["pii"])
@@ -206,16 +303,42 @@ class ContextDB:
         self.graph = graph
         self.db.execute("DELETE FROM search_fts WHERE kind IN ('table','column')")
         rows = []
+        self.db.execute("DELETE FROM column_details")
+        self.db.execute("DELETE FROM table_info")
+        det, tinfo = [], []
         for n in graph.nodes.values():
-            rows.append(("table", n["id"], n["id"], normalize(n["id"])))
+            rows.append(("table", n["id"], n["id"], normalize(n["id"] + " " + str((n.get("info") or {}).get("comment", "")))))
+            if n.get("info"):
+                tinfo.append((n["id"], json.dumps(n["info"], ensure_ascii=False, default=str)))
             for c in n["columns"]:
-                rows.append(("column", f"{n['id']}.{c['name']}", c["name"], normalize(n["table"] + " " + c["name"])))
+                extra = " ".join([c.get("comment", ""), " ".join(c.get("values", []))])
+                rows.append(("column", f"{n['id']}.{c['name']}", c["name"], normalize(n["table"] + " " + c["name"] + " " + extra)))
+                if len(c) > 5:
+                    det.append((n["id"], c["name"], json.dumps({k: v for k, v in c.items() if k not in ("name", "family")}, ensure_ascii=False)))
+        self.db.executemany("INSERT INTO column_details VALUES(?,?,?)", det)
+        self.db.executemany("INSERT OR REPLACE INTO table_info VALUES(?,?)", tinfo)
         self.db.executemany("INSERT INTO search_fts(kind,ref,title,body) VALUES(?,?,?,?)", rows)
         self.db.commit()
+
+    def save_profiles(self, profiles: dict) -> None:
+        """profiles: {"schema.table.col": profile dict}. PII profiles never carry raw values (see profile.py)."""
+        for key, p in profiles.items():
+            tid, col = key.rsplit(".", 1)
+            self.db.execute("INSERT OR REPLACE INTO column_profile VALUES(?,?,?,?,?,?)",
+                            (tid, col, json.dumps(p, ensure_ascii=False, default=str), p.get("profiled_at"), p.get("sample_size"), p.get("method")))
+        self.db.commit()
+
+    def load_profiles(self) -> dict:
+        return {f"{r['table_id']}.{r['col']}": json.loads(r["profile"]) for r in self.db.execute("SELECT * FROM column_profile")}
 
     def reindex(self) -> None:
         self.db.execute("DELETE FROM search_fts WHERE kind NOT IN ('table','column')")
         rows = []
+        for r in self.db.execute("SELECT * FROM column_profile"):
+            p = json.loads(r["profile"])
+            if p.get("pii") or not p.get("top_values"):
+                continue
+            rows.append(("column_value", f"{r['table_id']}.{r['col']}", r["col"], normalize(r["col"] + " " + " ".join(str(k) for k, _ in p["top_values"]))))
         for c in self.rows("concepts"):
             syn = " ".join(json.loads(c["synonyms"] or "[]"))
             rows.append(("concept", c["name"], c["name"], normalize(" ".join([c["name"], syn, c["definition"] or "", c["domain"] or ""]))))
@@ -232,14 +355,33 @@ class ContextDB:
         self.db.commit()
 
     def fts(self, query: str, limit: int = 300) -> list[tuple[str, str, float]]:
+        """Prefix OR over the meaningful words, plus a boost for rows holding the whole query as a phrase.
+
+        Words shorter than 3 characters and common stopwords are left out of the prefix OR ("in"* would match
+        inventory, invoices and every int column), unless the query has nothing else.
+        """
         toks = tokens(query)
         if not toks:
             return []
-        q = " OR ".join(f'"{t}"*' for t in toks)
-        try:
-            cur = self.db.execute(
-                "SELECT kind, ref, bm25(search_fts, 0.0, 0.0, 3.0, 1.0) AS s FROM search_fts WHERE search_fts MATCH ? "
-                "ORDER BY s LIMIT ?", (q, limit))
-        except sqlite3.OperationalError:
-            return []
-        return [(r["kind"], r["ref"], -r["s"]) for r in cur]
+        words = [t for t in toks if len(t) >= 3 and t not in STOPWORDS]
+        q = " OR ".join(f'"{t}"*' for t in words) if words else " OR ".join(f'"{t}"' for t in toks)
+        scores: dict[tuple[str, str], float] = {}
+        order: list[tuple[str, str]] = []
+
+        def run(match: str, boost: float) -> None:
+            try:
+                cur = self.db.execute(
+                    "SELECT kind, ref, bm25(search_fts, 0.0, 0.0, 3.0, 1.0) AS s FROM search_fts WHERE search_fts MATCH ? "
+                    "ORDER BY s LIMIT ?", (match, limit))
+            except sqlite3.OperationalError:
+                return
+            for r in cur:
+                k = (r["kind"], r["ref"])
+                if k not in scores:
+                    order.append(k)
+                scores[k] = scores.get(k, 0.0) + boost * -r["s"]
+
+        run(q, 1.0)
+        if len(toks) > 1:
+            run('"' + " ".join(toks) + '"', PHRASE_BOOST)
+        return sorted(((k, r, scores[(k, r)]) for k, r in order), key=lambda x: -x[2])[:limit]

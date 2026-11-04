@@ -6,7 +6,7 @@ import re
 from conftest import FIX, edge
 
 from keygraph import search as S
-from keygraph.cli import main, run_pipeline
+from keygraph.cli import main
 from keygraph.context import ContextDB, normalize
 from keygraph.explorer import build_html
 from keygraph.notes import parse_note
@@ -126,7 +126,8 @@ def test_explorer_embeds_data(graph, tmp_path):
         d = decode(html)
         assert len(d["t"]) == len(graph.nodes) and len(d["e"]) == len(graph.edges)
         assert ("id=\"kg-data\">GZ:" in html) == (limit == 10)
-        assert "cytoscape" in html and "https://" not in re.sub(r"https://github.com/cytoscape|https://js.cytoscape.org|https://[^\s'\"<]*cytoscape[^\s'\"<]*", "", html.split("__kg")[0])[:0] or True
+        assert "cytoscape.js 3." not in html and "dagre" in html and "KGDiagram" in html
+        assert not re.search(r"<script[^>]+src=|<link[^>]+href=[\"']https?:|fetch\(|XMLHttpRequest", html)
     assert any(c["n"] == "order" for c in d["c"]["concepts"]) and d["c"]["tn"][0]["g"] == "one row per order"
 
 
@@ -148,14 +149,67 @@ def test_browser(graph, tmp_path):
         page.wait_for_selector("body[data-ready='1']", timeout=20000)
         assert page.evaluate("window.__kg.search('order_items')[0]") == "shop.order_items"
         assert "order" in page.evaluate("window.__kg.search('سفارش')")
-        r = page.evaluate("window.__kg.focus('shop.orders','customer_id',2)")
-        assert r["hops"]["0"] == ["shop.orders"] and "shop.customers" in r["hops"]["1"]
-        assert "shop.users" not in r["hops"].get("1", []) and "shop.order_items" not in r["hops"].get("1", [])
-        r2 = page.evaluate("window.__kg.focus('shop.orders',null,2)")
-        assert "shop.products" in r2["hops"]["2"] and "shop.order_items" in r2["hops"]["1"]
-        assert page.evaluate("window.__kg.path('shop.customers','shop.products')") >= 1
-        assert "JOIN shop.orders" in page.inner_text("#side")
-        page.fill("#q", "ord")
-        assert page.locator("#qdd div").count() >= 1
+        s = page.evaluate("window.__kg.relationSummary('shop.orders')")
+        assert any("shop.customers" in g["tables"] for g in s["out"])
+        assert any("shop.order_items" in g["tables"] for g in s["in"])
+        page.goto(f.as_uri() + "#path/shop.customers/shop.products")
+        page.wait_for_selector("[data-step]")
+        assert "JOIN shop.orders" in page.inner_text("[data-view=path]")
+        page.goto(f.as_uri() + "#areas")
+        page.wait_for_selector("[data-view=areas] [data-area]")
+        page.fill("[data-search]", "ord")
+        assert page.locator(".kg-popover .kg-menu-item").count() >= 1
         assert not errs, errs
         b.close()
+
+
+def test_curation_roundtrip(tmp_path, graph):
+    from keygraph.context import ContextDB
+    f = tmp_path / "c.yaml"
+    f.write_text("areas:\n  - name: Orders\n    match: [orders]\nhubs:\n  exclude: [shop.users]\n")
+    db = ContextDB(tmp_path / "k.db", graph)
+    db.import_path(f)
+    cur = db.curation()
+    assert cur["areas"][0]["name"] == "Orders" and cur["hubs"]["exclude"] == ["shop.users"]
+
+
+def test_curation_reimport_does_not_duplicate(tmp_path, graph):
+    from keygraph.context import ContextDB
+    f = tmp_path / "c.yaml"
+    f.write_text("areas:\n  - name: Orders\n    match: [orders]\nhubs:\n  exclude: [shop.users]\n")
+    db = ContextDB(tmp_path / "k.db", graph)
+    db.import_path(f)
+    db.import_path(f)
+    cur = db.curation()
+    assert len(cur["areas"]) == 1 and cur["hubs"]["exclude"] == ["shop.users"]
+    f.write_text("areas:\n  - name: Sales\n    match: [orders]\n")
+    db.import_path(f)
+    cur = db.curation()
+    assert [a["name"] for a in cur["areas"]] == ["Sales"] and cur["hubs"] == {"include": [], "exclude": []}
+
+
+def test_cli_context_args_after_options(tmp_path, capsys):
+    """key=value pairs and the path may follow options (Python 3.11 argparse needs help with this)."""
+    import pytest
+    out = tmp_path / "out"
+    assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json")]) == 0
+    assert main(["context", "add", "--dir", str(out), "--kind", "table", "table=shop.orders", "grain=one order"]) == 0
+    assert main(["context", "export", "--dir", str(out), "--out", str(tmp_path / "a.json")]) == 0
+    assert "one order" in (tmp_path / "a.json").read_text()
+    assert main(["context", "import", "--dir", str(out), "--verified", str(FIX / "context.yaml")]) == 0
+    assert main(["context", "export", "--dir", str(out), "--out", str(tmp_path / "b.json")]) == 0
+    assert "Person who buys." in (tmp_path / "b.json").read_text()
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        main(["keys", "orders", "--dir", str(out), "extra"])
+    with pytest.raises(SystemExit):
+        main(["context", "stats", "--dir", str(out), "--bogus"])
+
+
+def test_context_file_that_is_not_a_mapping_is_a_clean_error(tmp_path, capsys):
+    out = tmp_path / "out"
+    assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json")]) == 0
+    bad = tmp_path / "list.yaml"
+    bad.write_text("- just\n- a list\n", encoding="utf-8")
+    assert main(["context", "import", str(bad), "--dir", str(out)]) == 2
+    assert "expected a mapping" in capsys.readouterr().err

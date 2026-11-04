@@ -24,6 +24,10 @@ def write_report(graph: Graph, ctx=None, cap: int = 40) -> str:
                f"{st['edges_by_kind'].get('inferred', 0)}. Inferred relations are guesses from names and key shapes: "
                "treat them by their confidence.")
     out += ["", "Confidence bands: " + ", ".join(f"{k}: {v}" for k, v in st["edges_by_confidence"].items()), ""]
+    areas = graph.data.get("areas") or []
+    if areas:
+        big = max(areas, key=lambda a: a["size"])
+        out += [f"Areas: {len(areas)}; largest is {big['name']} with {big['size']} tables. Hub tables: {len(graph.data.get('hubs', []))}.", ""]
 
     def section(title, rows, note=""):
         out.append(f"## {title} ({len(rows)})")

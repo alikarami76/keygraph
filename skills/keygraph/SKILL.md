@@ -1,6 +1,6 @@
 ---
 name: keygraph
-description: Map a database's keys (primary, unique, every index with column order, declared foreign keys) and the relations between tables, including undeclared ones inferred from naming with a confidence score, plus searchable business context. Use before writing a multi-table SQL join, when you need the right join path between tables, an index-friendly WHERE clause, or when you must find which tables hold a business concept; also to build or update the graph from a live database or information_schema dumps.
+description: Use for database join paths, missing or undeclared foreign keys, schema and ER diagram questions, schema context for text-to-SQL, finding which table holds a business concept, and what enum or status codes mean; also when an MCP database-schema server is wanted. keygraph maps keys, indexes and relations between tables (declared, and inferred with a confidence score and evidence), plus searchable business context and sampled value profiles. Use it before writing a multi-table SQL join or an index-friendly WHERE clause, and to build the graph from a live database or information_schema dumps. Read-only, deterministic, no LLM calls.
 ---
 
 # keygraph
@@ -9,11 +9,14 @@ keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIO
 
 ## When to use it
 
+0. Orientation: `keygraph areas` lists the business areas (clusters of related tables) and `keygraph area <name>` shows one area's tables, grain, internal relations and neighbouring areas. Use it when you do not know where to start.
 1. Finding data: `keygraph search "<business question or term>"` ranks tables by names, concepts, synonyms, metrics and notes, then shows grain, primary key, efficient filter columns, pitfalls and a join path between the top hits.
 2. Before any join across more than one table: `keygraph path A B` gives ranked join paths with each edge's evidence and a ready `JOIN ... ON ...` snippet. Use `keygraph neighbors T --depth 2` to see what a table connects to.
 3. Before filtering a big table: `keygraph keys T` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index. `keygraph describe T` adds the business context.
 4. To understand one column: `keygraph explain T.col`.
 All query commands take `--json`. Table names resolve leniently: a bare name works when unique across schemas, otherwise give `schema.table`.
+
+MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`) instead of the CLI; they return the same JSON as `--json` and are read-only.
 
 ## Read confidence honestly
 
@@ -25,6 +28,15 @@ Declared foreign keys have confidence 1.0. Inferred edges are guesses from names
 - Dumps: `keygraph load --columns columns.jsonl [--statistics s.jsonl] [--key-columns k.jsonl] [--columns-map '{"TABLE_SCHEMA":"db"}'] [--flatten raw] [--where field=value]`. Without statistics it falls back to COLUMN_KEY and marks indexes approximate.
 - Fetch statistics and key usage with any read-only command: `keygraph fetch --cmd 'mytool --sql {sql}' --out dir`.
 - Optional value-overlap check of inferred edges (SELECT only): `keygraph probe --url <url> --sample 500`.
+
+## Column details and value insights
+
+`describe`, `explain` and `keys` show full column types, defaults, enum members, comments and table engine, size and partitioning.
+`keygraph profile --source <mysql|postgres|sqlite|sqlserver|clickhouse|mongodb> (--url U | --cmd '... {sql}') [--tables a,b] [--top-hubs N] [--with-context] [--sample 10000]`
+samples values with one bounded read-only SELECT per table and stores null rate, distinct count, ranges, top values, recency and pattern hints, each with `profiled_at`, sample size and method.
+Treat profiles as sampled and possibly stale. Codes seen in data but undocumented, or documented but never seen, are flagged: write them back with `context add`.
+PII rule: for PII columns (by name, by value pattern such as email or phone, or a `pii` context flag) no raw value is ever stored, only counts, length and pattern.
+Sources are pluggable (mysql, postgres, sqlite, sqlserver, clickhouse, metabase, mongodb, dumps, external commands); every one is read-only: single SELECTs only, Metabase GET plus native SELECT, Mongo find/list only.
 
 ## Business context (knowledge that accumulates)
 

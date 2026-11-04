@@ -1,0 +1,317 @@
+[
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "users",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 140,
+  "DATA_LENGTH": 16800,
+  "INDEX_LENGTH": 5600,
+  "TABLE_COMMENT": "Back-office staff accounts"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customers",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 420000,
+  "DATA_LENGTH": 50400000,
+  "INDEX_LENGTH": 16800000,
+  "TABLE_COMMENT": "People who buy"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customer_addresses",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 610000,
+  "DATA_LENGTH": 73200000,
+  "INDEX_LENGTH": 24400000,
+  "TABLE_COMMENT": "Delivery addresses of a customer"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "sellers",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 3100,
+  "DATA_LENGTH": 372000,
+  "INDEX_LENGTH": 124000,
+  "TABLE_COMMENT": "Third-party sellers on the marketplace"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "seller_users",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 9000,
+  "DATA_LENGTH": 1080000,
+  "INDEX_LENGTH": 360000,
+  "TABLE_COMMENT": "Which staff of a seller can log in"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 840,
+  "DATA_LENGTH": 100800,
+  "INDEX_LENGTH": 33600,
+  "TABLE_COMMENT": "Product category tree"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "brands",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 1900,
+  "DATA_LENGTH": 228000,
+  "INDEX_LENGTH": 76000,
+  "TABLE_COMMENT": "Brand names"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 260000,
+  "DATA_LENGTH": 31200000,
+  "INDEX_LENGTH": 10400000,
+  "TABLE_COMMENT": "A product as shown on a page"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_variants",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 900000,
+  "DATA_LENGTH": 108000000,
+  "INDEX_LENGTH": 36000000,
+  "TABLE_COMMENT": "A sellable variant (size, colour) of a product with its own SKU and price"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_images",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 1500000,
+  "DATA_LENGTH": 180000000,
+  "INDEX_LENGTH": 60000000,
+  "TABLE_COMMENT": "Pictures of a product"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "warehouses",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 14,
+  "DATA_LENGTH": 1680,
+  "INDEX_LENGTH": 560,
+  "TABLE_COMMENT": "Places stock is kept"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "inventory",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 2100000,
+  "DATA_LENGTH": 252000000,
+  "INDEX_LENGTH": 84000000,
+  "TABLE_COMMENT": "Units on hand per variant and warehouse"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "carts",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 900000,
+  "DATA_LENGTH": 108000000,
+  "INDEX_LENGTH": 36000000,
+  "TABLE_COMMENT": "Open baskets"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "cart_items",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 2400000,
+  "DATA_LENGTH": 288000000,
+  "INDEX_LENGTH": 96000000,
+  "TABLE_COMMENT": "Lines of a basket"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 5200000,
+  "DATA_LENGTH": 624000000,
+  "INDEX_LENGTH": 208000000,
+  "TABLE_COMMENT": "One checkout by a customer"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 14800000,
+  "DATA_LENGTH": 1776000000,
+  "INDEX_LENGTH": 592000000,
+  "TABLE_COMMENT": "One line of an order: a variant, a quantity and the price paid"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_status_history",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 21000000,
+  "DATA_LENGTH": 2520000000,
+  "INDEX_LENGTH": 840000000,
+  "TABLE_COMMENT": "Every status change of an order"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders_shadow",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 5100000,
+  "DATA_LENGTH": 612000000,
+  "INDEX_LENGTH": 204000000,
+  "TABLE_COMMENT": "Scratch copy of orders used by a one-off migration"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipments",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 6100000,
+  "DATA_LENGTH": 732000000,
+  "INDEX_LENGTH": 244000000,
+  "TABLE_COMMENT": "A parcel sent for an order"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipment_items",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 16000000,
+  "DATA_LENGTH": 1920000000,
+  "INDEX_LENGTH": 640000000,
+  "TABLE_COMMENT": "Which order items are in a parcel"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "returns",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 410000,
+  "DATA_LENGTH": 49200000,
+  "INDEX_LENGTH": 16400000,
+  "TABLE_COMMENT": "A customer sends items back"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "reviews",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 1300000,
+  "DATA_LENGTH": 156000000,
+  "INDEX_LENGTH": 52000000,
+  "TABLE_COMMENT": "Customer reviews of a product"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "comments",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 880000,
+  "DATA_LENGTH": 105600000,
+  "INDEX_LENGTH": 35200000,
+  "TABLE_COMMENT": "Free-text comments on several kinds of record (polymorphic)"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "audit_log",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 90000000,
+  "DATA_LENGTH": 10800000000,
+  "INDEX_LENGTH": 3600000000,
+  "TABLE_COMMENT": "Append-only trail of changes made by staff"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payment_methods",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 9,
+  "DATA_LENGTH": 1080,
+  "INDEX_LENGTH": 360,
+  "TABLE_COMMENT": "Ways to pay"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "vouchers",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 52000,
+  "DATA_LENGTH": 6240000,
+  "INDEX_LENGTH": 2080000,
+  "TABLE_COMMENT": "Discount codes"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "voucher_redemptions",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 1900000,
+  "DATA_LENGTH": 228000000,
+  "INDEX_LENGTH": 76000000,
+  "TABLE_COMMENT": "A voucher used on an order"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payments",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 5600000,
+  "DATA_LENGTH": 672000000,
+  "INDEX_LENGTH": 224000000,
+  "TABLE_COMMENT": "Money taken for an order"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "refunds",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 380000,
+  "DATA_LENGTH": 45600000,
+  "INDEX_LENGTH": 15200000,
+  "TABLE_COMMENT": "Money given back"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "invoices",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 5000000,
+  "DATA_LENGTH": 600000000,
+  "INDEX_LENGTH": 200000000,
+  "TABLE_COMMENT": "Invoice issued to a customer"
+ },
+ {
+  "TABLE_SCHEMA": "reporting",
+  "TABLE_NAME": "customers",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 420000,
+  "DATA_LENGTH": 50400000,
+  "INDEX_LENGTH": 16800000,
+  "TABLE_COMMENT": "Reporting copy of shop.customers, reloaded nightly"
+ },
+ {
+  "TABLE_SCHEMA": "reporting",
+  "TABLE_NAME": "products",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 260000,
+  "DATA_LENGTH": 31200000,
+  "INDEX_LENGTH": 10400000,
+  "TABLE_COMMENT": "Reporting copy of shop.products, reloaded nightly"
+ },
+ {
+  "TABLE_SCHEMA": "reporting",
+  "TABLE_NAME": "orders",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 5200000,
+  "DATA_LENGTH": 624000000,
+  "INDEX_LENGTH": 208000000,
+  "TABLE_COMMENT": "Reporting copy of shop.orders, reloaded nightly"
+ },
+ {
+  "TABLE_SCHEMA": "reporting",
+  "TABLE_NAME": "order_items",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 14800000,
+  "DATA_LENGTH": 1776000000,
+  "INDEX_LENGTH": 592000000,
+  "TABLE_COMMENT": "Reporting copy of shop.order_items, reloaded nightly"
+ },
+ {
+  "TABLE_SCHEMA": "reporting",
+  "TABLE_NAME": "daily_sales_load",
+  "ENGINE": "InnoDB",
+  "TABLE_ROWS": 900,
+  "DATA_LENGTH": 108000,
+  "INDEX_LENGTH": 36000,
+  "TABLE_COMMENT": "Load log of the nightly copy"
+ }
+]
