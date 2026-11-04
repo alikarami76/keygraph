@@ -9,6 +9,37 @@ keygraph maps how the tables in your database connect: keys, indexes, declared a
 
 [![PyPI](https://img.shields.io/pypi/v/keygraph)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph)](https://pypi.org/project/keygraph/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
 
+## Why a prebuilt map beats no context or context made on the fly
+
+An agent that writes SQL needs to know which tables exist, how they join, what one row means and what the codes in a column stand for. There are three ways to give it that.
+
+**No context at all.** The agent guesses table names and joins on columns that look alike. It cannot see that a table holds one row per order line rather than per order, so its sums double count. It does not know that `status = 4` means "cancelled". The SQL runs and returns a number, and nothing tells you the number is wrong.
+
+**Context the agent makes itself.** The agent queries `information_schema` and samples rows at the start of each session, or asks an LLM to describe the tables. This helps, with four costs:
+
+- the same exploration is repeated in every session, which costs time, tokens and load on the database;
+- a large database does not fit in a context window. A 10,000-table warehouse has well over 100,000 columns, so the agent sees only the slice it happened to open and misses the join path that runs through a table it never looked at;
+- the result changes from run to run. LLM-written descriptions can be confidently wrong, and nothing marks which parts are guesses;
+- sampled rows can carry personal data straight into prompts and logs.
+
+**A map built in advance (keygraph).** keygraph reads the metadata once and stores the result:
+
+- **Whole schema, small prompts.** Join paths, hub tables and business areas are computed by code over the whole database. The agent asks for only what it needs, such as one path or one table page, so it doesn't load the schema into its prompt.
+- **Same answer every time.** There are no LLM calls, and the same input always gives the same output, so the map can be reviewed and versioned in git like code.
+- **Guesses are labelled.** Every inferred relation carries a confidence and the reason it was inferred. Curated business context is marked verified or unverified, so the agent knows what to double-check.
+- **Knowledge accumulates.** Grain, status codes, pitfalls and corrections are written down once and reused by every person and agent, instead of being rediscovered and forgotten in each session.
+- **Safe by construction.** It reads metadata only, value profiles mask personal data, and agents query the map instead of the production database.
+- **One map for people and agents.** The HTML explorer, the CLI, the MCP server and the markdown pages all read the same graph.
+
+| | No context | Made on the fly | keygraph |
+|---|---|---|---|
+| Covers the whole schema | no | only what fits in the prompt | yes |
+| Cost per question | low, but answers are often wrong | repeated exploration every session | one lookup |
+| Same answer each run | no | no | yes |
+| Shows which joins are guesses | no | no | yes, with confidence and reason |
+| Business meaning of codes and grain | no | rediscovered, then lost | stored, curated, reused |
+| Personal data in prompts | no | often | masked |
+
 ## When to use keygraph
 
 Use keygraph when you need to:

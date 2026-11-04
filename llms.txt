@@ -5,6 +5,7 @@
 ## Start here
 
 - [README](https://github.com/alikarami76/keygraph/blob/main/README.md): what keygraph is, when to use it, quickstart in three commands.
+- [Why a prebuilt map](https://github.com/alikarami76/keygraph/blob/main/README.md#why-a-prebuilt-map-beats-no-context-or-context-made-on-the-fly): why a deterministic, curated schema map gives agents more correct SQL than no context or context they explore and generate in each session.
 - [When to use keygraph](https://github.com/alikarami76/keygraph/blob/main/README.md#when-to-use-keygraph): join paths, missing foreign keys, ER diagrams, schema context for text-to-SQL, status codes.
 - [Supported sources](https://github.com/alikarami76/keygraph/blob/main/README.md#supported-sources): what each database source reads and the read-only guarantee.
 
