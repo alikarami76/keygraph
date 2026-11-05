@@ -29,7 +29,7 @@ def _version(module: str, dist: str) -> str | None:
         return None
     try:
         importlib.import_module(module)
-    except Exception:  # an extra that is present but broken still counts as missing
+    except Exception:  # noqa: BLE001  (an extra that is present but broken still counts as missing)
         return None
     try:
         return importlib.metadata.version(dist)
@@ -80,8 +80,8 @@ def run(out: str | Path) -> dict:
         checks.append(_check("graph", "fail", f"no graph.json in {out}",
                              "build one: keygraph scan --url \"$KEYGRAPH_DB_URL\" --dir <out>  (or keygraph load)"))
     else:
-        from .graph import Graph
         from . import query as Q
+        from .graph import Graph
         g = Graph.load(gp)
         s = g.data.get("stats") or {}
         graph_stats = {k: s.get(k, 0) for k in ("tables", "columns", "schemas", "edges")}
@@ -118,7 +118,7 @@ def run(out: str | Path) -> dict:
                 checks.append(_check("mcp", "fail" if missing else "ok",
                                      f"server starts and lists {len(tools)} tools" + (f"; missing {missing}" if missing else ""),
                                      "file a bug: keygraph doctor --report bug.md" if missing else None))
-            except Exception as exc:  # report, never crash the doctor
+            except Exception as exc:  # noqa: BLE001  (report, never crash the doctor)
                 checks.append(_check("mcp", "fail", f"server failed to start: {type(exc).__name__}: {exc}",
                                      "file a bug: keygraph doctor --report bug.md"))
     worst = "fail" if any(c["status"] == "fail" for c in checks) else "warn" if any(c["status"] == "warn" for c in checks) else "ok"

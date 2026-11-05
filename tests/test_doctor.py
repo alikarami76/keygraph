@@ -1,19 +1,28 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from keygraph import doctor as D
 from keygraph.cli import main
+from tests.test_example_shop import _build
 
-SHOP = Path(__file__).parent.parent / "examples/shop/out"
+
+@pytest.fixture(scope="module")
+def shop(tmp_path_factory):
+    """The demo, built the way the README does (examples/shop/out is not committed)."""
+    out = tmp_path_factory.mktemp("doctor_shop")
+    _build(out)
+    return out
 
 
-def test_doctor_on_the_shop_example_is_ok_and_gives_an_absolute_launch_command():
-    r = D.run(SHOP)
+def test_doctor_on_the_shop_example_is_ok_and_gives_an_absolute_launch_command(shop):
+    r = D.run(shop)
     by = {c["name"]: c for c in r["checks"]}
     assert by["graph"]["status"] == by["query"]["status"] == "ok"
     assert r["graph"]["tables"] == 35
     m = r["mcp_launch"]
-    assert Path(m["command"]).is_absolute() and m["args"][-2:] == ["--dir", str(SHOP.resolve())]
+    assert Path(m["command"]).is_absolute() and m["args"][-2:] == ["--dir", str(shop.resolve())]
     if r["extras"]["mcp"]:
         assert by["mcp"]["status"] == "ok"
 
@@ -35,10 +44,10 @@ def test_doctor_cli_exit_code_and_json(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["status"] == "fail"
 
 
-def test_report_has_no_table_names_or_home_paths(tmp_path):
+def test_report_has_no_table_names_or_home_paths(shop, tmp_path):
     out = tmp_path / "bug.md"
     try:
-        main(["doctor", "--dir", str(SHOP), "--report", str(out)])
+        main(["doctor", "--dir", str(shop), "--report", str(out)])
     except SystemExit:
         pass
     text = out.read_text()
@@ -47,9 +56,9 @@ def test_report_has_no_table_names_or_home_paths(tmp_path):
         assert name not in text
 
 
-def test_query_check_ignores_self_references(tmp_path):
+def test_query_check_ignores_self_references(shop, tmp_path):
     from keygraph.graph import Graph
-    g = Graph.load(SHOP / "graph.json")
+    g = Graph.load(shop / "graph.json")
     self_ref = dict(g.edges[0], to=g.edges[0]["from"], confidence=1.0)
     g.data["edges"] = [self_ref] + g.edges
     out = tmp_path / "out"
