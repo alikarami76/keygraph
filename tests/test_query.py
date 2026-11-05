@@ -20,6 +20,29 @@ def test_resolve(graph):
         build_graph(s).resolve("t")
 
 
+def test_resolve_prefers_the_original_over_mirror_and_copy_schemas():
+    from keygraph.model import Schema, Table
+    from keygraph.graph import build_graph
+    s = Schema()
+    for schema in ("shop", "reporting", "replica"):
+        s.add(Table(schema, "customers"))
+    g = build_graph(s)
+    g.data["mirrors"] = {"reporting": "shop"}
+    g.data["copy_schemas"] = ["repl*"]
+    assert g.resolve("customers") == "shop.customers"
+    assert g.resolve("reporting.customers") == "reporting.customers"  # still reachable by full name
+    g.data["mirrors"], g.data["copy_schemas"] = {}, []
+    with pytest.raises(AmbiguousTable):
+        g.resolve("customers")  # without mirror/copy info it stays ambiguous
+
+
+def test_readme_quickstart_path_on_the_shop_example():
+    from pathlib import Path
+    g = Graph.load(Path(__file__).parent.parent / "examples/shop/out/graph.json")
+    assert g.resolve("customers") == "shop.customers"
+    assert Q.find_paths(g, g.resolve("customers"), g.resolve("shipments"))
+
+
 def test_path_ranking_and_sql(graph):
     ps = Q.find_paths(graph, "customers", "products", 4, 0.6, 3)
     assert ps[0]["tables"] == ["shop.customers", "shop.orders", "shop.order_items", "shop.products"]
