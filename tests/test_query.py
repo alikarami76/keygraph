@@ -36,9 +36,10 @@ def test_resolve_prefers_the_original_over_mirror_and_copy_schemas():
         g.resolve("customers")  # without mirror/copy info it stays ambiguous
 
 
-def test_readme_quickstart_path_on_the_shop_example():
-    from pathlib import Path
-    g = Graph.load(Path(__file__).parent.parent / "examples/shop/out/graph.json")
+def test_readme_quickstart_path_on_the_shop_example(tmp_path):
+    from tests.test_example_shop import _build
+    _build(tmp_path)  # examples/shop/out is not committed: build the demo the way the README does
+    g = Graph.load(tmp_path / "graph.json")
     assert g.resolve("customers") == "shop.customers"
     assert Q.find_paths(g, g.resolve("customers"), g.resolve("shipments"))
 
