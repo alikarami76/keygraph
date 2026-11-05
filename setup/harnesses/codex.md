@@ -1,0 +1,29 @@
+# Codex (CLI, IDE extension, app)
+
+`COMMAND` and `ARGS` below are `mcp_launch.command` and `mcp_launch.args` from `keygraph doctor --dir "$OUT" --json`.
+
+## 1. Register the MCP server
+
+```bash
+codex mcp add keygraph -- COMMAND ARGS...
+```
+
+Or edit `~/.codex/config.toml` yourself. Keep exactly one `[mcp_servers.keygraph]` block:
+
+```toml
+[mcp_servers.keygraph]
+command = "/abs/path/to/python"
+args = ["-m", "keygraph", "mcp", "--dir", "/abs/path/to/keygraph-out"]
+```
+
+This config is user-level, shared by every project, so ask the user before you change it (ground rule 3). To keep the map per project, point `--dir` at that project's output folder, and register a second server with a different name (for example `keygraph-billing`) for another database.
+
+## 2. Skill and standing instructions
+
+- Instructions: add the block from `setup/templates/agent-instructions.md` to `AGENTS.md` at the project root. Create the file if there is none. Codex reads AGENTS.md files from the repository root down to the working directory.
+- Skill: copy `skills/keygraph/SKILL.md` to `.agents/skills/keygraph/SKILL.md` in the repository, or to `~/.agents/skills/keygraph/SKILL.md` for all projects.
+
+## 3. Verify
+
+- `codex mcp list` shows `keygraph`.
+- Start a new Codex session (servers load at start) and run `/mcp`: keygraph should list 15 tools. Then do step 7.3 of SETUP.md.

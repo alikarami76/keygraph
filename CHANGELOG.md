@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Agent setup: `setup/SETUP.md` is a protocol any coding agent can follow from the repository URL. The agent detects the database and its own harness, asks the user up to six questions, installs keygraph, builds the map with the chosen extras, connects the MCP server, adds standing instructions, and verifies the result. Per-harness files cover Claude Code (also with DeepSeek, z.ai GLM or other backends), Codex, Cursor, ZCode, OpenCode, Unsloth Studio and other MCP clients, and the CLI for agents with no MCP.
+- `keygraph doctor [--json] [--report FILE]` checks Python, the extras, the built map, a join-path query and the MCP server's tools. It prints the MCP launch command with absolute paths, and exits 1 on a failed check. `--report` writes an environment block for bug reports with no table names, SQL, values or home paths.
+- `setup/BUG_REPORTS.md` and a GitHub issue form: how agents tell a keygraph bug from a local problem, redact it, look for duplicates, and open an issue only after the user says yes.
+
 ## 0.3.2 - 2026-11-04
 
 - Inference prefers a related schema (`app` -> `ods_app`, `app_v2`) when a column's candidates are all in other schemas, and schemas can be declared copies by glob (`copies: ["ods_*"]` in the context or overrides file, `--copy-schema GLOB` on `scan`, `load` and `code index`): the code index prefers non-copy tables and inference prefers non-copy targets.
