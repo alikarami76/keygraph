@@ -21,8 +21,8 @@ def test_resolve(graph):
 
 
 def test_resolve_prefers_the_original_over_mirror_and_copy_schemas():
-    from keygraph.model import Schema, Table
     from keygraph.graph import build_graph
+    from keygraph.model import Schema, Table
     s = Schema()
     for schema in ("shop", "reporting", "replica"):
         s.add(Table(schema, "customers"))
