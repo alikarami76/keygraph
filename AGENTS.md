@@ -43,7 +43,7 @@ When you confirm what a table, column or status code means, save it so the next 
 
 ## Files you can read directly
 
-`areas/index.md` (every area), `areas/<area>.md` (tables, joins, a Mermaid ER diagram), `tables/<schema.table>.md` (grain, keys, columns, relations in both directions), `RELATIONS_REPORT.md` (all relations with evidence) and `graph.json` (everything, machine readable).
+`areas/index.md` (every area), `areas/<area>.md` (tables, joins, a Mermaid ER diagram), `tables/<schema.table>.md` (grain, keys, columns, relations in both directions), `RELATIONS_REPORT.md` (all relations with evidence) and `graph.json` (everything, machine readable). `build.json` records when the map was built, by which keygraph version, from which source (kind and database name only) and which schemas it covers; an unknown-table error names those schemas, so retry with `--schema` or `--all-schemas` when the table lives elsewhere.
 
 ## Build the graph
 

@@ -17,7 +17,7 @@ from .docs_out import write_docs
 from .explorer import build_html
 from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
 from .hubs import detect_hubs, mark_hubs
-from .graph import AmbiguousTable, Graph, UnknownTable, build_graph
+from .graph import BUILD_FILE, AmbiguousTable, Graph, UnknownTable, build_graph
 from .infer import Options
 from .model import Schema
 from .overrides import Overrides
@@ -157,9 +157,32 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
             "keygraph.html": len(html.encode("utf-8"))}
 
 
+def url_source(url: str) -> dict:
+    """Describe a database URL as {"kind", "database"}: never the host, user, password, port or query."""
+    from urllib.parse import urlsplit
+    u = urlsplit(url)
+    kind = u.scheme.split("+")[0]
+    db = (u.path or "").rstrip("/").rsplit("/", 1)[-1]
+    return {"kind": kind, "database": db} if db else {"kind": kind}
+
+
+def write_build_info(out: Path, g: Graph, sources: list[dict] | None) -> None:
+    """build.json: when and from what this map was built. The only file that differs between identical builds."""
+    import os
+    from datetime import datetime, timezone
+
+    from . import __version__
+    sde = os.environ.get("SOURCE_DATE_EPOCH", "")
+    ts = datetime.fromtimestamp(int(sde) if sde.isdigit() else time.time(), timezone.utc)
+    info = {"built_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "keygraph_version": __version__,
+            "sources": list(sources or []), "schemas": sorted({n["schema"] for n in g.nodes.values()})}
+    (out / BUILD_FILE).write_text(json.dumps(info, indent=1) + "\n", encoding="utf-8")
+    g.build = info
+
+
 def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, context: list[str] | None = None,
                  notes: list[dict] | None = None, options: Options | None = None, verbose=True, snippets: bool = False,
-                 queries: bool = False, copy_schemas: list[str] | None = None) -> dict:
+                 queries: bool = False, copy_schemas: list[str] | None = None, sources: list[dict] | None = None) -> dict:
     out = Path(out)
     t0 = time.time()
     ov = Overrides.load(overrides) if overrides else None
@@ -181,6 +204,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
         g.data["profiles"] = prof
     S.apply_context_to_graph(g, ctx)
     sizes = render(out, g, ctx, snippets=snippets, queries=queries)
+    write_build_info(out, g, sources)
     result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
               "warnings": g.data["warnings"][:10] + ctx.warnings[:10]}
     ctx.close()
@@ -194,7 +218,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
 def cmd_scan(a):
     from .adapters.live import scan_url
     run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
-                 copy_schemas=getattr(a, "copy_schema", None))
+                 copy_schemas=getattr(a, "copy_schema", None), sources=[url_source(a.url)])
 
 
 def cmd_load(a):
@@ -208,8 +232,9 @@ def cmd_load(a):
         cm["_flatten"] = a.flatten
     sch = load_dump(a.columns, a.statistics, a.key_columns, a.default_schema, cm, _json_arg(a.statistics_map),
                     _json_arg(a.kcu_map), filt, tables=a.tables)
+    names = [Path(str(x)).name for x in (a.columns, a.statistics, a.key_columns, a.tables) if x]
     run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
-                 copy_schemas=getattr(a, "copy_schema", None))
+                 copy_schemas=getattr(a, "copy_schema", None), sources=[{"kind": "dump", "files": names}])
 
 
 def cmd_render(a):

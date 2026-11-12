@@ -5,7 +5,7 @@ description: Use for database join paths, missing or undeclared foreign keys, sc
 
 # keygraph
 
-keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIONS_REPORT.md`, a self-contained `keygraph.html` explorer and `keygraph.db` (business context with full-text search) in one output directory (default `keygraph-out/`, override with `--dir` or `KEYGRAPH_DIR`). Run it with `uv run keygraph ...` or `keygraph ...`.
+keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIONS_REPORT.md`, a self-contained `keygraph.html` explorer `keygraph.db` (business context with full-text search) and `build.json` (build time and covered schemas) in one output directory (default `keygraph-out/`, override with `--dir` or `KEYGRAPH_DIR`). Run it with `uv run keygraph ...` or `keygraph ...`.
 
 ## When to use it
 

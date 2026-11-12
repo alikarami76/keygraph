@@ -106,7 +106,7 @@ git clone https://github.com/alikarami76/keygraph && cd keygraph
 uv sync && uv run bash examples/shop/build.sh && uv run keygraph ui --dir examples/shop/out
 ```
 
-The build writes `graph.json`, `RELATIONS_REPORT.md`, `keygraph.html` (a self-contained explorer that works from disk, offline), `keygraph.db` (SQLite with full-text search) and the agent pages `areas/*.md` and `tables/*.md`. Details of every step are in [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf) and [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md).
+The build writes `graph.json`, `RELATIONS_REPORT.md`, `keygraph.html` (a self-contained explorer that works from disk, offline), `keygraph.db` (SQLite with full-text search) the agent pages `areas/*.md` and `tables/*.md`, and `build.json` (build time, keygraph version, source kind and database name, covered schemas; no host or credentials; the only file that differs between two identical builds, and `SOURCE_DATE_EPOCH` fixes its time). An unknown-table answer names the schemas the map covers. Details of every step are in [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf) and [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md).
 
 If you cannot connect to the database, build from `information_schema` dumps instead:
 

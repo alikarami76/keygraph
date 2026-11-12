@@ -11,6 +11,7 @@ from .model import Schema, type_family
 from .overrides import Overrides, apply_overrides
 
 VERSION = 1
+BUILD_FILE = "build.json"
 
 
 class AmbiguousTable(ValueError):
@@ -20,9 +21,9 @@ class AmbiguousTable(ValueError):
 
 
 class UnknownTable(ValueError):
-    def __init__(self, name: str, suggestions: list[str]):
+    def __init__(self, name: str, suggestions: list[str], coverage: str = ""):
         msg = f"unknown table '{name}'" + (f"; did you mean: {', '.join(suggestions)}" if suggestions else "")
-        super().__init__(msg)
+        super().__init__(msg + (f"; {coverage}" if coverage else ""))
         self.suggestions = suggestions
 
 
@@ -82,10 +83,35 @@ class Graph:
         for nid, n in self.nodes.items():
             self._by_name.setdefault(n["table"].lower(), []).append(nid)
         self._adj: dict[str, list[dict]] | None = None
+        self.build: dict | None = None  # build.json next to graph.json; kept out of self.data so graph.json stays byte-stable
 
     @classmethod
     def load(cls, path: str | Path) -> "Graph":
-        return cls(json.loads(Path(path).read_text(encoding="utf-8")))
+        g = cls(json.loads(Path(path).read_text(encoding="utf-8")))
+        bp = Path(path).with_name(BUILD_FILE)
+        if bp.exists():
+            try:
+                b = json.loads(bp.read_text(encoding="utf-8"))
+                g.build = b if isinstance(b, dict) else None
+            except (OSError, ValueError):
+                g.build = None
+        return g
+
+    def coverage(self) -> str:
+        """Which schemas this map covers and when/from what it was built, for unknown-table answers."""
+        schemas = sorted({n["schema"] for n in self.nodes.values()})
+        if not schemas:
+            return ""
+        shown = ", ".join(schemas[:10]) + (f" (+{len(schemas) - 10} more)" if len(schemas) > 10 else "")
+        b = self.build or {}
+        bits = []
+        if b.get("built_at"):
+            bits.append("built " + str(b["built_at"])[:10])
+        srcs = [f"{x['kind']}:{x['database']}" if x.get("database") else str(x.get("kind", "")) for x in b.get("sources") or []]
+        if srcs := [x for x in srcs if x]:
+            bits.append("from " + ", ".join(srcs))
+        return (f"this map covers schemas {shown}" + (f" ({' '.join(bits)})" if bits else "")
+                + "; if the table is in another schema or database, rebuild with --schema/--all-schemas")
 
     def save(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -123,7 +149,7 @@ class Graph:
                 raise AmbiguousTable(name, sorted(hits))
         sug = difflib.get_close_matches(name, list(self.nodes), n=4, cutoff=0.6)
         sug += [h for k in difflib.get_close_matches(low, list(self._by_name), n=3, cutoff=0.7) for h in self._by_name[k]]
-        raise UnknownTable(name, sorted(set(sug)))
+        raise UnknownTable(name, sorted(set(sug)), self.coverage())
 
     def split_column(self, ref: str) -> tuple[str, str | None]:
         """Parse 'table', 'table.col' or 'schema.table.col' into (table_id, column or None)."""

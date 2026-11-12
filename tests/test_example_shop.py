@@ -135,3 +135,58 @@ def test_demo_with_app_is_deterministic(tmp_path):
     _build(tmp_path / "b", app=True)
     for f in ("graph.json", "keygraph.html", "tables/shop.orders.md"):
         assert (tmp_path / "a" / f).read_bytes() == (tmp_path / "b" / f).read_bytes(), f
+
+
+def _tree(d: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(d)): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file() and p.suffix != ".db"}
+
+
+def test_build_json_is_the_only_file_that_differs_between_builds(tmp_path, monkeypatch):
+    import keygraph
+
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    a, b = tmp_path / "a", tmp_path / "b"
+    _build(a)
+    _build(b)
+    ta, tb = _tree(a), _tree(b)
+    assert ta.keys() == tb.keys() and "build.json" in ta
+    assert [k for k in ta if ta[k] != tb[k] and k != "build.json"] == []
+    meta = json.loads(ta["build.json"])
+    assert meta["keygraph_version"] == keygraph.__version__
+    assert meta["schemas"] == sorted({n["schema"] for n in json.loads(ta["graph.json"])["nodes"]})
+    assert meta["sources"] == [{"kind": "dump", "files": ["columns.json", "statistics.json", "key_columns.json", "tables.json"]}]
+    assert "built_at" in meta and "built_at" not in ta["graph.json"].decode()
+    assert str(tmp_path) not in ta["build.json"].decode()
+
+
+def test_build_json_honours_source_date_epoch_and_survives_render(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    _build(tmp_path)
+    first = (tmp_path / "build.json").read_text()
+    assert json.loads(first)["built_at"] == "2023-11-14T22:13:20Z"
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1800000000")
+    assert main(["render", "--dir", str(tmp_path)]) == 0
+    assert (tmp_path / "build.json").read_text() == first
+
+
+def test_scan_source_description_has_no_credentials():
+    from keygraph.cli import url_source
+    src = url_source("mysql+pymysql://bob:s3cret@db.internal:3306/shop?ssl=1")
+    assert src == {"kind": "mysql", "database": "shop"}
+    assert url_source("sqlite:////tmp/x/shop.db") == {"kind": "sqlite", "database": "shop.db"}
+
+
+def test_unknown_table_names_coverage_cli_and_mcp_alike(built, capsys):
+    assert main(["describe", "custmers", "--dir", str(built)]) == 2
+    cli = capsys.readouterr().err.strip().removeprefix("keygraph: ")
+    assert cli.startswith("unknown table 'custmers'")
+    assert "this map covers schemas" in cli and "built " in cli and "from dump" in cli and "--all-schemas" in cli
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from keygraph.mcp_server import build_server
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(build_server(built).call_tool("describe", {"table": "custmers"}))
+    assert str(exc.value).removeprefix("Error executing tool describe: ") == cli
