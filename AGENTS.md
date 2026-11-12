@@ -7,7 +7,7 @@ Commands below assume a built output directory (default `keygraph-out`, set with
 ## Sequence
 
 1. Locate the data. `keygraph search "<business term>" --json` ranks tables by meaning and says why each matched. If you do not know where to start, `keygraph areas --json` lists business areas and `keygraph area <name> --json` shows one area's tables, grain and relations. (The MCP `areas` tool returns the list wrapped as `{"areas": [...]}`.)
-2. Understand each candidate. `keygraph describe <table> --json` gives the row grain, keys, columns, status codes, pitfalls and sampled profiles.
+2. Understand each candidate. `keygraph describe <table> --json` gives the row grain, keys, columns, status codes, pitfalls and sampled profiles. For a first look at a wide table use `keygraph describe <table> --brief` (MCP: `describe` with `brief=true`): keys, filter columns, notes and columns as name, type, key and codes only. `keygraph search ... --no-paths` (MCP: `with_paths=false`) leaves out the suggested join paths.
 3. Find the join path before writing any join. `keygraph path <A> <B> --json` returns ranked routes with columns, confidence, evidence, fan-out warnings and a `JOIN` snippet. Use the best route unless a hop is weak.
 4. Choose index-friendly filters. `keygraph keys <table> --json` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index first, especially on large tables.
 5. Check a single relation or column when needed. `keygraph explain <table.column> --json` shows what it references, what references it, and the evidence.

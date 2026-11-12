@@ -23,7 +23,7 @@ from .graph import Graph
 
 INSTRUCTIONS = """keygraph maps the keys of a database and the relations between its tables. It is deterministic and
 answers from a prebuilt graph; it never queries the database. Every tool is read-only except `query_submit`.
-Start with `search` (find tables by business meaning) or `areas`, then `describe` a table, and use `path` before writing
+Start with `search` (find tables by business meaning) or `areas`, then `describe` a table (`brief=true` for a cheap first look at a wide table), and use `path` before writing
 any multi-table JOIN. Relations are either declared foreign keys (confidence 1.0) or inferred from names and key shapes;
 inferred relations carry a confidence and the evidence behind it, so check anything below about 0.8 (and every fan-out
 hop, where one row becomes many) with a small SELECT. Value profiles are sampled, may be stale, and never contain raw
@@ -60,21 +60,23 @@ def build_server(dir: str | Path) -> MCPServer:
     srv = MCPServer("keygraph", instructions=INSTRUCTIONS)
 
     @srv.tool()
-    def search(query: str, limit: int = 10) -> dict:
+    def search(query: str, limit: int = 10, with_paths: bool = True) -> dict:
         """Find tables by business meaning ("monthly revenue", "in transit", a status label). Use this first when you
         do not know which table holds something, then describe the top hit. Returns ranked tables with the reason each matched (names, business
         concepts, synonyms, metrics, notes, documented code labels), grain, primary key and pitfalls when known.
-        Matches on profiled values never expose PII."""
+        Matches on profiled values never expose PII. with_paths=false leaves out the suggested join paths between the top hits."""
         g = graph()
         with ContextDB(out / "keygraph.db", g, readonly=True) as ctx:
-            return run(S.search, g, ctx, query, limit)
+            return run(S.search, g, ctx, query, limit, with_paths)
 
     @srv.tool()
-    def describe(table: str) -> dict:
+    def describe(table: str, brief: bool = False) -> dict:
         """Everything known about one table: keys and indexes, columns, business context (grain, pitfalls, code
         meanings) and its relations grouped by role (parent, child, lookup, audit...) with confidence. Use it
-        before querying a table you have not seen. Give schema.table when the bare name exists in several schemas."""
-        return run(describe_result, out, graph(), table, True)
+        before querying a table you have not seen. Give schema.table when the bare name exists in several schemas.
+        brief=true returns only keys, filter columns, table notes and columns as name/type/key/codes (no profiles or
+        relations): use it for a first look at a wide table, then call again without it."""
+        return run(describe_result, out, graph(), table, True, brief)
 
     @srv.tool()
     def keys(table: str) -> dict:

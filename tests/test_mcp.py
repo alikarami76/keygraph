@@ -258,3 +258,24 @@ def test_server_reloads_when_only_build_json_changes(tmp_path):
     os.utime(bj, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
     err, msg = call(s, "keys", table="custmers")
     assert err and "built 2001-02-03" in msg
+
+
+def test_describe_brief_matches_cli_and_is_smaller(srv, out, capsys):
+    err, got = call(srv, "describe", table="shop.orders", brief=True)
+    assert not err and got == cli_json(capsys, out, "describe", "shop.orders", "--brief")
+    full = cli_json(capsys, out, "describe", "shop.orders")
+    assert got["brief"] is True and "relations" not in got and "relation_summary" not in got
+    assert set(got) >= {"table", "keys", "filter_columns", "info_line", "context", "columns"}
+    assert all(set(c) <= {"name", "type", "key", "codes"} for c in got["columns"])
+    assert [c["name"] for c in got["columns"]] == [c["name"] for c in full["columns"]]
+    status = next(c for c in got["columns"] if c["name"] == "status")
+    assert status["codes"]
+    assert len(json.dumps(got)) < len(json.dumps(full)) / 2
+
+
+def test_search_without_paths_matches_cli(srv, out, capsys):
+    err, got = call(srv, "search", query="orders", with_paths=False)
+    assert not err and got == cli_json(capsys, out, "search", "orders", "--no-paths")
+    err, full = call(srv, "search", query="orders")
+    assert not err and full == cli_json(capsys, out, "search", "orders") and full["join_paths"]
+    assert got["join_paths"] == []

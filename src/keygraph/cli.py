@@ -315,9 +315,11 @@ def path_result(g: Graph, a: str, b: str, max_hops=4, min_confidence=0.6, k=3, i
     return {"from": g.resolve(a), "to": g.resolve(b), "paths": ps}
 
 
-def describe_result(dir, g: Graph, table: str, readonly: bool = False) -> dict:
+def describe_result(dir, g: Graph, table: str, readonly: bool = False, brief: bool = False) -> dict:
     with ContextDB(Path(dir) / "keygraph.db", g, readonly) as ctx:
-        r = S.describe(g, ctx, table)
+        r = S.describe(g, ctx, table, brief)
+    if brief:
+        return r
     r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []))
     return r
 
@@ -355,14 +357,14 @@ def cmd_keys(a):
 def cmd_search(a):
     g = _load(a)
     with _ctx(a, g) as ctx:
-        r = S.search(g, ctx, " ".join(a.query), a.limit)
+        r = S.search(g, ctx, " ".join(a.query), a.limit, with_paths=not a.no_paths)
     _emit(a, r, S.format_search(r))
 
 
 def cmd_describe(a):
     g = _load(a)
-    r = describe_result(a.dir, g, a.table)
-    _emit(a, r, S.format_describe(r) + "\n" + Q.format_relation_summary(r["relation_summary"]))
+    r = describe_result(a.dir, g, a.table, brief=a.brief)
+    _emit(a, r, S.format_describe(r) + ("" if a.brief else "\n" + Q.format_relation_summary(r["relation_summary"])))
 
 
 def cmd_areas(a):
@@ -618,9 +620,11 @@ def main(argv=None) -> int:
     p = add("search", cmd_search, "find tables by business meaning")
     p.add_argument("query", nargs="+")
     p.add_argument("--limit", type=int, default=8)
+    p.add_argument("--no-paths", action="store_true", help="skip the suggested join paths between the top hits")
     p.add_argument("--json", action="store_true")
     p = add("describe", cmd_describe, "keys plus business context for a table")
     p.add_argument("table")
+    p.add_argument("--brief", action="store_true", help="keys, filter columns, notes and columns as name/type/key/codes only")
     p.add_argument("--json", action="store_true")
     p = add("areas", cmd_areas, "list the business areas (clusters of related tables)")
     p.add_argument("--json", action="store_true")

@@ -51,7 +51,7 @@ Build the map once with `keygraph scan`, then let your agent look up tables, joi
 **The loop.** An agent that uses keygraph follows the same six steps for each question. The order is the one recommended in [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md).
 
 1. `search` the business term (for example "net revenue") to find candidate tables and see why each one matched.
-2. `describe` each candidate to read its grain, keys, columns, status codes and pitfalls.
+2. `describe` each candidate to read its grain, keys, columns, status codes and pitfalls (`describe --brief`, or `brief=true` over MCP, returns just keys, filter columns, notes and columns as name, type, key and codes: a cheaper first look at a wide table).
 3. `path` between the tables to get ranked join routes with confidence, evidence, fan-out warnings and a `JOIN` snippet. Do not write a join from column-name guesses when `path` can answer it.
 4. `keys` on the large tables to pick filters that match an index, leading with the first column of an index.
 5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile. Before you write it, if code or past queries were indexed, `code_where` shows how a column is used in code and `query_for` shows queries that already touched the table, with their business question and timing.
@@ -181,7 +181,7 @@ The Claude Code skill is in [skills/keygraph/SKILL.md](https://github.com/alikar
 ### MCP
 
 `keygraph mcp` serves keygraph's queries to any MCP client over stdio. It needs the `mcp` extra and a built output
-directory (`<out>` below, e.g. `keygraph-out`). Tools: `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
+directory (`<out>` below, e.g. `keygraph-out`). Tools (`describe` takes `brief=true`, `search` takes `with_paths=false`, the same as the CLI `describe --brief` and `search --no-paths`): `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
 `areas`, `area`, `profile_summary` (stored, sampled profiles; PII values are withheld), `code_where` and `code_what`
 (the code index), `query_for`, `query_top` and `query_search` (the query log), and `query_submit`, the one tool that
 writes: it logs a query the agent ran into the query log tables and nothing else. Each returns the same JSON as
