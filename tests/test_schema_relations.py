@@ -1,6 +1,7 @@
 """Related-schema preference and declared copy schemas (by glob) in inference and the code vocabulary."""
 import json
 
+from conftest import needs_yaml
 from keygraph.cli import main, run_pipeline
 from keygraph.code.vocab import Vocab
 from keygraph.graph import build_graph
@@ -87,6 +88,7 @@ def test_vocab_prefers_non_copy_tables():
     assert Vocab.from_graph({**data, "copy_schemas": []}, ["crm"]).resolve_table("users") == ["ods_app.users"]
 
 
+@needs_yaml
 def test_copies_in_context_yaml_reach_inference_graph_and_vocab(tmp_path):
     ctx = tmp_path / "ctx.yaml"
     ctx.write_text('copies: ["ch_*"]\nmirrors: {legacy: false}\n')
@@ -103,6 +105,7 @@ def test_copies_in_context_yaml_reach_inference_graph_and_vocab(tmp_path):
     assert Vocab.load(out / "keygraph.db").resolve_table("users") == ["crm.users"]
 
 
+@needs_yaml
 def test_copies_inside_mirrors_mapping(tmp_path):
     from keygraph.context import read_copy_globs
     f = tmp_path / "m.yaml"

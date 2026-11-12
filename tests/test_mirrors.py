@@ -1,6 +1,7 @@
 """Mirror schemas: a schema whose tables copy another schema's tables is kept out of areas, hubs and paths."""
 import json
 
+from conftest import needs_yaml
 from keygraph import query as Q
 from keygraph.cli import main, run_pipeline
 from keygraph.graph import Graph
@@ -84,6 +85,7 @@ def test_a_copy_may_add_or_drop_columns():
     assert detect_mirrors(build_graph(s)) == {"shop_copy": "shop"}
 
 
+@needs_yaml
 def test_context_file_overrides_the_direction(tmp_path):
     f = tmp_path / "c.yaml"
     f.write_text("mirrors:\n  shop: shop_copy\n", encoding="utf-8")   # shop is the copy, shop_copy the original

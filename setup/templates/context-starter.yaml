@@ -1,0 +1,42 @@
+# Starter business context for keygraph. Import with:  keygraph context import keygraph-context.yaml --dir <OUT>
+# Fill in only facts you can point to in code or docs. Keep `verified: false` until a person or a query has checked them.
+# Full example: https://github.com/alikarami76/keygraph/blob/main/examples/shop/context.yaml
+source: keygraph-context.yaml
+verified: false
+
+tables:
+  # What one row is, which date column to filter on, and what trips people up.
+  - table: schema.orders
+    grain: one row per order
+    date_column: created_at
+    pitfalls: Rows with status 1 are unpaid baskets; leave them out of revenue.
+
+columns:
+  # Status and enum codes, units, and what NULL means.
+  - table: schema.orders
+    column: status
+    meaning: Order lifecycle state
+    codes: {"1": placed, "2": paid, "3": shipped, "4": cancelled}
+    null_meaning: never null
+
+concepts:
+  # Business words people use, mapped to tables, so that search finds them.
+  - name: order
+    definition: One checkout by a customer.
+    synonyms: [purchase, checkout]
+    links:
+      - {table: schema.orders, role: primary-record}   # roles: primary-record, attribute, foreign-reference, measure, filter
+
+relations:
+  - {from: customer, rel: places, to: order}
+
+metrics:
+  # How the business computes its numbers.
+  - name: net revenue
+    definition: Paid order totals after discounts, excluding cancelled orders
+    expression: SUM(orders.total) FILTER (WHERE orders.status IN (2, 3))
+    grain: order
+    tables: [schema.orders]
+
+# Schemas that are copies of another (replicas, BI caches). Bare table names then mean the original.
+# copies: ["ods_*", "replica"]

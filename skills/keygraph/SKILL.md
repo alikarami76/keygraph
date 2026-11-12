@@ -14,7 +14,7 @@ keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIO
 2. Before any join across more than one table: `keygraph path A B` gives ranked join paths with each edge's evidence and a ready `JOIN ... ON ...` snippet. Use `keygraph neighbors T --depth 2` to see what a table connects to.
 3. Before filtering a big table: `keygraph keys T` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index. `keygraph describe T` adds the business context; use `keygraph describe T --brief` (MCP `describe` with `brief=true`) for a first look at a wide table, and `keygraph search ... --no-paths` (MCP `with_paths=false`) when you only need the table list.
 4. To understand one column: `keygraph explain T.col`.
-All query commands take `--json`. Table names resolve leniently: a bare name works when unique across schemas, otherwise give `schema.table`.
+All query commands take `--json`. Table names resolve leniently: a bare name works when it is unique, or unique outside mirror and copy schemas (the original wins over its copies); otherwise write `schema.table`.
 
 5. Code and past queries: `keygraph code where T.col` lists ORM declarations, SQL writes and reads and property uses with file, line and confidence; `keygraph code what path:line` (or `--symbol getStatus`) goes from code to tables. `keygraph queries for T`, `queries top --table T`, `queries slow` and `queries search "<question>"` show earlier queries with their business question and timing. After running a query, log it with `keygraph queries add --sql f.sql --source <db> --ms <ms> --context "<question>"`. Index code with `keygraph code index REPO --name NAME [--patterns code-patterns.yaml]`.
 
@@ -51,6 +51,10 @@ When a run confirms what a table, column, status code or metric means, save it s
     keygraph context add --kind metric name=revenue definition="..." expression="SUM(...)" tables=schema.a,schema.b
 
 Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything.
+
+## Check and report
+
+`keygraph doctor --dir <out>` checks the install, the map and the MCP server, and prints the exact MCP launch command with absolute paths. Run it after a setup or when a tool misbehaves. If keygraph itself is at fault (a crash, a missing declared key, a JOIN on columns that do not exist), follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md: `keygraph doctor --report env.md` gives a redacted environment block. Never open an issue without the user's yes. Setting keygraph up for someone? Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md.
 
 ## Explorer
 

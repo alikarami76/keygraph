@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from conftest import needs_yaml
 from keygraph import query as Q
 from keygraph.graph import AmbiguousTable, Graph, UnknownTable
 
@@ -18,6 +19,44 @@ def test_resolve(graph):
     s.add(Table("b", "t"))
     with pytest.raises(AmbiguousTable):
         build_graph(s).resolve("t")
+
+
+def test_resolve_prefers_the_original_over_mirror_and_copy_schemas():
+    from keygraph.graph import build_graph
+    from keygraph.model import Schema, Table
+    s = Schema()
+    for schema in ("shop", "reporting", "replica"):
+        s.add(Table(schema, "customers"))
+    g = build_graph(s)
+    g.data["mirrors"] = {"reporting": "shop"}
+    g.data["copy_schemas"] = ["repl*"]
+    assert g.resolve("customers") == "shop.customers"
+    assert g.resolve("reporting.customers") == "reporting.customers"  # still reachable by full name
+    g.data["mirrors"], g.data["copy_schemas"] = {}, []
+    with pytest.raises(AmbiguousTable):
+        g.resolve("customers")  # without mirror/copy info it stays ambiguous
+
+
+def test_resolve_two_originals_and_a_mirror_stay_ambiguous():
+    from keygraph.graph import build_graph
+    from keygraph.model import Schema, Table
+    s = Schema()
+    for schema in ("shop", "crm", "reporting"):
+        s.add(Table(schema, "customers"))
+    g = build_graph(s)
+    g.data["mirrors"] = {"reporting": "shop"}
+    with pytest.raises(AmbiguousTable) as exc:
+        g.resolve("customers")
+    assert exc.value.candidates == ["crm.customers", "reporting.customers", "shop.customers"]
+
+
+@needs_yaml
+def test_readme_quickstart_path_on_the_shop_example(tmp_path):
+    from tests.test_example_shop import _build
+    _build(tmp_path)  # examples/shop/out is not committed: build the demo the way the README does
+    g = Graph.load(tmp_path / "graph.json")
+    assert g.resolve("customers") == "shop.customers"
+    assert Q.find_paths(g, g.resolve("customers"), g.resolve("shipments"))
 
 
 def test_path_ranking_and_sql(graph):

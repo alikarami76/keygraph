@@ -11,6 +11,10 @@ SHOP = Path(__file__).resolve().parents[1] / "examples" / "shop"
 
 
 def _build(out: Path, profile: bool = False, app: bool = False) -> None:
+    """Build the demo the way the README does. It reads context.yaml (extra yaml) and profiles through SQLAlchemy (extra live)."""
+    pytest.importorskip("yaml", reason="needs PyYAML (extra: yaml)")
+    if profile:
+        pytest.importorskip("sqlalchemy", reason="needs SQLAlchemy (extra: live)")
     d = SHOP / "dumps"
     assert main(["load", "--dir", str(out), "--columns", str(d / "columns.json"), "--statistics", str(d / "statistics.json"),
                  "--key-columns", str(d / "key_columns.json"), "--tables", str(d / "tables.json"),

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: py${{ matrix.python }} ${{ matrix.install }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        install: [core, all-extras]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: ${{ matrix.python }}
+      # core: no extras and no dev group, so tests that need an optional library skip
+      # and the zero-dependency install is what is tested.
+      - name: pytest (core only)
+        if: matrix.install == 'core'
+        run: uv run --no-dev --exact --with pytest pytest -q
+      # all-extras: without the extras the MCP tests are skipped, which is how the
+      # 0.3.2 quickstart bug slipped through.
+      - name: pytest (all extras)
+        if: matrix.install == 'all-extras'
+        run: |
+          if [ "${{ matrix.python }}" = "3.13" ]; then uv run --all-extras playwright install --with-deps chromium; fi
+          uv run --all-extras pytest -q
+      - name: build the demo, run doctor and the README quickstart
+        if: matrix.install == 'all-extras'
+        run: |
+          uv run --all-extras bash examples/shop/build.sh "$RUNNER_TEMP/demo"
+          uv run --all-extras keygraph doctor --dir "$RUNNER_TEMP/demo"
+          uv run --all-extras keygraph path customers shipments --dir "$RUNNER_TEMP/demo"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      # Pyflakes and syntax errors only; the older style findings (E741, E702) are not gated.
+      - run: uvx ruff@0.14.0 check src tests --exclude tests/fixtures --select F,E9
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - name: install the wheel in a clean venv and run it outside the repo
+        run: |
+          python3 -m venv "$RUNNER_TEMP/v"
+          "$RUNNER_TEMP/v/bin/pip" install -q "$(ls dist/*.whl)[mcp]"
+          "$RUNNER_TEMP/v/bin/keygraph" --help > /dev/null
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/

@@ -1,7 +1,6 @@
 """Code index foundations: naming variants, vocabulary, file walk, line index, snippet masking and the store."""
 import os
 
-import pytest
 
 from keygraph.code.refs import CodeRef, Unresolved, mask_secrets, snippet
 from keygraph.code.store import CodeStore

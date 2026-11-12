@@ -83,12 +83,19 @@ Use keygraph when you need to:
 
 ## Quickstart
 
-keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
+**With your AI agent.** Paste this into Claude Code, Codex, Cursor, ZCode, OpenCode, Unsloth Studio or any other coding agent:
+
+> Set up keygraph for this project. Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md exactly.
+
+The agent detects your database and its own harness, then asks you up to six questions. It builds the map, connects keygraph over MCP, and checks the result with `keygraph doctor`. Your credentials never go into a config file. Details are in [setup/](https://github.com/alikarami76/keygraph/blob/main/setup/README.md).
+
+**By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
 
 ```bash
 pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
 keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
 keygraph ui                                                          # opens keygraph-out/keygraph.html
+keygraph doctor                                                      # checks the install, the map and the MCP server
 ```
 
 `scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, and the connection's current schema for PostgreSQL and SQL Server; a scan that finds no tables stops with a message suggesting `--schema` or `--all-schemas`). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:

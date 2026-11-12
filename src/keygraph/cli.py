@@ -454,6 +454,17 @@ def cmd_mcp(a):
     build_server(a.dir).run("stdio")
 
 
+def cmd_doctor(a):
+    from . import doctor as D
+    r = D.run(a.dir)
+    if a.report:
+        Path(a.report).write_text(D.report(r), encoding="utf-8")
+        print(f"wrote {a.report}: environment block for a bug report (no table names, SQL or values)", file=sys.stderr)
+    _emit(a, r, D.format_text(r))
+    if r["status"] == "fail":
+        raise SystemExit(1)
+
+
 def _code_db(a) -> Path:
     load_graph(a.dir)  # a clear message when nothing was built
     return Path(a.dir) / "keygraph.db"
@@ -650,6 +661,9 @@ def main(argv=None) -> int:
     p.add_argument("--out", required=True)
     add("mcp", cmd_mcp, "serve keygraph to AI agents over MCP (stdio); needs keygraph[mcp]")
     add("ui", cmd_ui, "open keygraph.html in the browser")
+    p = add("doctor", cmd_doctor, "check the install and a built directory; print the MCP launch command")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--report", metavar="FILE", help="also write a redacted environment block for a bug report")
     dialects = sorted({"mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite"})
     pc = sub.add_parser("code", help="link source code to tables and columns (index, where, what, stats)")
     pc.set_defaults(fn=cmd_code)
