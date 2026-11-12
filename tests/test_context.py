@@ -3,7 +3,7 @@ import gzip
 import json
 import re
 
-from conftest import FIX, edge
+from conftest import FIX, edge, needs_yaml
 
 from keygraph import search as S
 from keygraph.cli import main
@@ -25,6 +25,7 @@ def test_normalize_persian():
     assert normalize("orderItems_id") == "order items id"
 
 
+@needs_yaml
 def test_import_validates_with_warnings(graph, tmp_path):
     ctx, counts = make_ctx(graph, tmp_path)
     assert counts == {"concepts": 3, "relations": 1, "columns": 2, "metrics": 1, "tables": 1}
@@ -34,6 +35,7 @@ def test_import_validates_with_warnings(graph, tmp_path):
     assert c["notes"]["verified"] == 1 and c["notes"]["source"].endswith("context.yaml")
 
 
+@needs_yaml
 def test_search_ranks_and_expands(graph, tmp_path):
     ctx, _ = make_ctx(graph, tmp_path)
     r = S.search(graph, ctx, "purchase")
@@ -53,6 +55,7 @@ def test_search_ranks_and_expands(graph, tmp_path):
     assert "pitfalls" in S.search(graph, ctx, "carts")["tables"][0]
 
 
+@needs_yaml
 def test_describe(graph, tmp_path):
     ctx, _ = make_ctx(graph, tmp_path)
     text = S.format_describe(S.describe(graph, ctx, "orders"))
@@ -73,6 +76,7 @@ def test_relation_strengthens_edge(dump_schema, tmp_path):
     assert S.apply_context_to_graph(g, ctx) == 0  # idempotent
 
 
+@needs_yaml
 def test_report_context_coverage(graph, tmp_path):
     ctx, _ = make_ctx(graph, tmp_path)
     r = write_report(graph, ctx)
@@ -90,6 +94,7 @@ def test_notes_parser(tmp_path):
     assert list(n["codes"].values())[0] == {"1": "open", "2": "closed"}
 
 
+@needs_yaml
 def test_cli_end_to_end(tmp_path, capsys):
     out = tmp_path / "out"
     assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json"), "--statistics", str(FIX / "shop_statistics.json"),
@@ -119,6 +124,7 @@ def decode(html):
     return json.loads(raw)
 
 
+@needs_yaml
 def test_explorer_embeds_data(graph, tmp_path):
     ctx, _ = make_ctx(graph, tmp_path)
     for limit in (10**9, 10):  # plain and gzip
@@ -163,6 +169,7 @@ def test_browser(graph, tmp_path):
         b.close()
 
 
+@needs_yaml
 def test_curation_roundtrip(tmp_path, graph):
     from keygraph.context import ContextDB
     f = tmp_path / "c.yaml"
@@ -173,6 +180,7 @@ def test_curation_roundtrip(tmp_path, graph):
     assert cur["areas"][0]["name"] == "Orders" and cur["hubs"]["exclude"] == ["shop.users"]
 
 
+@needs_yaml
 def test_curation_reimport_does_not_duplicate(tmp_path, graph):
     from keygraph.context import ContextDB
     f = tmp_path / "c.yaml"
@@ -188,6 +196,7 @@ def test_curation_reimport_does_not_duplicate(tmp_path, graph):
     assert [a["name"] for a in cur["areas"]] == ["Sales"] and cur["hubs"] == {"include": [], "exclude": []}
 
 
+@needs_yaml
 def test_cli_context_args_after_options(tmp_path, capsys):
     """key=value pairs and the path may follow options (Python 3.11 argparse needs help with this)."""
     import pytest
@@ -206,6 +215,7 @@ def test_cli_context_args_after_options(tmp_path, capsys):
         main(["context", "stats", "--dir", str(out), "--bogus"])
 
 
+@needs_yaml
 def test_context_file_that_is_not_a_mapping_is_a_clean_error(tmp_path, capsys):
     out = tmp_path / "out"
     assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json")]) == 0

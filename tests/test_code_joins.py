@@ -1,6 +1,5 @@
 """Links seen in code: join extractor, code_joins in the index, and the merge into the graph at render."""
 import json
-import shutil
 import sqlite3
 
 import pytest

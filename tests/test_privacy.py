@@ -3,6 +3,7 @@ import base64
 import gzip
 import re
 
+from conftest import needs_yaml
 from keygraph.cli import main, run_pipeline
 from keygraph.context import ContextDB
 from keygraph.graph import Graph
@@ -24,6 +25,7 @@ tables:
 """
 
 
+@needs_yaml
 def test_no_absolute_paths_in_outputs(tmp_path, dump_schema):
     ctxdir = tmp_path / "context"
     (ctxdir / "sub").mkdir(parents=True)
@@ -82,6 +84,7 @@ def test_old_db_rows_with_absolute_sources_never_leak(tmp_path, dump_schema, cap
     assert "context source: shop.yaml" in printed and str(tmp_path) not in printed
 
 
+@needs_yaml
 def test_markup_in_context_cannot_break_the_page(tmp_path, dump_schema):
     nasty = "watch out <!-- not a comment --> and </script><b>x</b>"
     f = tmp_path / "c.yaml"

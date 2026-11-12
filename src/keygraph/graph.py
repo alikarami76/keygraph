@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from .infer import Inferer, Options, declared_edges, redundant_indexes
-from .model import Schema, type_family
+from .model import Schema, is_copy_schema, type_family
 from .overrides import Overrides, apply_overrides
 
 VERSION = 1
@@ -120,10 +120,19 @@ class Graph:
             if len(hits) == 1:
                 return hits[0]
             if len(hits) > 1:
+                # A bare name that also exists in mirror or copy schemas means the original table.
+                originals = [h for h in hits if not self._is_mirror_or_copy(self.nodes[h]["schema"])]
+                if len(originals) == 1:
+                    return originals[0]
                 raise AmbiguousTable(name, sorted(hits))
         sug = difflib.get_close_matches(name, list(self.nodes), n=4, cutoff=0.6)
         sug += [h for k in difflib.get_close_matches(low, list(self._by_name), n=3, cutoff=0.7) for h in self._by_name[k]]
         raise UnknownTable(name, sorted(set(sug)))
+
+    def _is_mirror_or_copy(self, schema: str) -> bool:
+        if isinstance((self.data.get("mirrors") or {}).get(schema), str):
+            return True
+        return is_copy_schema(schema, self.data.get("copy_schemas"))
 
     def split_column(self, ref: str) -> tuple[str, str | None]:
         """Parse 'table', 'table.col' or 'schema.table.col' into (table_id, column or None)."""

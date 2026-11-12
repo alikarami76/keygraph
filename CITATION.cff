@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use keygraph, please cite it as below."
 title: "keygraph"
 type: software
-version: 0.2.0
-date-released: 2026-11-03
+version: 0.3.3
+date-released: 2026-11-12
 license: MIT
 url: "https://github.com/alikarami76/keygraph"
 repository-code: "https://github.com/alikarami76/keygraph"

@@ -2,7 +2,7 @@
 import json
 
 from keygraph.graph import build_graph
-from keygraph.mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
+from keygraph.mirrors import mark_mirrors, transfer_mirror_edges
 from keygraph.model import Column, ForeignKey, Index, Schema, Table
 
 PK = [Index("PRIMARY", ["id"], True, True)]

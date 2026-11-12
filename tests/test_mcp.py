@@ -97,8 +97,8 @@ def test_profile_summary_withholds_pii(srv):
 
 
 def test_errors_are_tool_errors_with_suggestions(srv):
-    err, msg = call(srv, "describe", table="customers")  # ambiguous: reporting.customers mirrors shop.customers
-    assert err and "shop.customers" in msg
+    err, got = call(srv, "describe", table="customers")  # reporting.customers is a mirror, so the original wins
+    assert not err and got["table"] == "shop.customers"
     err, msg = call(srv, "keys", table="custmers")
     assert err and "unknown table" in msg
     err, msg = call(srv, "explain", column_ref="shop.orders.nope")

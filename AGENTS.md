@@ -1,8 +1,10 @@
 # AGENTS.md: using keygraph as an AI agent
 
+> **Asked to set up or install keygraph for a user?** Follow [setup/SETUP.md](setup/SETUP.md). It detects their database and your harness, asks them up to six questions, builds the map, connects the MCP server, and verifies the result with `keygraph doctor`. To report a keygraph bug, follow [setup/BUG_REPORTS.md](setup/BUG_REPORTS.md).
+
 keygraph maps how the tables in a database connect (keys, indexes, declared and inferred foreign keys, business context, sampled value profiles). Use it to find tables and join paths before you write SQL. It is read-only and deterministic. It never runs SQL for you and makes no LLM calls.
 
-Commands below assume a built output directory (default `keygraph-out`, set with `--dir` or `KEYGRAPH_DIR`). If the keygraph MCP server is connected, call the tool with the same name instead of the CLI; it returns the same JSON as `--json` (except `areas`, which wraps the list as `{"areas": [...]}`). Table names resolve leniently: a bare name works when it is unique across schemas, otherwise write `schema.table`.
+Commands below assume a built output directory (default `keygraph-out`, set with `--dir` or `KEYGRAPH_DIR`). If the keygraph MCP server is connected, call the tool with the same name instead of the CLI; it returns the same JSON as `--json` (except `areas`, which wraps the list as `{"areas": [...]}`). Table names resolve leniently: a bare name works when it is unique, or unique outside mirror and copy schemas (the original wins over its copies); otherwise write `schema.table`.
 
 ## Sequence
 

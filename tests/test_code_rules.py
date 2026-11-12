@@ -15,6 +15,8 @@ def vocab(tmp_path_factory):
 
 @pytest.mark.parametrize("repo", RULE_REPOS)
 def test_fixture_repo_matches_golden(repo, vocab):
+    if repo == "custom-pattern":
+        pytest.importorskip("yaml", reason="needs PyYAML (extra: yaml)")
     want = json.loads((GOLDEN / f"{repo}.json").read_text(encoding="utf-8"))
     assert rules_snapshot(repo, vocab) == want
 
