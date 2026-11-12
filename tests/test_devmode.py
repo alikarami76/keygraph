@@ -262,7 +262,7 @@ def test_query_and_code_stdout_is_ref_only(tmp_path, capsys):
     main(["queries", "top", "--dir", str(tmp_path)])
     capsys.readouterr()
     evs = events(tmp_path)
-    top = [e for e in evs if e["tool"] == "queries top"][0]
+    top = next(e for e in evs if e["tool"] == "queries top")
     assert "response" not in top and top["response_ref"]["bytes"] > 0
     assert "bob@x.com" not in (tmp_path / "dev" / "events.jsonl").read_text()
 
