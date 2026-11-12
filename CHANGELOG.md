@@ -15,6 +15,7 @@
 - An unverified context write (`context add`, or an import from another source) no longer replaces a verified note for the same concept, link, relation, column, metric or table; keygraph keeps the verified row and reports a warning. Only re-importing the same context file can update its own rows, and a verified write still replaces anything. Reading a YAML context file without PyYAML now fails with a clear message instead of a raw ImportError.
 - Join paths now flag many-to-many hops (including partial composite-key hops) as fan-out and rank them lower, the same as one-to-many hops, in the CLI, MCP and explorer.
 - Dev mode (in progress).
+- Dev mode (in progress): the MCP server logs every tool call and resource read when dev mode is on (`dev_note` tool added only then).
 
 ## 0.3.3 - 2026-11-12
 

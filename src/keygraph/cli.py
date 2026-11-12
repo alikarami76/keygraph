@@ -500,12 +500,9 @@ def cmd_dev(a):
         devlog.clear(out, a.all)
         print("cleared the dev log" + (" and switched dev mode off" if a.all else " (dev mode setting kept)"))
     else:
-        q = devlog.mask_text(" ".join(a.text))
-        sess, on = devlog.session_id("cli"), devlog.enabled(out)
-        if on:
-            on = devlog.Recorder(out, "cli", session=sess).record("note", "dev_note", {"question": q})
-        _emit(a, {"noted": on, "session": sess, "question": q},
-              f"noted: {q}" if on else "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)")
+        r = devlog.note(out, " ".join(a.text), "cli")
+        _emit(a, r, f"noted: {r['question']}" if r["noted"] else
+              "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)")
 
 
 def _code_db(a) -> Path:

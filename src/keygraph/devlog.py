@@ -94,6 +94,8 @@ def mask_args(v, key: str = ""):
     if isinstance(v, str):
         if key == "cmd":  # command templates hold credentials (-pSECRET, Bearer ...): keep only the program
             return (v.split() or [""])[0][:60] + " <redacted-cmd>"
+        if key == "uri" and v.startswith("keygraph://"):  # keygraph's own resource ids, not a connection URL
+            return "keygraph://" + mask_text(v[11:])
         if key == "sql":
             from .queries.fingerprint import mask_sql
             return mask_sql(mask_text(v))
@@ -321,6 +323,18 @@ def decide(kind: str, **fields) -> None:
     lst = _DECISIONS.get()
     if lst is not None and len(lst) < DECISIONS_MAX:
         lst.append({"kind": kind, **fields})
+
+
+def note(out, text: str, surface: str = "cli", session: str | None = None, client: dict | None = None,
+         recorder: Recorder | None = None) -> dict:
+    """Record the question an agent is about to answer (dev mode only). The one function behind `keygraph dev note
+    --json` and the MCP `dev_note` tool, so both return {"noted", "session", "question"}."""
+    q = mask_text(text)
+    sess = recorder.session if recorder else session or session_id(surface)
+    on = enabled(out)
+    if on:
+        on = (recorder or Recorder(out, surface, client, sess)).record("note", "dev_note", {"question": q})
+    return {"noted": on, "session": sess, "question": q}
 
 
 # ---- housekeeping used by `keygraph dev` ------------------------------------------------------------------

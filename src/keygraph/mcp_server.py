@@ -7,12 +7,17 @@ touches a database: it reads graph.json and keygraph.db from a built output dire
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
+import time
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
 from . import code as CI
+from . import devlog
 from . import queries as QL
 from . import query as Q
 from . import search as S
@@ -32,6 +37,93 @@ When code was indexed, `code_where` lists where a table or column is declared, w
 `code_what` lists the tables and columns a file, line or symbol touches. The query log answers how a table was
 queried before: `query_for`, `query_top` and `query_search`. `query_submit` is the only tool that writes: it logs a
 query you ran (SQL, source, timing and the business question) into the query tables and nothing else."""
+
+
+def _client(context) -> dict:
+    """{"name", "version"} of the connected client, or {} (no context, or the client did not say). Never raises."""
+    try:
+        info = context.session.client_params.client_info
+        return {"name": str(info.name), "version": str(getattr(info, "version", "") or "")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _result_fields(tool: str, res) -> tuple[bool, dict, dict | None]:
+    """(ok, response fields, error) for a CallToolResult; the JSON text is parsed so profile values can be masked."""
+    texts = [getattr(c, "text", "") for c in (getattr(res, "content", None) or [])]
+    text = texts[0] if texts else ""
+    if getattr(res, "is_error", False):
+        return False, {}, {"type": "ToolError", "message": text}
+    try:
+        return True, devlog.response_fields(tool, json.loads(text)), None
+    except ValueError:
+        return True, devlog.response_fields(tool, text), None
+
+
+class _DevServer(MCPServer):
+    """MCPServer that records calls and resource reads when dev mode is on (checked at call time, so `keygraph dev on`
+    reaches a running server). Results and exceptions pass through unchanged; a failing recorder is swallowed."""
+
+    out: Path
+    _rec: devlog.Recorder | None = None
+
+    def _recorder(self, context) -> devlog.Recorder:
+        if self._rec is None:
+            self._rec = devlog.Recorder(self.out, "mcp")
+        self._rec.client = _client(context) or self._rec.client
+        return self._rec
+
+    async def call_tool(self, name, arguments, context=None):
+        if name == "dev_note":
+            if devlog.enabled(self.out):
+                with contextlib.suppress(Exception):
+                    self._recorder(context)  # learn the client before the note is written
+            return await super().call_tool(name, arguments, context)
+        if not devlog.enabled(self.out):
+            return await super().call_tool(name, arguments, context)
+        t0, res, exc = time.perf_counter(), None, None
+        with devlog.collecting() as decisions:
+            try:
+                res = await super().call_tool(name, arguments, context)
+            except BaseException as e:  # noqa: BLE001  (recorded, then re-raised unchanged)
+                exc = e
+        try:
+            ms = (time.perf_counter() - t0) * 1000
+            if exc is not None:
+                ok, resp, err = False, {}, {"type": type(exc).__name__, "message": str(exc)}
+            else:
+                ok, resp, err = _result_fields(name, res)
+            self._recorder(context).record("call", name, arguments, ms, ok, err, resp, decisions)
+        except Exception as e:  # noqa: BLE001
+            devlog._warn(e)
+        if exc is not None:
+            raise exc
+        return res
+
+    async def read_resource(self, uri, context=None):
+        if not devlog.enabled(self.out):
+            return await super().read_resource(uri, context)
+        t0, res, exc = time.perf_counter(), None, None
+        with devlog.collecting() as decisions:
+            try:
+                res = await super().read_resource(uri, context)
+            except BaseException as e:  # noqa: BLE001
+                exc = e
+        try:
+            ms = (time.perf_counter() - t0) * 1000
+            ok, resp, err = exc is None, {}, None
+            if exc is not None:
+                err = {"type": type(exc).__name__, "message": str(exc)}
+            elif isinstance(res, (list, tuple)):
+                text = "".join(str(getattr(c, "content", "")) for c in res)
+                raw = text.encode("utf-8", "replace")
+                resp = devlog.stdout_fields("resource", text, len(raw), hashlib.sha256(raw).hexdigest(), len(text) // 4)
+            self._recorder(context).record("resource", "read_resource", {"uri": str(uri)}, ms, ok, err, resp, decisions)
+        except Exception as e:  # noqa: BLE001
+            devlog._warn(e)
+        if exc is not None:
+            raise exc
+        return res
 
 
 MAX_DEPTH = 3  # neighbors beyond 3 hops returns most of a large graph
@@ -57,7 +149,8 @@ def build_server(dir: str | Path) -> MCPServer:
         except (ValueError, KeyError) as exc:  # unknown/ambiguous table, bad reference: tell the agent how to fix it
             raise ToolError(str(exc.args[0] if isinstance(exc, KeyError) and exc.args else exc)) from None
 
-    srv = MCPServer("keygraph", instructions=INSTRUCTIONS)
+    srv = _DevServer("keygraph", instructions=INSTRUCTIONS)
+    srv.out = out
 
     @srv.tool()
     def search(query: str, limit: int = 10, with_paths: bool = True) -> dict:
@@ -178,6 +271,14 @@ def build_server(dir: str | Path) -> MCPServer:
         and secret-looking values are masked before storing. This is the only tool that writes, and it writes only the
         query log tables. Returns the query's fingerprint and the tables it touched."""
         return run(QL.add, db, sql, source, ms, rows, context, tags or [], by)
+
+    if devlog.enabled(out):  # only when dev mode is on as the server starts: the tool list stays at 15 otherwise
+        @srv.tool()
+        def dev_note(question: str) -> dict:
+            """Dev mode only. Call this with the user's question, in their words, before your first keygraph call for
+            that question, so the dev log can show which question each search, path and describe call was answering.
+            Returns {"noted": bool, "session": id, "question": text}, the same JSON as `keygraph dev note --json`."""
+            return devlog.note(out, question, "mcp", recorder=srv._rec)
 
     def _read(rel: str) -> str:
         p = (out / rel).resolve()
