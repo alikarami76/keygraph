@@ -1,6 +1,9 @@
 """Generic naming rules for FK-less databases: shared key name, reference prefixes, numbered roles,
 <table>_<column> and bare id. Each rule has a positive test and a near-miss negative test."""
+import time
+
 from keygraph.graph import build_graph
+from keygraph.infer import Inferer, Options
 from keygraph.model import Column, Index, Schema, Table
 
 
@@ -216,7 +219,6 @@ def test_e_keyless_table_named_after_another_is_capped_at_070():
 
 
 def test_normal_stem_columns_are_untouched_by_the_new_rules():
-    from keygraph.infer import Inferer, Options
     s = Schema()
     for t in (T("customers", [("id", "int"), ("customer_ref", "int"), ("email", "text")], pk=["id"], uniq=["customer_ref"]),
               T("accounts", [("id", "int"), ("customer_ref", "int")], pk=["id"], uniq=["customer_ref"]),
@@ -231,8 +233,6 @@ def test_normal_stem_columns_are_untouched_by_the_new_rules():
 
 
 def test_many_keyless_tables_stay_fast():
-    import time
-    from keygraph.infer import Inferer, Options
     s = Schema()
     for i in range(1500):
         s.add(T(f"tbl{i}", [(f"c{j}", "int") for j in range(20)] + [("id", "int")], schema="s"))
