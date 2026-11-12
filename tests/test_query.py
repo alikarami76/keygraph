@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from conftest import needs_yaml
 from keygraph import query as Q
 from keygraph.graph import AmbiguousTable, Graph, UnknownTable
 
@@ -36,6 +37,7 @@ def test_resolve_prefers_the_original_over_mirror_and_copy_schemas():
         g.resolve("customers")  # without mirror/copy info it stays ambiguous
 
 
+@needs_yaml
 def test_readme_quickstart_path_on_the_shop_example(tmp_path):
     from tests.test_example_shop import _build
     _build(tmp_path)  # examples/shop/out is not committed: build the demo the way the README does

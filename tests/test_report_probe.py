@@ -1,5 +1,6 @@
 import pytest
 
+from conftest import needs_sqlalchemy
 from keygraph.adapters.live import scan_url
 from keygraph.graph import build_graph
 from keygraph.probe import SelectOnlyRunner, UnsafeSQL, assert_select, probe_graph
@@ -29,6 +30,7 @@ def test_probe_allows_select_with_literals():
     assert assert_select("SELECT 'drop table' FROM t WHERE a IN (1,2);").startswith("SELECT")
 
 
+@needs_sqlalchemy
 def test_sqlite_scan_and_probe(sqlite_url):
     g = build_graph(scan_url(sqlite_url))
     assert g.edges and any(e["kind"] == "declared" for e in g.edges)

@@ -1,6 +1,7 @@
 import datetime as dt
 import json
 
+from conftest import needs_sqlalchemy
 from keygraph import search as S
 from keygraph.adapters import open_source
 from keygraph.cli import main
@@ -51,6 +52,7 @@ def test_sample_sql_is_bounded():
     assert "MAX(" in build_sample_sql("sqlite", "t", ["a"], 100, "recent", "id")
 
 
+@needs_sqlalchemy
 def test_end_to_end_sqlite_profile_search_and_cli(sqlite_url, tmp_path, capsys):
     import sqlite3
     path = sqlite_url.replace("sqlite:///", "")

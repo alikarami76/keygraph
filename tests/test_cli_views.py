@@ -3,6 +3,7 @@ import shutil
 
 import pytest
 
+from conftest import needs_yaml
 from keygraph.cli import main
 
 FIX = "tests/fixtures"
@@ -85,6 +86,7 @@ def test_rebuild_keeps_user_files_and_ignores_symlinked_dirs(tmp_path):
     assert (outside / "gone.t.md").read_text() == "keep"
 
 
+@needs_yaml
 def test_bad_hub_names_warn_and_stale_curation_is_dropped(tmp_path):
     ctx = tmp_path / "ctx"
     ctx.mkdir()

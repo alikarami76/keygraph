@@ -1,3 +1,4 @@
+from conftest import needs_yaml
 from keygraph import areas as A
 from keygraph import hubs as H
 import itertools
@@ -179,6 +180,7 @@ def test_name_is_the_most_connected_non_hub_table_unless_a_prefix_covers_60_perc
     assert "Order" in names
 
 
+@needs_yaml
 def test_malformed_curation_file_warns_instead_of_crashing(tmp_path, dump_schema):
     """User-written curation YAML: rules without name/match, hubs or mirrors given as lists become warnings."""
     import json as _json

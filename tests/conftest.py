@@ -1,3 +1,4 @@
+import importlib.util
 import sqlite3
 from pathlib import Path
 
@@ -8,6 +9,10 @@ from keygraph.graph import build_graph
 from keygraph.infer import Options
 
 FIX = Path(__file__).parent / "fixtures"
+
+# Optional extras: keygraph has zero core dependencies, so tests that need one skip when it is missing.
+needs_yaml = pytest.mark.skipif(importlib.util.find_spec("yaml") is None, reason="needs PyYAML (extra: yaml)")
+needs_sqlalchemy = pytest.mark.skipif(importlib.util.find_spec("sqlalchemy") is None, reason="needs SQLAlchemy (extra: live)")
 
 
 @pytest.fixture(scope="session")
