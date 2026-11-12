@@ -26,7 +26,7 @@ Declared foreign keys have confidence 1.0. Inferred edges are guesses from names
 
 ## Building the graph
 
-- Live database: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas]` (needs `keygraph[live]`; reads metadata only).
+- Live database: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas] [--generic]` (needs `keygraph[live]`; reads metadata only; MySQL, PostgreSQL, SQL Server and ClickHouse URLs use their own adapter and keep comments, enums, row counts and partitions, `--generic` forces the plain inspector).
 - Dumps: `keygraph load --columns columns.jsonl [--statistics s.jsonl] [--key-columns k.jsonl] [--columns-map '{"TABLE_SCHEMA":"db"}'] [--flatten raw] [--where field=value]`. Without statistics it falls back to COLUMN_KEY and marks indexes approximate.
 - Fetch statistics and key usage with any read-only command: `keygraph fetch --cmd 'mytool --sql {sql}' --out dir`.
 - Optional value-overlap check of inferred edges (SELECT only): `keygraph probe --url <url> --sample 500`.

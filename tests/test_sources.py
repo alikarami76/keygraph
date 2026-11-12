@@ -184,3 +184,109 @@ def test_open_source_registry():
     assert isinstance(open_source("clickhouse", run=lambda s: []), ClickHouseSource)
     with pytest.raises(ValueError):
         open_source("oracle")
+
+
+class _FakeRunner:
+    def __init__(self, run):
+        self.run = run
+
+
+def _patch_runner(monkeypatch, run, seen=None):
+    from keygraph.probe import SelectOnlyRunner
+
+    def from_url(url, as_dicts=False):
+        if seen is not None:
+            seen.append(as_dicts)
+        return _FakeRunner(run)
+    monkeypatch.setattr(SelectOnlyRunner, "from_url", staticmethod(from_url))
+
+
+def _no_inspector(monkeypatch):
+    from keygraph.adapters import live
+
+    def boom(*a, **k):
+        raise AssertionError("the inspector scan ran")
+    monkeypatch.setattr(live, "scan_url", boom)
+
+
+def test_scan_mysql_url_uses_dedicated_adapter(monkeypatch, tmp_path):
+    import json
+
+    from keygraph.cli import main
+    _patch_runner(monkeypatch, fake_mysql, seen := [])
+    _no_inspector(monkeypatch)
+    out = tmp_path / "o"
+    assert main(["scan", "--url", "mysql+pymysql://u:pw@db.internal:3306/d", "--dir", str(out)]) == 0
+    assert seen == [True]
+    g = json.loads((out / "graph.json").read_text())
+    cols = {c["name"]: c for c in g["nodes"][0]["columns"]}
+    assert cols["status"]["values"] == ["new", "paid"] and cols["id"]["comment"] == "row id"
+    assert g["nodes"][0]["info"]["rows_estimate"] == 1234
+    b = json.loads((out / "build.json").read_text())
+    assert b["sources"] == [{"kind": "mysql", "database": "d"}]
+    assert "pw" not in (out / "build.json").read_text() and "db.internal" not in (out / "build.json").read_text()
+
+
+def test_scan_sqlite_stays_on_inspector(tmp_path, monkeypatch):
+    import json
+    import sqlite3
+
+    from keygraph.cli import main
+    pytest.importorskip("sqlalchemy")
+    db = tmp_path / "s.db"
+    c = sqlite3.connect(db)
+    c.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, name TEXT)")
+    c.commit()
+    c.close()
+    _patch_runner(monkeypatch, lambda sql: (_ for _ in ()).throw(AssertionError("dedicated adapter used")))
+    out = tmp_path / "o"
+    assert main(["scan", "--url", f"sqlite:///{db}", "--dir", str(out)]) == 0
+    assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "sqlalchemy"
+
+
+def test_scan_falls_back_when_adapter_fails(monkeypatch, tmp_path, capsys):
+    import json
+
+    from keygraph.adapters import live
+    from keygraph.cli import main
+    from keygraph.model import Column, Schema, Table
+
+    def broken(sql):
+        raise RuntimeError("secret-host refused")
+    _patch_runner(monkeypatch, broken)
+    sch = Schema()
+    sch.add(Table("d", "t", [Column("id", "int")]))
+    monkeypatch.setattr(live, "scan_url", lambda *a, **k: sch)
+    out = tmp_path / "o"
+    assert main(["scan", "--url", "mysql://u:pw@secret-host/d", "--dir", str(out)]) == 0
+    err = capsys.readouterr().err
+    assert "mysql adapter failed (RuntimeError)" in err and "secret-host" not in err and "pw" not in err
+    assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "sqlalchemy"
+
+
+def test_scan_generic_flag_forces_inspector(monkeypatch, tmp_path):
+    from keygraph.adapters import live
+    from keygraph.cli import main
+    from keygraph.model import Column, Schema, Table
+    _patch_runner(monkeypatch, lambda sql: (_ for _ in ()).throw(AssertionError("dedicated adapter used")))
+    sch = Schema()
+    sch.add(Table("d", "t", [Column("id", "int")]))
+    monkeypatch.setattr(live, "scan_url", lambda *a, **k: sch)
+    assert main(["scan", "--url", "mysql://u@h/d", "--generic", "--dir", str(tmp_path / "o")]) == 0
+
+
+def test_scan_postgres_keeps_requested_schemas_only(monkeypatch):
+    from keygraph.adapters import live
+    from keygraph.model import Column, Schema, Table
+    full = Schema()
+    for s in ("public", "audit"):
+        full.add(Table(s, "t", [Column("id", "int")]))
+
+    class Src:
+        def schema(self):
+            return full
+    monkeypatch.setattr("keygraph.adapters.open_source", lambda kind, **k: Src())
+    _patch_runner(monkeypatch, lambda sql: [])
+    assert list(live.dedicated_scan("postgres", "postgresql://h/d", None, False).tables) == ["public.t"]
+    assert list(live.dedicated_scan("postgres", "postgresql://h/d", ["audit"], False).tables) == ["audit.t"]
+    assert sorted(live.dedicated_scan("postgres", "postgresql://h/d", None, True).tables) == ["audit.t", "public.t"]

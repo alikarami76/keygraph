@@ -91,7 +91,7 @@ keygraph scan --url postgresql://user@host/db --schema public       # read-only 
 keygraph ui                                                          # opens keygraph-out/keygraph.html
 ```
 
-`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). Then ask questions from the command line:
+`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, `public` for PostgreSQL, `dbo` for SQL Server). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
 
 ```bash
 keygraph path customers shipments        # ranked join paths with a JOIN snippet

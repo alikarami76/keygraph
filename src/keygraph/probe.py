@@ -43,13 +43,14 @@ class SelectOnlyRunner:
         return list(self._execute(assert_select(sql)))
 
     @classmethod
-    def from_url(cls, url: str) -> "SelectOnlyRunner":
+    def from_url(cls, url: str, as_dicts: bool = False) -> "SelectOnlyRunner":
+        """as_dicts: rows keyed by column name (what the information_schema adapters read) instead of tuples."""
         from sqlalchemy import create_engine, text
         eng = create_engine(url)
 
         def ex(sql):
             with eng.connect() as c:
-                return [tuple(r) for r in c.execute(text(sql))]
+                return [dict(r._mapping) if as_dicts else tuple(r) for r in c.execute(text(sql))]
         return cls(ex)
 
     @classmethod

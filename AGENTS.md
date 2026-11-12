@@ -47,4 +47,4 @@ When you confirm what a table, column or status code means, save it so the next 
 
 ## Build the graph
 
-If no output directory exists: `keygraph scan --url <sqlalchemy-url> [--schema S]` (needs `keygraph[live]`) or `keygraph load --columns columns.json ...` from `information_schema` dumps. Setup for MCP clients is in the README: https://github.com/alikarami76/keygraph#mcp
+If no output directory exists: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas] [--generic]` (needs `keygraph[live]`; MySQL, PostgreSQL, SQL Server and ClickHouse URLs keep comments, enums, row counts and partitions via their own adapter; `--generic` forces the plain inspector) or `keygraph load --columns columns.json ...` from `information_schema` dumps. Setup for MCP clients is in the README: https://github.com/alikarami76/keygraph#mcp

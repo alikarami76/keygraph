@@ -216,9 +216,11 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
 
 
 def cmd_scan(a):
-    from .adapters.live import scan_url
-    run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
-                 copy_schemas=getattr(a, "copy_schema", None), sources=[url_source(a.url)])
+    from .adapters.live import scan_any
+    sch, via = scan_any(a.url, a.schema, a.all_schemas, getattr(a, "generic", False))
+    src = {**url_source(a.url), "kind": via}
+    run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
+                 copy_schemas=getattr(a, "copy_schema", None), sources=[src])
 
 
 def cmd_load(a):
@@ -528,10 +530,11 @@ def main(argv=None) -> int:
         p.add_argument("--snippets", action="store_true", help="include code snippets in keygraph.html (default: locations only)")
         p.add_argument("--queries", action="store_true", help="include the query log in keygraph.html and the table pages")
 
-    p = add("scan", cmd_scan, "scan a live database through SQLAlchemy (metadata only)")
+    p = add("scan", cmd_scan, "scan a live database (metadata only; MySQL, Postgres, SQL Server and ClickHouse use their own adapter)")
     p.add_argument("--url", required=True)
     p.add_argument("--schema", action="append")
     p.add_argument("--all-schemas", action="store_true")
+    p.add_argument("--generic", action="store_true", help="always use the SQLAlchemy inspector, not the engine's own adapter")
     build_opts(p)
     p = add("load", cmd_load, "build from information_schema dumps (JSON/JSONL/CSV)", "build")
     p.add_argument("--columns", required=True)
