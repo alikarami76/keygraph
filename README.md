@@ -95,6 +95,7 @@ The agent detects your database and its own harness, then asks you up to six que
 pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
 keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
 keygraph ui                                                          # opens keygraph-out/keygraph.html
+keygraph doctor                                                      # checks the install, the map and the MCP server
 ```
 
 `scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). Then ask questions from the command line:

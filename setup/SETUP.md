@@ -64,6 +64,8 @@ uv tool install 'keygraph[live,mcp,yaml,code]' --with <driver>
 pipx install 'keygraph[live,mcp,yaml,code]' && pipx inject keygraph <driver>
 # plain pip (inside a virtual environment)
 python3 -m pip install 'keygraph[live,mcp,yaml,code]' <driver>
+# an unreleased version from a clone (this may update the clone's uv.lock)
+python3 -m pip install -e '/path/to/keygraph[live,mcp,yaml,code]'
 ```
 
 Database drivers for a live connection:
@@ -95,7 +97,8 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
 # (d) demo: clone the repo, then
-uv run bash examples/shop/build.sh && OUT="$(pwd)/examples/shop/out"
+# from the repository root, with keygraph on PATH; build.sh reads examples/shop by relative path
+OUT="$(pwd)/keygraph-out" && sh examples/shop/build.sh "$OUT"
 ```
 
 Then, in this order, only the extras the user said yes to:
@@ -110,15 +113,16 @@ keygraph code index . --name <repo-name> --dir "$OUT"
 keygraph queries import queries.jsonl --dir "$OUT"
 # value profiles: bounded sampled reads, PII values never stored. Start with the most connected tables
 ( set -a; . ./.env; set +a; keygraph profile --source postgres --url "${DATABASE_URL}" --top-hubs 20 --with-context --dir "$OUT" )
+# (the demo's build.sh already profiles its tables; for another engine, change --source)
 # refresh the report, the explorer and the agent pages
 keygraph render --dir "$OUT"
 ```
 
-**Starter business context (question 5).** Copy `setup/templates/context-starter.yaml` to `keygraph-context.yaml` in the project. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. Leave `verified: false`. Import it as above. Tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
+**Starter business context (question 5).** Copy `setup/templates/context-starter.yaml` to `keygraph-context.yaml` in the project. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. Leave `verified: false`. Before you import it, run `keygraph describe <table> --dir "$OUT"` for each table in the file: in keygraph 0.3.3, `context import` replaces an existing note on the same table, column or concept, including a verified one. If any of them shows `verified: True`, leave that entry out of the file or ask the user first. Then import it as above. Tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
 
 **Copies and replicas.** If the scan prints a warning about ambiguous relations across schemas, or the user named copy schemas, rebuild with `--copy-schema GLOB` for each one.
 
-Check: `keygraph doctor --dir "$OUT"` shows `graph ok` and `query ok`. If the build found 0 tables, the schema name or the database user's permissions are wrong: fix them before you go on.
+Check: `keygraph doctor --dir "$OUT"` shows `ok    graph` and `ok    query` lines. If the build found 0 tables, the schema name or the database user's permissions are wrong: fix them before you go on.
 
 ## Step 5. Connect the MCP server to yourself
 
@@ -149,7 +153,13 @@ Each harness file says where these go. Do both:
 
 1. `keygraph doctor --dir "$OUT"` must print `OK` or only `warn` lines (warnings are optional extras). Fix every `fail`.
 2. Reload your harness's MCP servers as the harness file says (often a restart). If you cannot restart yourself, tell the user exactly what to click or run, and give them this check to paste into the new session: *"Use keygraph: search for <a business word>, then show the join path between <table A> and <table B>."*
-3. Through the MCP tools (not the CLI), call `search` with a business word that fits this database, then `path` between two tables that should be related. Both must return results. Pick the words from what the build found, for example the two ends of the strongest relation in `RELATIONS_REPORT.md`.
+3. Through the MCP tools (not the CLI), call `search` with a business word that fits this database, then `path` between two tables that should be related. Both must return results. Pick the words from what the build found, for example two tables joined by a declared foreign key (`keygraph describe <table> --dir "$OUT"` lists its relations; declared ones have confidence 1.00).
+
+If you cannot call MCP tools until the harness restarts, run the same two calls in-process as a stand-in and still give the user the paste check from 7.2:
+
+```bash
+python -c 'import asyncio; from keygraph.mcp_server import build_server; s = build_server("OUT"); print(asyncio.run(s.call_tool("search", {"query": "order"})))'
+```
 
 The setup is done only when step 7.3 works through MCP. (For a harness with no MCP, see `other.md`: the CLI with `--json` counts.)
 

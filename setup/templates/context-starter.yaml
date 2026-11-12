@@ -25,7 +25,7 @@ concepts:
     definition: One checkout by a customer.
     synonyms: [purchase, checkout]
     links:
-      - {table: schema.orders, role: primary-record}
+      - {table: schema.orders, role: primary-record}   # roles: primary-record, attribute, foreign-reference, measure, filter
 
 relations:
   - {from: customer, rel: places, to: order}

@@ -24,7 +24,7 @@ Connect to keygraph as a stdio MCP server with your framework's MCP client and t
 
 ## Agents with no MCP: use the CLI
 
-Any agent that can run shell commands can use keygraph. Every query command takes `--json` and returns the same JSON as the MCP tool:
+Any agent that can run shell commands can use keygraph. Every query command takes `--json` and returns the same JSON as the MCP tool (one exception: the MCP `areas` tool wraps its list as `{"areas": [...]}`):
 
 | MCP tool | CLI |
 |---|---|
