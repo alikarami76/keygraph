@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: py${{ matrix.python }} ${{ matrix.install }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+        install: [core, all-extras]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      # core: no extras and no dev group, so tests that need an optional library skip
+      # and the zero-dependency install is what is tested.
+      - name: pytest (core only)
+        if: matrix.install == 'core'
+        run: uv run --no-dev --exact --with pytest pytest -q
+      # all-extras: without the extras the MCP tests are skipped, which is how the
+      # 0.3.2 quickstart bug slipped through.
+      - name: pytest (all extras)
+        if: matrix.install == 'all-extras'
+        run: uv run --all-extras pytest -q
+      - name: README quickstart and doctor on the demo
+        if: matrix.install == 'all-extras'
+        run: |
+          uv run --all-extras bash examples/shop/build.sh "$RUNNER_TEMP/demo"
+          uv run --all-extras keygraph doctor --dir "$RUNNER_TEMP/demo"
+          uv run --all-extras keygraph path customers shipments --dir "$RUNNER_TEMP/demo"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # Pyflakes and syntax errors only; the older style findings (E741, E702) are not gated.
+      - run: uvx ruff@0.14.0 check src tests --exclude tests/fixtures --select F,E9
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - name: install the wheel in a clean venv and run doctor
+        run: |
+          python3 -m venv "$RUNNER_TEMP/v"
+          "$RUNNER_TEMP/v/bin/pip" install -q "$(ls dist/*.whl)[mcp]"
+          "$RUNNER_TEMP/v/bin/keygraph" --help > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
