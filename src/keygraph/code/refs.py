@@ -58,7 +58,6 @@ class Unresolved:
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 _URL_CRED = re.compile(r"(://)[^/\s:@]+:[^/\s@]+@")
 _KV = re.compile(r"""(?P<k>[A-Za-z_$][\w$.\-]*)(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
-_PLAIN_KV = re.compile(r"\b(\w{0,40}(?:pass|pwd|secret|token|api_?key)\w{0,20}\s*[=:]\s*)(?![*?'\"\s])[^\s'\",;&)]+", re.IGNORECASE)
 _LONG_TOKEN = re.compile(r"(?<![\w/.-])(?=[A-Za-z0-9_\-+/=]*\d)(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{32,}(?![\w/.-])")
 
 
@@ -81,7 +80,6 @@ def mask_secrets(text: str) -> str:
         return whole[:m.start("v") - base] + "***" + whole[m.end("v") - base:]
 
     text = _KV.sub(kv, text)
-    text = _PLAIN_KV.sub(r"\1***", text)
     return _LONG_TOKEN.sub("***", text)
 
 

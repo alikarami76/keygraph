@@ -29,6 +29,12 @@ DECISIONS_MAX = 200
 _ON, _OFF = {"1", "true", "on", "yes"}, {"0", "false", "off", "no"}
 _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')\]>]*")
 _LONG = re.compile(r"\S{513,}")  # mask_secrets is quadratic on one long unbroken token
+# unquoted key=value secrets (password=x, api_key: x): the key is a whole word, never a *_id column, and the value
+# is not a dotted name (a.token = b.token is a join, not a secret) or a placeholder
+_PLAIN_KV = re.compile(r"(?<![\w.])((?:password|passwd|pwd|secret|token|api_?key|access_?key)\s*[=:]\s*)"
+                       r"(?![*?'\"\s<:$@])(?![\w$]+\.[\w$])[^\s'\",;&)]+", re.IGNORECASE)
+# phone-like numbers: 7+ digit runs or grouped digits (dates such as 2026-11-12 stay)
+_PHONE = re.compile(r"(?<![\w.])(?:\+?\d{7,}|\+?\d{2,4}[\s-]\d{3}[\s-]\d{3,4}(?:[\s-]\d{2,4})?)(?![\w.])")
 MSG_MAX = 300
 # keys that hold sampled column values in a profile (counts, null rates, lengths and patterns stay)
 _VALUE_KEYS = {"top_values", "numeric", "dates", "examples", "sample_values", "samples"}
@@ -66,10 +72,11 @@ def enabled(out) -> bool:
 # ---- masking ----------------------------------------------------------------------------------------------
 
 def mask_text(s: str) -> str:
-    """Secrets masked and any scheme://... redacted."""
+    """Secrets (also plain key=value), phone-like numbers and emails masked and any scheme://... redacted."""
     from .code.refs import mask_secrets
     s = _LONG.sub(lambda m: f"<long-run:{len(m.group(0))}>", s)
-    return _URL.sub(lambda m: m.group(0).split("://", 1)[0] + "://***", mask_secrets(s))
+    s = _URL.sub(lambda m: m.group(0).split("://", 1)[0] + "://***", mask_secrets(s))
+    return _PHONE.sub("<phone>", _PLAIN_KV.sub(r"\1***", s))
 
 
 def mask_message(s: str) -> str:

@@ -257,9 +257,24 @@ def test_fetch_cmd_not_logged_with_credentials(tmp_path):
 
 
 def test_plain_key_value_secrets_are_masked():
+    for t in ("password=hunter2", "api_key=abcd", "TOKEN = hunter2", "x password: hunter2"):
+        assert "hunter2" not in devlog.mask_text(t) and "abcd" not in devlog.mask_text(t)
+    j = "a.token_id = b.token_id and a.token = b.token"
+    assert devlog.mask_text(j) == j
+
+
+def test_mask_secrets_is_main_behaviour_and_query_log_sql_unchanged(tmp_path):
+    from keygraph import queries as QL
     from keygraph.code.refs import mask_secrets
-    for t in ("password=hunter2", "db_pass: hunter2", "api_key=abcd", "TOKEN = hunter2"):
-        assert "hunter2" not in mask_secrets(t) and "abcd" not in mask_secrets(t)
+    assert mask_secrets("a.token_id = b.token_id") == "a.token_id = b.token_id"
+    _build(tmp_path)
+    r = QL.add(tmp_path / "keygraph.db", "select * from a join b on a.token_id = b.token_id", "t")
+    assert r["normalized_sql"] == "select * from a join b on a.token_id = b.token_id"
+
+
+def test_phone_and_email_masked_in_free_text():
+    t = devlog.mask_text("call 09123456789 or +98 912 345 6789 or ana@example.com on 2026-11-12")
+    assert "09123456789" not in t and "345 6789" not in t and "ana@" not in t and "2026-11-12" in t
 
 
 def test_query_and_code_stdout_is_ref_only(tmp_path, capsys):
