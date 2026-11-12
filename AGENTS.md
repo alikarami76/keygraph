@@ -21,7 +21,7 @@ Declared foreign keys have confidence 1.0. Inferred relations are guesses from n
 - 0.8 and above: use it.
 - 0.6 to 0.8: read the evidence lines first.
 - Below 0.6: never treat it as a fact. Verify it with a small `SELECT` (for example a count of rows whose value has no match) before relying on it. These edges are hidden by default; `path --min-confidence 0.4` shows them.
-- A hop marked `fan-out` turns one row into many. Aggregate before the join, or summing a column across it will count rows repeatedly.
+- A hop marked `fan-out` (one-to-many or many-to-many) turns one row into many. Aggregate before the join, or summing a column across it will count rows repeatedly.
 - Polymorphic columns (`x_type` plus `x_id`) have no single target.
 - Hub tables (such as a `users` table everything points to) appear as labels, and routes through hubs, log, archive or scratch tables are ranked lower on purpose.
 - Tables in a mirror schema (a copy of another schema) are skipped unless you pass `--include-mirrors`.

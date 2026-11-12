@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Join paths now flag many-to-many hops (including partial composite-key hops) as fan-out and rank them lower, the same as one-to-many hops, in the CLI, MCP and explorer.
+
 ## 0.3.2 - 2026-11-04
 
 - Inference prefers a related schema (`app` -> `ods_app`, `app_v2`) when a column's candidates are all in other schemas, and schemas can be declared copies by glob (`copies: ["ods_*"]` in the context or overrides file, `--copy-schema GLOB` on `scan`, `load` and `code index`): the code index prefers non-copy tables and inference prefers non-copy targets.

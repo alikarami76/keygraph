@@ -204,7 +204,7 @@ view("Explorer 3 of 6 · Path", "The Path view finds the join between two tables
      "path", "Best route from customers to shipments with SQL and evidence",
      ["The best route is customers, orders, shipments: two declared joins.",
       "Both steps carry a fan-out warning. One customer has many orders, so summing a customer column over this join counts it many times. The SQL comment says to aggregate first.",
-      "Routes through a hub, a one-to-many step or a scratch table (<code>*_shadow</code>, <code>*_log</code>) score lower. The side panel shows each step's evidence."])
+      "Routes through a hub, a one-to-many or many-to-many step or a scratch table (<code>*_shadow</code>, <code>*_log</code>) score lower. The side panel shows each step's evidence."])
 view("Explorer 4 of 6 · Table", "The Table view explains one table as a page",
      "This is the page to read before you query a table: what a row is, what to avoid, which metrics use it and how its columns look.",
      "table", "Table page for shop.orders",

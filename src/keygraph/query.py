@@ -35,6 +35,8 @@ HUB_PENALTY, FANOUT_PENALTY, LOG_PENALTY = 0.7, 0.85, 0.8
 # log, archive and scratch words: a table named with one of them (as a whole token) is a poor join step
 LOG_HINTS = ("log", "logs", "archive", "history", "audit", "bak", "backup", "old", "copy", "test", "shadow", "tmp", "temp")
 _LOG_TOKENS = frozenset(LOG_HINTS)
+# cardinalities that can multiply rows (a partial composite-key hop is recorded as many-to-many)
+FANOUT_CARDS = frozenset({"one-to-many", "many-to-many"})
 
 
 def _is_log(graph: Graph, t: str) -> bool:
@@ -51,7 +53,7 @@ def _hop_warnings(graph: Graph, h: dict, end: str | None = None, hubs: set | Non
     hubs = set(graph.data.get("hubs") or []) if hubs is None else hubs
     if h["far"] in hubs and h["far"] != end:
         w.append("hub"); f *= HUB_PENALTY
-    if h["cardinality"] == "one-to-many":
+    if h["cardinality"] in FANOUT_CARDS:
         w.append("fan_out"); f *= FANOUT_PENALTY
     if _is_log(graph, h["far"]):
         w.append("log"); f *= LOG_PENALTY
@@ -106,7 +108,7 @@ def find_paths(graph: Graph, a: str, b: str, max_hops: int = 4, min_conf: float 
             "steps": [{"from": h["near"], "from_columns": h["near_cols"], "to": h["far"], "to_columns": h["far_cols"],
                        "kind": h["edge"]["kind"], "status": h["edge"]["status"], "confidence": h["edge"]["confidence"],
                        "cardinality": h["cardinality"], "ambiguous": h["edge"]["ambiguous"], "evidence": h["edge"]["evidence"],
-                       "fan_out": h["cardinality"] == "one-to-many", "warnings": _hop_warnings(graph, h, b, hubs)[0]} for h in path],
+                       "fan_out": h["cardinality"] in FANOUT_CARDS, "warnings": _hop_warnings(graph, h, b, hubs)[0]} for h in path],
             "sql": join_sql(graph, path),
         })
     # sort on the unrounded score (rounding to 3 places would let near-ties fall back to hop count)

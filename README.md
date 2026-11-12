@@ -245,7 +245,7 @@ Each inferred relation carries a confidence between 0 and 1 and the evidence lin
 
 **Areas.** Tables that join each other (hubs removed) form a business area. The grouping is deterministic. A short `areas:` curation in the context file renames areas or pins tables to them.
 
-**Path ranking.** `keygraph path` multiplies the confidence of each hop and applies penalties for routes through hubs, one-to-many (fan-out) steps and log, archive or scratch tables (names with a whole token such as `log`, `shadow` or `archive`), then prefers fewer hops. Each fan-out step is flagged in the output, because summing a column across it counts rows more than once.
+**Path ranking.** `keygraph path` multiplies the confidence of each hop and applies penalties for routes through hubs, one-to-many or many-to-many (fan-out) steps and log, archive or scratch tables (names with a whole token such as `log`, `shadow` or `archive`), then prefers fewer hops. Each fan-out step is flagged in the output, because summing a column across it counts rows more than once.
 
 **Mirrors.** A schema that holds copies of another schema's tables (a nightly reporting copy, say) is detected, marked as a mirror, and kept out of areas, hub counts and join paths so nothing is counted twice. `--include-mirrors` brings it back.
 

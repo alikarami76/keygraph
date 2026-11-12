@@ -22,7 +22,7 @@ MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see th
 
 ## Read confidence honestly
 
-Declared foreign keys have confidence 1.0. Inferred edges are guesses from names and key shapes: use 0.8 and above freely, check 0.6 to 0.8 against the evidence lines, and verify anything lower or marked `ambiguous` (and any `fan-out` hop, where one row becomes many) with a small SELECT before relying on it. Polymorphic columns (`x_type` plus `x_id`) have no single target. If a guess is right or wrong, record it in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
+Declared foreign keys have confidence 1.0. Inferred edges are guesses from names and key shapes: use 0.8 and above freely, check 0.6 to 0.8 against the evidence lines, and verify anything lower or marked `ambiguous` (and any `fan-out` hop (one-to-many or many-to-many), where one row becomes many) with a small SELECT before relying on it. Polymorphic columns (`x_type` plus `x_id`) have no single target. If a guess is right or wrong, record it in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
 
 ## Building the graph
 

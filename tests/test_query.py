@@ -180,3 +180,23 @@ def test_near_ties_sort_on_the_unrounded_score():
     ps = find_paths(g, "m.ays", "m.bees", 3, 0.6, 2)
     assert [p["score"] for p in ps] == [0.7, 0.7]
     assert ps[0]["hops"] == 2  # 0.8367 * 0.8367 = 0.70007 > 0.7
+
+
+def test_many_to_many_hop_is_fan_out_and_penalised():
+    from keygraph.model import Column, Index, Schema, Table
+    from keygraph.graph import build_graph
+    s = Schema()
+    pk = [Index("PRIMARY", ["id"], True, True)]
+    s.add(Table("app", "users", [Column("id", "int")], pk))
+    s.add(Table("app", "orders", [Column("id", "int"), Column("user_id", "int")], pk))
+    g = build_graph(s)
+    edges = g.data["edges"]
+    assert edges, "expected an inferred orders -> users edge"
+    for e in edges:
+        e["cardinality"] = "many-to-many"
+    for a, b in (("orders", "users"), ("users", "orders")):
+        p = Q.find_paths(g, a, b, 4, 0.4, 3)[0]
+        step = p["steps"][0]
+        assert step["cardinality"] == "many-to-many"
+        assert step["fan_out"] is True and "fan_out" in step["warnings"]
+        assert p["score"] == round(p["confidence"] * Q.FANOUT_PENALTY, 3)
