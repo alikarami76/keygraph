@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- A bare table name that also exists in mirror or copy schemas now resolves to the original table instead of failing as ambiguous (`keygraph path customers shipments --dir examples/shop/out` from the README works again). Names that exist in two or more original schemas are still ambiguous, and mirror tables stay reachable by `schema.table`.
+
 ## 0.3.2 - 2026-11-04
 
 - Inference prefers a related schema (`app` -> `ods_app`, `app_v2`) when a column's candidates are all in other schemas, and schemas can be declared copies by glob (`copies: ["ods_*"]` in the context or overrides file, `--copy-schema GLOB` on `scan`, `load` and `code index`): the code index prefers non-copy tables and inference prefers non-copy targets.
