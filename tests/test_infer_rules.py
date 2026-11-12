@@ -272,3 +272,20 @@ def test_a_name_suffix_columns_are_attributes_unless_the_target_is_a_pk():
     g = graph(T("people", [("full_name", "varchar(40)")], pk=["full_name"]),
               T("drivers", [("id", "int"), ("full_name", "varchar(40)")], pk=["id"]))
     assert edge(g, "s.drivers", "full_name", "s.people")
+
+
+def test_c_several_named_keys_never_link_to_the_surrogate_id():
+    g = graph(T("players", [("id", "int"), ("player_api_id", "int"), ("player_fifa_api_id", "int")], pk=["id"],
+                uniq=["player_api_id", "player_fifa_api_id"]),
+              T("matches", [("home_player_1", "int")]))
+    es = [e for e in g.edges if e["from_columns"] == ["home_player_1"]]
+    assert sorted(e["to_columns"][0] for e in es) == ["player_api_id", "player_fifa_api_id"]
+    assert all(e["confidence"] <= 0.55 and e["ambiguous"] for e in es)
+    assert all(ev(e, "several named keys could be the target: player_api_id, player_fifa_api_id") for e in es)
+
+
+def test_c_exactly_one_named_key_keeps_its_confidence():
+    g = graph(T("players", [("id", "int"), ("player_api_id", "int")], pk=["id"], uniq=["player_api_id"]),
+              T("matches", [("home_player_1", "int")]))
+    es = [e for e in g.edges if e["from_columns"] == ["home_player_1"]]
+    assert len(es) == 1 and es[0]["to_columns"] == ["player_api_id"] and es[0]["confidence"] == 0.75

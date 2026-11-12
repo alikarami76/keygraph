@@ -301,6 +301,12 @@ class Inferer:
                     note = ""
                     if len(pk) == 1 and pk[0].lower().startswith(tuple(pre)):
                         k = (pk, "primary key", 0.08)
+                    elif len(ukeys) > 1 and len(pk) == 1 and pk[0].lower() == "id":
+                        names = ", ".join(sorted(u[0] for u in ukeys))
+                        self._add_rule(c, tid, 0.60, f"numbered role column '{colname}' reads as a reference to '{stem}'; "
+                                       f"several named keys could be the target: {names}", (ukeys[0], "unique key", 0.03))
+                        c[tid]["multi"] = sorted(ukeys)
+                        continue
                     elif len(ukeys) == 1 and len(pk) == 1 and pk[0].lower() == "id":
                         k = (ukeys[0], "unique key", 0.03)
                         note = (f"; target table has a surrogate id and a named key '{ukeys[0][0]}'; "
@@ -459,6 +465,9 @@ class Inferer:
                 if not (exact and ix):
                     conf = 0.75  # a naming guess alone never reads as 0.8 or more
                     ev.append("capped at 0.75: no exact type match plus an index on the source column")
+        if cand.get("multi") and conf > 0.55:
+            conf = 0.55
+            ev.append("capped at 0.55: several candidate keys, none preferred")
         return {"to": tid, "to_columns": tcols, "confidence": conf, "evidence": ev,
                 "partial": tboost < 0}
 
@@ -510,9 +519,10 @@ class Inferer:
                     continue
                 scored = []
                 for tid, cand in (cand_map if cand_map is not None else self.candidates(t, col.name, stem, refpref)).items():
-                    r = self.score(t, col.name, stem, tid, cand)
-                    if r:
-                        scored.append(r)
+                    for k in cand.get("multi") or [None]:
+                        r = self.score(t, col.name, stem, tid, dict(cand, key=(k, "unique key", 0.03)) if k else cand)
+                        if r:
+                            scored.append(r)
                 if scored and any(r["to"].split(".")[0] == t.schema for r in scored):
                     scored = [r for r in scored if r["to"].split(".")[0] == t.schema] or scored
                 else:
