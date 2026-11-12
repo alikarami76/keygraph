@@ -227,14 +227,14 @@ def test_unverified_write_never_replaces_verified_row(graph, tmp_path):
     assert c["meaning"] == "human note" and c["verified"] == 1 and c["source"] == "human"
     assert ctx.warnings == ["kept verified column note for shop.orders.status (source human); unverified write from agent ignored"]
     # the same source may update its own verified row (a file re-import)
-    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "edited"}, "human", False)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "edited"}, "human", False, allow_same_source=True)
     assert _col(ctx)["meaning"] == "edited" and len(ctx.warnings) == 1
 
 
 def test_same_source_reimport_and_verified_overwrite(graph, tmp_path):
     ctx = ContextDB(tmp_path / "k.db", graph)
     ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v1"}, "a.yaml", False)
-    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v2"}, "a.yaml", False)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v2"}, "a.yaml", False, allow_same_source=True)
     assert _col(ctx)["meaning"] == "v2"
     ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v3"}, "b.yaml", True)
     assert _col(ctx)["meaning"] == "v3" and _col(ctx)["verified"] == 1
@@ -273,3 +273,47 @@ def test_cli_context_add_reports_kept_verified(tmp_path, capsys):
     assert any("kept verified column note for shop.orders.created_at (source human)" in w for w in j["warnings"])
     assert main(["describe", "orders", "--dir", str(out), "--json"]) == 0
     assert "human note" in capsys.readouterr().out
+
+
+def test_default_source_unverified_add_never_demotes_verified_row(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    d = {"table": "shop.orders", "column": "status", "meaning": "checked"}
+    assert ctx.upsert("column", d, "", True) is True  # no source: stored as "unknown"
+    assert ctx.upsert("column", {**d, "meaning": "guess"}, "", False) is False
+    assert _col(ctx)["meaning"] == "checked" and _col(ctx)["verified"] == 1
+    assert len(ctx.warnings) == 1 and "kept verified column note" in ctx.warnings[0]
+
+
+def test_old_absolute_source_compares_by_safe_name(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v1"}, "a.yaml", True)
+    ctx.db.execute("UPDATE column_semantics SET source='/home/me/notes/a.yaml'")
+    ctx.db.commit()
+    assert ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v2"}, "a.yaml", False, allow_same_source=True)
+    assert ctx.warnings == [] and _col(ctx)["meaning"] == "v2"
+
+
+def test_import_counts_only_rows_written(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "human"}, "human", True)
+    f = tmp_path / "other.json"
+    f.write_text(json.dumps({"columns": [{"table": "shop.orders", "column": "status", "meaning": "x"}]}), encoding="utf-8")
+    assert ctx.import_path(f)["columns"] == 0
+    assert _col(ctx)["meaning"] == "human"
+
+
+def test_yaml_context_without_pyyaml_is_a_clear_error(graph, tmp_path, monkeypatch):
+    import pytest
+
+    from keygraph.context import read_copy_globs
+    f = tmp_path / "c.yaml"
+    f.write_text("copies: ['ods_*']\n", encoding="utf-8")
+    monkeypatch.setitem(__import__("sys").modules, "yaml", None)
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    with pytest.raises(ValueError, match=r"needs PyYAML: pip install 'keygraph\[yaml\]'"):
+        ctx.import_path(f)
+    with pytest.raises(ValueError, match="needs PyYAML"):
+        read_copy_globs([f])
+    j = tmp_path / "c.json"
+    j.write_text('{"copies": ["ods_*"]}', encoding="utf-8")
+    assert read_copy_globs([j]) == ["ods_*"]

@@ -22,7 +22,7 @@ MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see th
 
 ## Read confidence honestly
 
-Declared foreign keys have confidence 1.0. Inferred edges are guesses from names and key shapes: use 0.8 and above freely, check 0.6 to 0.8 against the evidence lines, and verify anything lower or marked `ambiguous` (and any `fan-out` hop (one-to-many or many-to-many), where one row becomes many) with a small SELECT before relying on it. Polymorphic columns (`x_type` plus `x_id`) have no single target. If a guess is right or wrong, record it in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
+Declared foreign keys have confidence 1.0. Inferred edges are guesses from names and key shapes: use 0.8 and above freely, check 0.6 to 0.8 against the evidence lines, and verify anything lower or marked `ambiguous` (and any `fan-out` hop, meaning a one-to-many or many-to-many step where one row becomes many) with a small SELECT before relying on it. Polymorphic columns (`x_type` plus `x_id`) have no single target. If a guess is right or wrong, record it in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
 
 ## Building the graph
 
@@ -50,7 +50,7 @@ When a run confirms what a table, column, status code or metric means, save it s
     keygraph context add --kind relation from=customer rel=places to=order
     keygraph context add --kind metric name=revenue definition="..." expression="SUM(...)" tables=schema.a,schema.b
 
-Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified write never overwrites a verified row from another source; it is skipped with a warning. `keygraph context export` dumps everything.
+Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything.
 
 ## Explorer
 
