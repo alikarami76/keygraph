@@ -1,6 +1,6 @@
 # Codex (CLI, IDE extension, app)
 
-`COMMAND` and `ARGS` below are `mcp_launch.command` and `mcp_launch.args` from `keygraph doctor --dir "$OUT" --json`.
+`COMMAND` and `ARGS` below are `mcp_launch.command` and `mcp_launch.args` from `keygraph doctor --dir "$OUT" --json`. `args` is a JSON array: pass each element as its own word, for example `-- /abs/venv/bin/python -m keygraph mcp --dir /abs/keygraph-out`.
 
 ## 1. Register the MCP server
 

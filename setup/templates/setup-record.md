@@ -21,6 +21,7 @@ Written by an AI agent following https://github.com/alikarami76/keygraph/blob/ma
 
 ```bash
 <the exact commands used, with "$KEYGRAPH_DB_URL" and never the value>
+keygraph context import keygraph-context.yaml --dir <OUT>   # and any other context files, after the build
 keygraph render --dir <OUT>
 keygraph doctor --dir <OUT>
 ```
