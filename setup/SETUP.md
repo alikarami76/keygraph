@@ -87,8 +87,11 @@ Use `OUT` for the output folder from question 3 (an absolute path). Put the conn
 
 ```bash
 # (a) live connection. Metadata only; add --schema once per schema, or --all-schemas
-( set -a; . ./.env; set +a; KEYGRAPH_DB_URL="${DATABASE_URL}" \
-  keygraph scan --url "$KEYGRAPH_DB_URL" --schema public --dir "$OUT" [--copy-schema 'ods_*'] )
+( set -a; . ./.env; set +a; KEYGRAPH_DB_URL="${DATABASE_URL}"; \
+  keygraph scan --url "$KEYGRAPH_DB_URL" --schema public --dir "$OUT" )
+# optional: add --copy-schema 'ods_*' for each schema that holds copies of another
+# a plain postgresql:// URL makes SQLAlchemy look for psycopg2; with psycopg (v3) use
+#   KEYGRAPH_DB_URL="${DATABASE_URL/postgresql:/postgresql+psycopg:}"
 
 # (b) dumps exported with information_schema field names
 keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-columns key_columns.jsonl --dir "$OUT"

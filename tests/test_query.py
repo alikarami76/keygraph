@@ -37,6 +37,19 @@ def test_resolve_prefers_the_original_over_mirror_and_copy_schemas():
         g.resolve("customers")  # without mirror/copy info it stays ambiguous
 
 
+def test_resolve_two_originals_and_a_mirror_stay_ambiguous():
+    from keygraph.graph import build_graph
+    from keygraph.model import Schema, Table
+    s = Schema()
+    for schema in ("shop", "crm", "reporting"):
+        s.add(Table(schema, "customers"))
+    g = build_graph(s)
+    g.data["mirrors"] = {"reporting": "shop"}
+    with pytest.raises(AmbiguousTable) as exc:
+        g.resolve("customers")
+    assert exc.value.candidates == ["crm.customers", "reporting.customers", "shop.customers"]
+
+
 @needs_yaml
 def test_readme_quickstart_path_on_the_shop_example(tmp_path):
     from tests.test_example_shop import _build

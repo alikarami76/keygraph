@@ -25,14 +25,20 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: tag matches the package version
         run: |
           v=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
           i=$(grep -m1 '^__version__ = ' src/keygraph/__init__.py | cut -d'"' -f2)
           test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match pyproject version $v"; exit 1; }
           test "$v" = "$i" || { echo "pyproject version $v does not match __version__ $i"; exit 1; }
-      - run: uv build
-      - run: uvx twine check --strict dist/*
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # publish exactly the files the CI build job built, checked and installed
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+      - name: the artifact holds this version
+        run: ls dist/ && ls dist/ | grep -q "keygraph-${GITHUB_REF_NAME#v}"
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1

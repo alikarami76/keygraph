@@ -76,13 +76,19 @@ def run(out: str | Path) -> dict:
                              None if v else f"pip install 'keygraph[{k}]'"))
     graph_stats: dict = {}
     gp = out / "graph.json"
+    g = None
     if not gp.exists():
         checks.append(_check("graph", "fail", f"no graph.json in {out}",
                              "build one: keygraph scan --url \"$KEYGRAPH_DB_URL\" --dir <out>  (or keygraph load)"))
     else:
         from . import query as Q
         from .graph import Graph
-        g = Graph.load(gp)
+        try:
+            g = Graph.load(gp)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            checks.append(_check("graph", "fail", f"graph.json cannot be read: {type(exc).__name__}",
+                                 "rebuild the map: keygraph scan or keygraph load into the same --dir"))
+    if g is not None:
         s = g.data.get("stats") or {}
         graph_stats = {k: s.get(k, 0) for k in ("tables", "columns", "schemas", "edges")}
         graph_stats["edges_by_kind"] = s.get("edges_by_kind", {})
@@ -98,10 +104,15 @@ def run(out: str | Path) -> dict:
         else:
             checks.append(_check("query", "warn", "no relations yet, so no join paths",
                                  "add declared keys, an overrides file, or run keygraph probe to confirm inferred ones"))
-        db = out / "keygraph.db"
+        db, n = out / "keygraph.db", None
         if db.exists():
             from .context import ContextDB
-            n = ContextDB(db, g).counts()
+            try:
+                n = ContextDB(db, g).counts()
+            except Exception as exc:  # noqa: BLE001  (a broken keygraph.db is a failed check, not a crash)
+                checks.append(_check("context", "fail", f"keygraph.db cannot be read: {type(exc).__name__}",
+                                     "rebuild the map, then import the context again"))
+        if n is not None:
             graph_stats["context_entries"] = sum(n.values())
             checks.append(_check("context", "ok" if graph_stats["context_entries"] else "warn",
                                  f"{graph_stats['context_entries']} business context entries",
@@ -119,7 +130,7 @@ def run(out: str | Path) -> dict:
                                      f"server starts and lists {len(tools)} tools" + (f"; missing {missing}" if missing else ""),
                                      "file a bug: keygraph doctor --report bug.md" if missing else None))
             except Exception as exc:  # noqa: BLE001  (report, never crash the doctor)
-                checks.append(_check("mcp", "fail", f"server failed to start: {type(exc).__name__}: {exc}",
+                checks.append(_check("mcp", "fail", f"server failed to start: {type(exc).__name__}",
                                      "file a bug: keygraph doctor --report bug.md"))
     worst = "fail" if any(c["status"] == "fail" for c in checks) else "warn" if any(c["status"] == "warn" for c in checks) else "ok"
     return {"status": worst, "keygraph": __version__, "python": py, "platform": platform.platform(terse=True),

@@ -14,7 +14,7 @@ keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIO
 2. Before any join across more than one table: `keygraph path A B` gives ranked join paths with each edge's evidence and a ready `JOIN ... ON ...` snippet. Use `keygraph neighbors T --depth 2` to see what a table connects to.
 3. Before filtering a big table: `keygraph keys T` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index. `keygraph describe T` adds the business context.
 4. To understand one column: `keygraph explain T.col`.
-All query commands take `--json`. Table names resolve leniently: a bare name works when unique across schemas, otherwise give `schema.table`.
+All query commands take `--json`. Table names resolve leniently: a bare name works when it is unique, or unique outside mirror and copy schemas (the original wins over its copies); otherwise write `schema.table`.
 
 5. Code and past queries: `keygraph code where T.col` lists ORM declarations, SQL writes and reads and property uses with file, line and confidence; `keygraph code what path:line` (or `--symbol getStatus`) goes from code to tables. `keygraph queries for T`, `queries top --table T`, `queries slow` and `queries search "<question>"` show earlier queries with their business question and timing. After running a query, log it with `keygraph queries add --sql f.sql --source <db> --ms <ms> --context "<question>"`. Index code with `keygraph code index REPO --name NAME [--patterns code-patterns.yaml]`.
 

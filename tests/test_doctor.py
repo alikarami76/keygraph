@@ -66,3 +66,17 @@ def test_query_check_ignores_self_references(shop, tmp_path):
     g.save(out / "graph.json")
     by = {c["name"]: c for c in D.run(out)["checks"]}
     assert by["query"]["status"] == "ok"
+
+
+def test_doctor_on_a_corrupt_graph_reports_a_failed_check(tmp_path, capsys):
+    (tmp_path / "graph.json").write_text("{not json", encoding="utf-8")
+    (tmp_path / "keygraph.db").write_bytes(b"not a database")
+    r = D.run(tmp_path)
+    graph = next(c for c in r["checks"] if c["name"] == "graph")
+    assert r["status"] == "fail" and graph["status"] == "fail" and "rebuild" in graph["fix"]
+    report = tmp_path / "bug.md"
+    try:
+        main(["doctor", "--dir", str(tmp_path), "--report", str(report)])
+    except SystemExit as exc:
+        assert exc.code == 1
+    assert report.exists() and "graph" in report.read_text(encoding="utf-8")
