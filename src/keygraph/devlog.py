@@ -27,7 +27,9 @@ TRACE_MAX_EVENTS = 200_000
 KEEP_TRACES = 20
 DECISIONS_MAX = 200
 _ON, _OFF = {"1", "true", "on", "yes"}, {"0", "false", "off", "no"}
-_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://\S*")
+_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')\]>]*")
+_LONG = re.compile(r"\S{513,}")  # mask_secrets is quadratic on one long unbroken token
+MSG_MAX = 300
 # keys that hold sampled column values in a profile (counts, null rates, lengths and patterns stay)
 _VALUE_KEYS = {"top_values", "numeric", "dates", "examples", "sample_values", "samples"}
 _warned = False
@@ -66,7 +68,14 @@ def enabled(out) -> bool:
 def mask_text(s: str) -> str:
     """Secrets masked and any scheme://... redacted."""
     from .code.refs import mask_secrets
+    s = _LONG.sub(lambda m: f"<long-token:{len(m.group(0))}>", s)
     return _URL.sub(lambda m: m.group(0).split("://", 1)[0] + "://***", mask_secrets(s))
+
+
+def mask_message(s: str) -> str:
+    """An error message: secrets, URLs, then string and number literals masked, cut to 300 characters."""
+    from .queries.fingerprint import mask_sql
+    return mask_sql(mask_text(s))[:MSG_MAX]
 
 
 def mask_args(v, key: str = ""):
@@ -76,9 +85,11 @@ def mask_args(v, key: str = ""):
     if isinstance(v, (list, tuple)):
         return [mask_args(x, key) for x in v]
     if isinstance(v, str):
+        if key == "cmd":  # command templates hold credentials (-pSECRET, Bearer ...): keep only the program
+            return (v.split() or [""])[0][:60] + " <redacted-cmd>"
         if key == "sql":
             from .queries.fingerprint import mask_sql
-            v = mask_sql(v)
+            return mask_sql(mask_text(v))
         return mask_text(v)
     return v if v is None or isinstance(v, (bool, int, float)) else mask_text(str(v))
 
@@ -89,7 +100,7 @@ def mask_response(tool: str, obj):
         return {k: "<masked>" if k in _VALUE_KEYS and x not in (None, [], {}) else mask_response(tool, x) for k, x in obj.items()}
     if isinstance(obj, list):
         return [mask_response(tool, x) for x in obj]
-    return obj
+    return mask_text(obj) if isinstance(obj, str) else obj
 
 
 # ---- response policy --------------------------------------------------------------------------------------
@@ -125,16 +136,16 @@ def response_fields(tool: str, obj) -> dict:
     return {"response_ref": _ref(text, _shape(tool, obj))}
 
 
-def stdout_fields(tool: str, text: str, nbytes: int, digest: str, tokens: int, inline: bool = True) -> dict:
+def stdout_fields(tool: str, text: str, nbytes: int, digest: str, tokens: int, inline: bool = True, lines: int = 0) -> dict:
     """Same policy for a command's captured stdout. JSON stdout goes through mask_response; text stays text."""
     if nbytes <= INLINE_MAX and inline:
-        with contextlib.suppress(ValueError):
+        with contextlib.suppress(ValueError, RecursionError):
             if text.lstrip()[:1] in "{[":
                 return response_fields(tool, json.loads(text))
         return {"response": mask_text(text)}
-    shape: dict = {"lines": text.count("\n")}
+    shape: dict = {"lines": lines or text.count("\n")}
     if nbytes <= INLINE_MAX:
-        with contextlib.suppress(ValueError):
+        with contextlib.suppress(ValueError, RecursionError):
             shape = _shape(tool, json.loads(text))
     return {"response_ref": {"sha256": digest, "bytes": nbytes, "tokens_approx": tokens, "shape": shape}}
 
@@ -165,25 +176,29 @@ class Recorder:
         self.seq = 0
 
     def _rotate(self) -> None:
-        if not self.path.exists() or self.path.stat().st_size < MAX_BYTES:
+        """Shift events.N -> N+1 and the live file -> 1 once it is full. Rename failures (another process got there
+        first) are ignored; the size is re-checked so a second process does not rotate again."""
+        try:
+            if self.path.stat().st_size < MAX_BYTES:
+                return
+        except FileNotFoundError:
             return
         d = self.path.parent
-        (d / f"events.{KEEP_ROTATED}.jsonl").unlink(missing_ok=True)
-        for i in range(KEEP_ROTATED - 1, 0, -1):
-            if (d / f"events.{i}.jsonl").exists():
-                os.replace(d / f"events.{i}.jsonl", d / f"events.{i + 1}.jsonl")
-        os.replace(self.path, d / "events.1.jsonl")
+        for i in range(KEEP_ROTATED, 0, -1):
+            src = self.path if i == 1 else d / f"events.{i - 1}.jsonl"
+            with contextlib.suppress(OSError):
+                os.replace(src, d / f"events.{i}.jsonl")
 
     def record(self, kind: str, tool: str, args=None, ms: float = 0.0, ok: bool = True, error: dict | None = None,
-               response: dict | None = None, decisions: list | None = None, trace: str | None = None) -> None:
-        """Never raises."""
+               response: dict | None = None, decisions: list | None = None, trace: str | None = None) -> bool:
+        """Append one event; False when it could not be written. Never raises."""
         try:
             self.seq += 1
             ev: dict = {"v": V, "ts": now(), "session": self.session, "seq": self.seq, "surface": self.surface,
                         "client": self.client, "kind": kind, "tool": tool, "args": mask_args(args or {}),
                         "ms": round(ms, 2), "ok": ok}
             if error:
-                ev["error"] = {"type": error.get("type", ""), "message": mask_text(str(error.get("message", "")))}
+                ev["error"] = {"type": error.get("type", ""), "message": mask_message(str(error.get("message", "")))}
             ev.update(response or {})
             if decisions:
                 ev["decisions"] = decisions[:DECISIONS_MAX]
@@ -191,11 +206,16 @@ class Recorder:
                 ev["trace"] = trace
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self._rotate()
-            line = json.dumps(ev, ensure_ascii=False, sort_keys=True, default=str) + "\n"
-            with open(self.path, "a", encoding="utf-8") as f:
-                f.write(line)
+            data = (json.dumps(ev, ensure_ascii=False, sort_keys=True, default=str) + "\n").encode("utf-8", "replace")
+            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            try:
+                os.write(fd, data)  # one syscall on an O_APPEND fd, so concurrent writers do not interleave lines
+            finally:
+                os.close(fd)
+            return True
         except Exception as exc:  # noqa: BLE001  (logging must never change a result)
             _warn(exc)
+            return False
 
 
 # ---- tracer and decisions ---------------------------------------------------------------------------------
@@ -209,12 +229,13 @@ class Tracer:
 
     def __init__(self, path: Path):
         self.path, self.n, self.size, self.done = path, 0, 0, False
-        self.f = open(path, "a", encoding="utf-8")  # noqa: SIM115  (held open for the length of a build)
+        self.f = open(path, "a", encoding="utf-8", errors="replace")  # noqa: SIM115  (held open for the length of a build)
 
     def emit(self, kind: str, fields: dict) -> None:
         if self.done:
             return
         try:
+            line = None
             if self.n >= TRACE_MAX_EVENTS or self.size >= TRACE_MAX_BYTES:
                 self.done = True
                 line = json.dumps({"kind": "truncated", "events": self.n}) + "\n"
@@ -223,9 +244,10 @@ class Tracer:
                                   ensure_ascii=False, sort_keys=True, default=str) + "\n"
             self.f.write(line)
             self.n += 1
-            self.size += len(line)
-        except Exception as exc:  # noqa: BLE001
-            self.done = True
+            self.size += len(line.encode("utf-8", "replace"))
+        except Exception as exc:  # noqa: BLE001  (skip this event; give up after a few failures)
+            self.fails = getattr(self, "fails", 0) + 1
+            self.done = self.done or self.fails > 3
             _warn(exc)
 
     def close(self) -> None:
@@ -258,11 +280,13 @@ def tracing(out, name: str):
         if enabled(out):
             d = dev_dir(out) / "traces"
             d.mkdir(parents=True, exist_ok=True)
-            path = d / f"{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S%f}-{name}.jsonl"
+            path = d / f"{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S%f}-{re.sub(r'[^A-Za-z0-9_.-]', '_', name)}.jsonl"
             t = Tracer(path)
             _prune(d)
     except Exception as exc:  # noqa: BLE001
         _warn(exc)
+        if t:
+            t.close()
         t = None
     tok = _TRACER.set(t)
     try:

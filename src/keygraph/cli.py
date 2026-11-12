@@ -489,7 +489,9 @@ def cmd_dev(a):
         print(f"dev mode on: logging to {d} (KEYGRAPH_DEV=0 overrides)")
     elif a.dev_cmd == "off":
         (d / "enabled").unlink(missing_ok=True)
-        print("dev mode off (the log is kept; `keygraph dev clear` deletes it)")
+        src = devlog.source(out)
+        print("dev mode off (the log is kept; `keygraph dev clear` deletes it)" if src == "off" else
+              "marker removed, but KEYGRAPH_DEV=1 in the environment still keeps dev mode on (unset it)")
     elif a.dev_cmd == "status":
         st = devlog.status(out)
         _emit(a, st, f"dev mode {'on' if st['enabled'] else 'off'} ({st['source']}); {st['events_bytes']} bytes of events, "
@@ -501,7 +503,7 @@ def cmd_dev(a):
         q = devlog.mask_text(" ".join(a.text))
         sess, on = devlog.session_id("cli"), devlog.enabled(out)
         if on:
-            devlog.Recorder(out, "cli", session=sess).record("note", "dev_note", {"question": q})
+            on = devlog.Recorder(out, "cli", session=sess).record("note", "dev_note", {"question": q})
         _emit(a, {"noted": on, "session": sess, "question": q},
               f"noted: {q}" if on else "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)")
 
@@ -723,7 +725,7 @@ def main(argv=None) -> int:
     dev_cmd("off", "stop logging (keeps the log)")
     dev_cmd("status", "is dev mode on, and how big is the log").add_argument("--json", action="store_true")
     dev_cmd("clear", "delete the logged events and traces").add_argument("--all", action="store_true", help="also remove the on marker")
-    q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on)")
+    q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on; no personal data; put -- before text that starts with -)")
     q.add_argument("text", nargs="+")
     q.add_argument("--json", action="store_true")
     dialects = sorted({"mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite"})
@@ -822,12 +824,17 @@ def main(argv=None) -> int:
     return 0
 
 
+def _devlog():
+    from . import devlog
+    return devlog
+
+
 class _Tee:
     """Forwards stdout and keeps its hash, size and (up to 16 KB) text, for the dev log."""
 
     def __init__(self, real):
         import hashlib
-        self.real, self.h, self.bytes, self.chars, self.parts = real, hashlib.sha256(), 0, 0, []
+        self.real, self.h, self.bytes, self.chars, self.lines, self.parts = real, hashlib.sha256(), 0, 0, 0, []
 
     def write(self, s):
         try:
@@ -835,7 +842,8 @@ class _Tee:
             self.h.update(b)
             self.bytes += len(b)
             self.chars += len(s)
-            if self.bytes <= 16 * 1024 + len(b):
+            self.lines += s.count("\n")
+            if self.bytes <= _devlog().INLINE_MAX and len(b) <= _devlog().INLINE_MAX:
                 self.parts.append(s)
         except Exception as exc:  # noqa: BLE001  (logging never changes output)
             from . import devlog
@@ -846,7 +854,9 @@ class _Tee:
         return getattr(self.real, name)
 
 
-_TEXT_PROFILE = {"describe", "profile", "search"}  # text output may carry sampled profile values: hash only
+# Only these commands print nothing a person typed or sampled (no SQL literals, snippets, profile values), so only
+# their text output is stored whole; every other command stores a hash, size and shape.
+_VALUE_FREE = {"path", "neighbors", "explain", "keys", "areas", "area", "doctor", "dev"}
 
 
 def _command_name(a) -> str:
@@ -857,7 +867,7 @@ def _run(a) -> None:
     """Run the command; with dev mode on, also record it (masked args, timing, exit status, stdout hash)."""
     from . import devlog
     d = getattr(a, "dir", None)
-    if a.cmd == "dev" or d is None or not devlog.enabled(d):
+    if a.cmd in ("dev", "mcp", "ui") or d is None or not devlog.enabled(d):
         a.fn(a)
         return
     name = _command_name(a)
@@ -879,7 +889,7 @@ def _run(a) -> None:
         sys.stdout = real
         try:
             text = "".join(tee.parts) if tee else ""
-            resp = devlog.stdout_fields(name, text, tee.bytes, tee.h.hexdigest(), tee.chars // 4, a.cmd not in _TEXT_PROFILE) if tee else {}
+            resp = devlog.stdout_fields(name, text, tee.bytes, tee.h.hexdigest(), tee.chars // 4, a.cmd in _VALUE_FREE, tee.lines) if tee else {}
             args["exit_status"] = status
             devlog.Recorder(d, "cli").record("command", name, args,
                                              (time.perf_counter() - t0) * 1000, ok, err, resp)

@@ -76,6 +76,7 @@ def test_scan_url_is_redacted_in_the_log(tmp_path, monkeypatch):
         main(["scan", "--url", "mysql://u:secret@127.0.0.1:1/db", "--dir", str(tmp_path)])
     text = (tmp_path / "dev" / "events.jsonl").read_text()
     assert "secret" not in text and "mysql://***" in text
+    assert json.loads(text.splitlines()[-1])["ok"] is False
 
 
 def test_rotation_keeps_numbered_files(tmp_path, monkeypatch):
@@ -84,6 +85,10 @@ def test_rotation_keeps_numbered_files(tmp_path, monkeypatch):
     for i in range(30):
         r.record("note", "dev_note", {"i": i, "pad": "x" * 50})
     names = sorted(p.name for p in (tmp_path / "dev").glob("events*.jsonl"))
+    live = [json.loads(x) for x in (tmp_path / "dev" / "events.jsonl").read_text().splitlines()]
+    assert live[-1]["args"]["i"] == 29
+    seen = [json.loads(x)["args"]["i"] for n in names for x in (tmp_path / "dev" / n).read_text().splitlines()]
+    assert len(seen) == len(set(seen)) and 29 in seen
     assert "events.1.jsonl" in names and "events.5.jsonl" in names and "events.6.jsonl" not in names
 
 
@@ -135,11 +140,11 @@ def test_a_failing_recorder_does_not_change_output_or_exit_code(tmp_path, capsys
 
     def boom(*a, **k):
         raise OSError("disk full")
-    monkeypatch.setattr(devlog.json, "dumps", boom)  # breaks the recorder only if it reaches it
-    monkeypatch.setattr(devlog.Recorder, "_rotate", boom)
+    monkeypatch.setattr(devlog.os, "write", boom)
+    assert main(["path", "customers", "shipments", "--dir", str(tmp_path)]) == 0
     assert main(["path", "customers", "shipments", "--dir", str(tmp_path)]) == 0
     cap = capsys.readouterr()
-    assert cap.out == plain
+    assert cap.out == plain + plain and cap.err.count("dev log skipped") == 1
 
 
 def test_a_failing_recorder_keeps_error_exit_code(tmp_path, monkeypatch):
@@ -200,7 +205,7 @@ def test_response_policy_inline_vs_ref():
     assert len(ref["sha256"]) == 64 and ref["shape"]["tables"][0] == "t0" and ref["shape"]["lists"] == {"tables": 300}
     again = devlog.response_fields("search", {"tables": [{"table": f"t{i}", "pad": "x" * 100} for i in range(300)]})
     assert again == big
-    p = devlog.response_fields("path", {"paths": [{"score": 2.5, "pad": "x" * 20000}, {"score": 1.0}]})
+    p = devlog.response_fields("path", {"paths": [{"score": 2.5, "pad": "x " * 10000}, {"score": 1.0}]})
     assert p["response_ref"]["shape"]["paths"] == 2 and p["response_ref"]["shape"]["top_score"] == 2.5
 
 
@@ -222,3 +227,108 @@ def test_doctor_reports_dev_mode(tmp_path):
     main(["dev", "on", "--dir", str(tmp_path)])
     c = next(c for c in D.run(tmp_path)["checks"] if c["name"] == "dev_mode")
     assert c["status"] == "ok" and c["detail"].startswith("on: logging to ") and c["detail"].endswith("KB)")
+
+
+def test_long_token_masks_fast():
+    import time
+    t = time.perf_counter()
+    out = devlog.mask_text("x" * 16384 + " tail")
+    assert time.perf_counter() - t < 0.5 and out.startswith("<long-token:16384>") and out.endswith("tail")
+    t = time.perf_counter()
+    devlog.mask_args({"sql": "select '" + "a" * 16000})
+    assert time.perf_counter() - t < 0.5
+
+
+def test_cmd_templates_are_redacted():
+    m = devlog.mask_args({"cmd": "mysql -u root -pS3cretPass -e {sql}", "n": 1})
+    assert m["cmd"] == "mysql <redacted-cmd>" and "S3cret" not in json.dumps(m)
+
+
+def test_fetch_cmd_not_logged_with_credentials(tmp_path):
+    main(["dev", "on", "--dir", str(tmp_path)])
+    with pytest.raises((Exception, SystemExit)):
+        main(["fetch", "--cmd", "mysql -pS3cretPass -e {sql}", "--dir", str(tmp_path)])
+    text = (tmp_path / "dev" / "events.jsonl").read_text() if (tmp_path / "dev" / "events.jsonl").exists() else ""
+    assert "S3cret" not in text
+
+
+def test_query_and_code_stdout_is_ref_only(tmp_path, capsys):
+    _build(tmp_path)
+    main(["dev", "on", "--dir", str(tmp_path)])
+    f = tmp_path / "q.sql"
+    f.write_text("select * from shop.customers where email = 'bob@x.com'")
+    main(["queries", "add", "--dir", str(tmp_path), "--source", "t", "--sql", str(f),
+          "--keep-literals"])
+    main(["queries", "top", "--dir", str(tmp_path)])
+    capsys.readouterr()
+    evs = events(tmp_path)
+    top = [e for e in evs if e["tool"] == "queries top"][0]
+    assert "response" not in top and top["response_ref"]["bytes"] > 0
+    assert "bob@x.com" not in (tmp_path / "dev" / "events.jsonl").read_text()
+
+
+def test_mcp_and_ui_are_not_wrapped(tmp_path, monkeypatch):
+    main(["dev", "on", "--dir", str(tmp_path)])
+    import keygraph.cli as C
+    monkeypatch.setattr(C, "cmd_ui", lambda a: None, raising=True)
+    a = C.argparse.Namespace(cmd="ui", dir=str(tmp_path), fn=lambda a: None)
+    C._run(a)
+    assert not events(tmp_path)
+
+
+def test_response_strings_and_error_messages_are_masked(tmp_path):
+    r = devlog.response_fields("x", {"s": "see mysql://u:pw@h/db or a@b.com"})
+    assert "pw" not in json.dumps(r) and "a@b.com" not in json.dumps(r)
+    rec = devlog.Recorder(tmp_path)
+    rec.record("command", "x", error={"type": "ValueError", "message": "bad '09121234567' for a@b.com " + "z" * 900})
+    ev = events(tmp_path.parent / tmp_path.name) if False else json.loads((tmp_path / "dev" / "events.jsonl").read_text())
+    assert "0912" not in ev["error"]["message"] and "a@b.com" not in ev["error"]["message"] and len(ev["error"]["message"]) <= 300
+
+
+def test_inline_boundary_is_16384_bytes():
+    def obj(n):
+        return {"a": "x " * ((n - len(json.dumps({"a": ""}, sort_keys=True))) // 2) + "x" * ((n - len(json.dumps({"a": ""}, sort_keys=True))) % 2)}
+    assert "response" in devlog.response_fields("t", obj(16384))
+    assert "response_ref" in devlog.response_fields("t", obj(16385))
+
+
+def test_systemexit_path_restores_stdout_and_logs(tmp_path, capsys):
+    import sys
+    main(["dev", "on", "--dir", str(tmp_path)])
+    before = sys.stdout
+    with pytest.raises(SystemExit):
+        main(["path", "a", "b", "--dir", str(tmp_path)])  # no graph here
+    assert sys.stdout is before
+    (ev,) = events(tmp_path)
+    assert ev["ok"] is False and ev["error"]["type"] == "SystemExit" and ev["args"]["exit_status"] == 1
+
+
+def test_garbage_env_falls_back_to_marker(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYGRAPH_DEV", "maybe")
+    assert not devlog.enabled(tmp_path)
+    main(["dev", "on", "--dir", str(tmp_path)])
+    assert devlog.enabled(tmp_path)
+
+
+def test_dev_off_warns_when_env_still_forces_on(tmp_path, capsys, monkeypatch):
+    main(["dev", "on", "--dir", str(tmp_path)])
+    monkeypatch.setenv("KEYGRAPH_DEV", "1")
+    capsys.readouterr()
+    main(["dev", "off", "--dir", str(tmp_path)])
+    assert "still keeps dev mode on" in capsys.readouterr().out
+
+
+def test_trace_byte_cap_and_unicode(tmp_path, monkeypatch):
+    monkeypatch.setattr(devlog, "TRACE_MAX_BYTES", 200)
+    main(["dev", "on", "--dir", str(tmp_path)])
+    with devlog.tracing(tmp_path, "a/../b") as path:
+        for _ in range(50):
+            devlog.trace("c", name="جدول سفارش")
+    lines = [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines()]
+    assert lines[-1]["kind"] == "truncated" and sum(1 for x in lines if x["kind"] == "truncated") == 1
+    assert path.parent.name == "traces" and ".." not in path.name.replace("-a_.._b", "")
+
+
+def test_unicode_args_round_trip(tmp_path):
+    devlog.Recorder(tmp_path).record("note", "dev_note", {"question": "سفارش مشتری"})
+    assert "سفارش مشتری" in (tmp_path / "dev" / "events.jsonl").read_text(encoding="utf-8")
