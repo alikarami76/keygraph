@@ -159,7 +159,7 @@ def main(argv=None) -> int:
         print(f"no databases match {a.db_root}/{a.glob}", file=sys.stderr)
         return 2
     ver = ""
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=Path(__file__).resolve().parent)
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False, cwd=Path(__file__).resolve().parent)
     rows = []
     for db in dbs:
         name = db.stem

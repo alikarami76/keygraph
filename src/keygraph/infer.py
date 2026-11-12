@@ -74,6 +74,8 @@ def extract_stem(col: str) -> str | None:
     return None
 
 
+GENERIC_KEY_NAMES = {"name", "title", "code", "email", "login", "username", "slug", "label", "description",
+                     "type", "status", "phone", "url", "key", "value", "sku"}  # often unique, rarely references
 REF_PREFIXES = ("link_to_", "ref_", "fk_", "id_")
 EXTRA_ROLE_WORDS = {"home", "away"}  # only for numbered columns (home_player_1)
 
@@ -247,8 +249,12 @@ class Inferer:
     def _extras(self, t: Table, colname: str, c: dict) -> None:
         """Rules that do not need an '<x>_id' stem: shared key name (a), numbered roles (c), table_column (d), bare id (e)."""
         low, n = colname.lower(), snake(colname)
-        if low != "id" and len(low) >= 3:  # (a) shared key name
-            others = sorted(self.keyname.get(low, set()) - {t.id})
+        if low != "id" and len(low) >= 3 and low not in GENERIC_KEY_NAMES:  # (a) shared key name
+            others = sorted(x for x in self.keyname.get(low, set()) - {t.id}
+                            if self.s.tables[x].schema == t.schema or not (
+                                related_schemas(t.schema, self.s.tables[x].schema)
+                                or is_copy_schema(t.schema, self.o.copy_schemas)
+                                or is_copy_schema(self.s.tables[x].schema, self.o.copy_schemas)))
             if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
                 tt = self.s.tables[others[0]]
                 k = next(k for k in self._single_keys(tt) if k[0][0].lower() == low)
@@ -400,6 +406,17 @@ class Inferer:
         else:
             conf -= 0.10
             ev.append("cross-schema match")
+        reasons = cand["reasons"]
+        if all("(rule: shared key name)" in r for r in reasons) and (
+                [colname] in ([t.primary_key] + t.unique_keys)):
+            if conf > 0.55:
+                conf = 0.55
+                ev.append("both columns are keys of their own tables; a shared name alone is weak")
+        elif all("numbered role column" in r or "(rule: bare id)" in r for r in reasons) and conf > 0.75:
+            exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
+            if not (exact and ix):
+                conf = 0.75  # a naming guess alone never reads as 0.8 or more
+                ev.append("capped at 0.75: no exact type match plus an index on the source column")
         return {"to": tid, "to_columns": tcols, "confidence": conf, "evidence": ev,
                 "partial": tboost < 0}
 

@@ -158,3 +158,30 @@ def test_e_a_copy_of_a_table_in_another_schema_is_not_linked_by_the_fallback():
               T("orders", [("id", "int"), ("n", "int")], schema="rpt"),
               T("orders", [("id", "int"), ("n", "int")], pk=["id"], schema="shop"))
     assert edge(g, "rpt.orders", "id") is None
+
+
+# precision guards
+def test_a_generic_attribute_names_are_not_shared_keys():
+    g = graph(T("vouchers", [("code", "text"), ("email", "text")], pk=["code"], uniq=["email"]),
+              T("customers", [("email", "text"), ("code", "text")]))
+    assert not [e for e in g.edges if e["from"] == "s.customers"]
+
+
+def test_a_key_to_key_match_is_capped_below_the_display_floor():
+    g = graph(T("cards", [("uuid", "varchar(36)")], pk=["uuid"]), T("legalities", [("uuid", "varchar(36)")], pk=["uuid"]))
+    e = edge(g, "s.legalities", "uuid", "s.cards")
+    assert e and e["confidence"] <= 0.55 and ev(e, "a shared name alone is weak")
+
+
+def test_a_does_not_link_a_table_to_its_copy_in_a_related_schema():
+    g = graph(T("cards", [("uuid", "varchar(36)")], pk=["uuid"], schema="app"),
+              T("cards_copy", [("uuid", "varchar(36)"), ("n", "int")], schema="ods_app"))
+    assert edge(g, "ods_app.cards_copy", "uuid") is None
+
+
+def test_c_and_e_are_capped_without_exact_type_and_index():
+    g = graph(T("players", [("id", "int")], pk=["id"]), T("matches", [("player_1", "int")]))
+    e = edge(g, "s.matches", "player_1", "s.players")
+    assert e and e["confidence"] <= 0.75 and ev(e, "capped at 0.75")
+    g = graph(T("patients", [("ID", "int")], pk=["ID"]), T("exams", [("ID", "int")]))
+    assert edge(g, "s.exams", "ID")["confidence"] <= 0.75
