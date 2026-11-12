@@ -9,12 +9,12 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from keygraph import devlog  # noqa: E402
-from keygraph import search as S  # noqa: E402
-from keygraph.cli import main  # noqa: E402
-from keygraph.mcp_server import _client, build_server  # noqa: E402
-from tests.test_example_shop import _build  # noqa: E402
-from tests.test_mcp import TOOLS, call  # noqa: E402
+from keygraph import devlog
+from keygraph import search as S
+from keygraph.cli import main
+from keygraph.mcp_server import _client, build_server
+from tests.test_example_shop import _build
+from tests.test_mcp import TOOLS, call
 
 
 @pytest.fixture(autouse=True)
@@ -82,7 +82,7 @@ def test_dev_on_is_picked_up_live_and_events_have_fields(out):
 def test_errors_are_recorded_and_reraised(out):
     dev_on(out)
     srv = build_server(out)
-    err, msg = call(srv, "describe", table="no_such_table")
+    err, _ = call(srv, "describe", table="no_such_table")
     assert err
     (ev,) = events(out)
     assert ev["ok"] is False and ev["error"]["type"] == "ToolError" and ev["error"]["message"].startswith("Error executing tool describe")
@@ -158,7 +158,7 @@ def test_big_response_becomes_a_ref(out, monkeypatch):
     dev_on(out)
     monkeypatch.setattr(devlog, "INLINE_MAX", 300)
     srv = build_server(out)
-    err, got = call(srv, "neighbors", table="shop.orders", depth=3)
+    err, _ = call(srv, "neighbors", table="shop.orders", depth=3)
     assert not err
     (ev,) = events(out)
     ref = ev["response_ref"]
