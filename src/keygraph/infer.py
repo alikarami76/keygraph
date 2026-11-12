@@ -76,6 +76,7 @@ def extract_stem(col: str) -> str | None:
 
 GENERIC_KEY_NAMES = {"name", "title", "code", "email", "login", "username", "slug", "label", "description",
                      "type", "status", "phone", "url", "key", "value", "sku"}  # often unique, rarely references
+PK_ONLY_KEY_NAMES = {"uuid", "guid", "token", "hash", "ip", "number", "external_id", "checksum"}  # references only when the target is a primary key
 REF_PREFIXES = ("link_to_", "ref_", "fk_", "id_")
 EXTRA_ROLE_WORDS = {"home", "away"}  # only for numbered columns (home_player_1)
 
@@ -167,6 +168,10 @@ class Inferer:
         self.suffix_lookup: dict[str, list[str]] = {}
         self.pkname: dict[str, list[str]] = {}
         self.keyname: dict[str, set[str]] = {}  # single-column PK or UNIQUE key name -> tables
+        self.idpk: dict[str, list[str]] = {}  # schema -> tables whose single-column PK is named id
+        self.idpk_name: dict[tuple[str, str], list[str]] = {}  # (schema, singular table name) -> those tables
+        self.name_schemas: dict[str, set[str]] = {}  # table name -> schemas that have it
+        self.extra_rules = True  # rules a, c, d, e (tests switch them off to prove old edges are unchanged)
         self._index()
 
     def _auto_prefixes(self) -> dict[str, set[str]]:
@@ -200,6 +205,10 @@ class Inferer:
                     for f in forms(suf):
                         self.suffix_lookup.setdefault(f, []).append(t.id)
             pk = t.primary_key
+            self.name_schemas.setdefault(name, set()).add(t.schema)
+            if len(pk) == 1 and pk[0].lower() == "id":
+                self.idpk.setdefault(t.schema, []).append(t.id)
+                self.idpk_name.setdefault((t.schema, singular(name)), []).append(t.id)
             if len(pk) == 1 and pk[0].lower() != "id":
                 self.pkname.setdefault(pk[0].lower(), []).append(t.id)
             for k in ([pk] if len(pk) == 1 else []) + [u for u in t.unique_keys if len(u) == 1]:
@@ -241,6 +250,13 @@ class Inferer:
         if key:  # a rule that names the exact target key (target_key would pick the primary key instead)
             cur["key"] = key
 
+    def _add_rule(self, c: dict, tid: str, base: float, reason: str, key) -> None:
+        """Add a candidate from rules a/c/d/e, never touching one that older rules already found."""
+        cur = c.get(tid)
+        if cur is not None and any("(rule:" not in r and "numbered role column" not in r for r in cur["reasons"]):
+            return
+        self._add(c, tid, base, reason, key)
+
     @staticmethod
     def _single_keys(tt: Table) -> list[tuple[list[str], str, float]]:
         out = [(tt.primary_key, "primary key", 0.08)] if len(tt.primary_key) == 1 else []
@@ -248,6 +264,8 @@ class Inferer:
 
     def _extras(self, t: Table, colname: str, c: dict) -> None:
         """Rules that do not need an '<x>_id' stem: shared key name (a), numbered roles (c), table_column (d), bare id (e)."""
+        if not self.extra_rules:
+            return
         low, n = colname.lower(), snake(colname)
         if low != "id" and len(low) >= 3 and low not in GENERIC_KEY_NAMES:  # (a) shared key name
             others = sorted(x for x in self.keyname.get(low, set()) - {t.id}
@@ -258,7 +276,10 @@ class Inferer:
             if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
                 tt = self.s.tables[others[0]]
                 k = next(k for k in self._single_keys(tt) if k[0][0].lower() == low)
-                self._add(c, tt.id, 0.70, f"column name '{colname}' equals the key column of {tt.id} (rule: shared key name)", k)
+                if low in PK_ONLY_KEY_NAMES and k[1] != "primary key":
+                    others = []
+            if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
+                self._add_rule(c, tt.id, 0.70, f"column name '{colname}' equals the key column of {tt.id} (rule: shared key name)", k)
         num = numbered_stem(colname)  # (c) numbered role columns
         if num:
             words = num.split("_")
@@ -284,7 +305,7 @@ class Inferer:
                         k = (pk, "primary key", 0.08)
                     else:
                         continue
-                    self._add(c, tid, 0.60, f"numbered role column '{colname}' reads as a reference to '{stem}'", k)
+                    self._add_rule(c, tid, 0.60, f"numbered role column '{colname}' reads as a reference to '{stem}'", k)
         parts = n.split("_")  # (d) <table>_<column>
         for i in range(1, len(parts)):
             cname = "_".join(parts[i:])
@@ -297,17 +318,19 @@ class Inferer:
             tt = self.s.tables[hits[0]]
             for k in self._single_keys(tt):
                 if snake(k[0][0]) == cname:
-                    self._add(c, tt.id, 0.68, f"column name '{colname}' reads as {tt.name}.{k[0][0]} (rule: table_column)", k)
+                    if (cname in GENERIC_KEY_NAMES or cname in PK_ONLY_KEY_NAMES) and k[1] != "primary key":
+                        continue  # orders.user_email -> users.email is a copied attribute, not a reference
+                    self._add_rule(c, tt.id, 0.68, f"column name '{colname}' reads as {tt.name}.{k[0][0]} (rule: table_column)", k)
         if low == "id" and not t.primary_key and not t.unique_keys:  # (e) bare id without a key of its own
-            idt = [x for x in self.s.tables.values() if x.id != t.id and x.schema == t.schema
-                   and len(x.primary_key) == 1 and x.primary_key[0].lower() == "id"]
             toks = {singular(w) for w in snake(t.name).split("_")}
-            named = [x for x in idt if singular(x.name.lower()) in toks]
-            copy = any(x.name.lower() == t.name.lower() and x.schema != t.schema for x in self.s.tables.values())
-            for x in named or (idt if len(idt) == 1 and not copy else []):  # no name match: not for a copy of another schema's table
-                self._add(c, x.id, 0.62, f"bare 'id' in a table with no key of its own; {x.id} is the table keyed by id"
-                          + (" and its name is part of this table's name" if named else "") + " (rule: bare id)",
-                          (x.primary_key, "primary key", 0.08))
+            named = sorted({x for w in toks for x in self.idpk_name.get((t.schema, w), []) if x != t.id})
+            idt = [x for x in self.idpk.get(t.schema, []) if x != t.id]
+            copy = len(self.name_schemas.get(t.name.lower(), ())) > 1
+            for xid in named or (idt if len(idt) == 1 and not copy else []):  # no name match: not for a copy of another schema's table
+                x = self.s.tables[xid]
+                self._add_rule(c, x.id, 0.62, f"bare 'id' in a table with no key of its own; {x.id} is the table keyed by id"
+                               + (" and its name is part of this table's name" if named else "") + " (rule: bare id)",
+                               (x.primary_key, "primary key", 0.08))
 
     def candidates(self, t: Table, colname: str, stem: str, refpref: str = "") -> dict:
         c: dict = {}
@@ -362,12 +385,12 @@ class Inferer:
         for tid in self.pkname.get(colname.lower(), []):
             if tid != t.id:
                 self._add(c, tid, 0.70, f"column name '{colname}' equals the primary key name of {tid}")
-        self._extras(t, colname, c)
         if not c:
             tails = {tid for f in forms(stem) for tid in self.suffix_lookup.get(f, []) if tid.startswith(t.schema + ".")}
             if len(tails) == 1:  # several tail matches is noise (e.g. every '*_users' table), so none is kept
                 tid = next(iter(tails))
                 self._add(c, tid, 0.35, f"'{stem}' matches the tail of table name {tid} (weak)")
+        self._extras(t, colname, c)
         c.pop(t.id, None) if not any("self-reference" in r for r in c.get(t.id, {}).get("reasons", [])) else None
         return c
 
@@ -407,16 +430,23 @@ class Inferer:
             conf -= 0.10
             ev.append("cross-schema match")
         reasons = cand["reasons"]
-        if all("(rule: shared key name)" in r for r in reasons) and (
-                [colname] in ([t.primary_key] + t.unique_keys)):
-            if conf > 0.55:
-                conf = 0.55
-                ev.append("both columns are keys of their own tables; a shared name alone is weak")
-        elif all("numbered role column" in r or "(rule: bare id)" in r for r in reasons) and conf > 0.75:
-            exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
-            if not (exact and ix):
-                conf = 0.75  # a naming guess alone never reads as 0.8 or more
-                ev.append("capped at 0.75: no exact type match plus an index on the source column")
+        if all("(rule: shared key name)" in r for r in reasons):
+            if [colname] in ([t.primary_key] + t.unique_keys):
+                if conf > 0.55:
+                    conf = 0.55
+                    ev.append("both columns are keys of their own tables; a shared name alone is weak")
+            elif conf > 0.75:
+                conf = 0.75
+                ev.append("capped at 0.75: a shared name alone is not proof of a reference")
+        elif all("numbered role column" in r or "(rule: bare id)" in r or "(rule: table_column)" in r for r in reasons):
+            if any("its name is part of this table's name" in r for r in reasons) and conf > 0.70:
+                conf = 0.70
+                ev.append("capped at 0.70: a keyless table named after another table's word is a weak signal")
+            elif conf > 0.75:
+                exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
+                if not (exact and ix):
+                    conf = 0.75  # a naming guess alone never reads as 0.8 or more
+                    ev.append("capped at 0.75: no exact type match plus an index on the source column")
         return {"to": tid, "to_columns": tcols, "confidence": conf, "evidence": ev,
                 "partial": tboost < 0}
 
