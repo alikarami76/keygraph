@@ -115,9 +115,14 @@ class _DevServer(MCPServer):
             if exc is not None:
                 err = {"type": type(exc).__name__, "message": str(exc)}
             elif isinstance(res, (list, tuple)):
-                text = "".join(str(getattr(c, "content", "")) for c in res)
-                raw = text.encode("utf-8", "replace")
-                resp = devlog.stdout_fields("resource", text, len(raw), hashlib.sha256(raw).hexdigest(), len(text) // 4)
+                parts = [getattr(c, "content", "") for c in res]
+                if any(isinstance(c, (bytes, bytearray)) for c in parts):  # binary content: size and hash only
+                    raw = b"".join(c if isinstance(c, (bytes, bytearray)) else str(c).encode("utf-8", "replace") for c in parts)
+                    resp = devlog.stdout_fields("resource", "", len(raw), hashlib.sha256(raw).hexdigest(), len(raw) // 4, inline=False)
+                else:
+                    text = "".join(str(c) for c in parts)
+                    raw = text.encode("utf-8", "replace")
+                    resp = devlog.stdout_fields("resource", text, len(raw), hashlib.sha256(raw).hexdigest(), len(text) // 4)
             self._recorder(context).record("resource", "read_resource", {"uri": str(uri)}, ms, ok, err, resp, decisions)
         except Exception as e:  # noqa: BLE001
             devlog._warn(e)
@@ -275,9 +280,10 @@ def build_server(dir: str | Path) -> MCPServer:
     if devlog.enabled(out):  # only when dev mode is on as the server starts: the tool list stays at 15 otherwise
         @srv.tool()
         def dev_note(question: str) -> dict:
-            """Dev mode only. Call this with the user's question, in their words, before your first keygraph call for
-            that question, so the dev log can show which question each search, path and describe call was answering.
-            Returns {"noted": bool, "session": id, "question": text}, the same JSON as `keygraph dev note --json`."""
+            """Record the user's question for the dev log. Call this once per user question, before your first keygraph
+            call for it, with the question in the user's words and without personal data (names, phones, emails, ids,
+            secrets). Returns {noted, session, question}; you do not need to act on it, and noted=false only means
+            logging is off, so do not retry."""
             return devlog.note(out, question, "mcp", recorder=srv._rec)
 
     def _read(rel: str) -> str:

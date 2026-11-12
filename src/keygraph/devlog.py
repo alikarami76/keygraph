@@ -29,15 +29,15 @@ DECISIONS_MAX = 200
 _ON, _OFF = {"1", "true", "on", "yes"}, {"0", "false", "off", "no"}
 _URL = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"')\]>]*")
 _LONG = re.compile(r"\S{513,}")  # mask_secrets is quadratic on one long unbroken token
-# unquoted key=value secrets (password=x, api_key: x): the key is a whole word, never a *_id column, and the value
-# is not a dotted name (a.token = b.token is a join, not a secret) or a placeholder
-_PLAIN_KV = re.compile(r"(?<![\w.])((?:password|passwd|pwd|secret|token|api_?key|access_?key)\s*[=:]\s*)"
-                       r"(?![*?'\"\s<:$@])(?![\w$]+\.[\w$])[^\s'\",;&)]+", re.IGNORECASE)
 # phone-like numbers: 7+ digit runs or grouped digits (dates such as 2026-11-12 stay)
 _PHONE = re.compile(r"(?<![\w.])(?:\+?\d{7,}|\+?\d{2,4}[\s-]\d{3}[\s-]\d{3,4}(?:[\s-]\d{2,4})?)(?![\w.])")
 MSG_MAX = 300
 # keys that hold sampled column values in a profile (counts, null rates, lengths and patterns stay)
-_VALUE_KEYS = {"top_values", "numeric", "dates", "examples", "sample_values", "samples"}
+_VALUE_KEYS = {"top_values", "numeric", "dates", "examples", "sample_values", "samples", "reconcile",
+               "undocumented_codes", "unseen_codes"}
+# a profile object (it has "sample_size") keeps only these keys; any other key is replaced, so a new value-bearing key fails closed
+_PROFILE_KEEP = {"sample_size", "null_rate", "method", "profiled_at", "distinct_in_sample", "distinct_ratio", "pattern",
+                 "length", "pii", "note", "values_complete"}
 _warned = False
 
 
@@ -71,18 +71,22 @@ def enabled(out) -> bool:
 
 # ---- masking ----------------------------------------------------------------------------------------------
 
+def _long(m: re.Match) -> str:
+    return f"<long-run:{len(m.group(0))}>"
+
+
 def mask_text(s: str) -> str:
-    """Secrets (also plain key=value), phone-like numbers and emails masked and any scheme://... redacted."""
+    """Secrets, phone-like numbers and emails masked and any scheme://... redacted."""
     from .code.refs import mask_secrets
-    s = _LONG.sub(lambda m: f"<long-run:{len(m.group(0))}>", s)
+    s = _LONG.sub(_long, s)
     s = _URL.sub(lambda m: m.group(0).split("://", 1)[0] + "://***", mask_secrets(s))
-    return _PHONE.sub("<phone>", _PLAIN_KV.sub(r"\1***", s))
+    return _PHONE.sub("<phone>", s)
 
 
 def mask_message(s: str) -> str:
     """An error message: secrets, URLs, then string and number literals masked, cut to 300 characters."""
     from .queries.fingerprint import mask_sql
-    return mask_sql(mask_text(s))[:MSG_MAX]
+    return mask_text(mask_sql(_LONG.sub(_long, s)))[:MSG_MAX]
 
 
 def mask_args(v, key: str = ""):
@@ -98,7 +102,7 @@ def mask_args(v, key: str = ""):
             return "keygraph://" + mask_text(v[11:])
         if key == "sql":
             from .queries.fingerprint import mask_sql
-            return mask_sql(mask_text(v))
+            return mask_text(mask_sql(_LONG.sub(_long, v)))
         return mask_text(v)
     return v if v is None or isinstance(v, (bool, int, float)) else mask_text(str(v))
 
@@ -106,7 +110,9 @@ def mask_args(v, key: str = ""):
 def mask_response(tool: str, obj):
     """Replace sampled profile values anywhere in a response with "<masked>" (counts and patterns stay)."""
     if isinstance(obj, dict):
-        return {k: "<masked>" if k in _VALUE_KEYS and x not in (None, [], {}) else mask_response(tool, x) for k, x in obj.items()}
+        profile = "sample_size" in obj
+        return {k: "<masked>" if (k in _VALUE_KEYS or (profile and k not in _PROFILE_KEEP)) and x not in (None, [], {})
+                else mask_response(tool, x) for k, x in obj.items()}
     if isinstance(obj, list):
         return [mask_response(tool, x) for x in obj]
     return mask_text(obj) if isinstance(obj, str) else obj
@@ -164,11 +170,17 @@ def stdout_fields(tool: str, text: str, nbytes: int, digest: str, tokens: int, i
 _PROCESS = uuid.uuid4().hex[:12]
 
 
-def session_id(surface: str) -> str:
-    """MCP: one id per process. CLI: KEYGRAPH_DEV_SESSION if set, else a fresh id per command."""
+def session_id(surface: str, out=None) -> str:
+    """MCP: one id per process. CLI: KEYGRAPH_DEV_SESSION if set; otherwise an id derived from the parent process
+    (the agent's shell) and the dev dir, so the commands one agent shell runs group together."""
     if surface == "mcp":
         return _PROCESS
-    return os.environ.get("KEYGRAPH_DEV_SESSION") or uuid.uuid4().hex[:12]
+    env = os.environ.get("KEYGRAPH_DEV_SESSION")
+    if env:
+        return env
+    if out is None:
+        return uuid.uuid4().hex[:12]
+    return hashlib.sha1(f"{os.getppid()}:{dev_dir(out).resolve()}".encode()).hexdigest()[:12]
 
 
 def now() -> str:
@@ -181,7 +193,7 @@ class Recorder:
     def __init__(self, out, surface: str = "cli", client: dict | None = None, session: str | None = None):
         self.path = dev_dir(out) / "events.jsonl"
         self.surface, self.client = surface, client or {}
-        self.session = session or session_id(surface)
+        self.session = session or session_id(surface, out)
         self.seq = 0
 
     def _rotate(self) -> None:
@@ -328,13 +340,21 @@ def decide(kind: str, **fields) -> None:
 def note(out, text: str, surface: str = "cli", session: str | None = None, client: dict | None = None,
          recorder: Recorder | None = None) -> dict:
     """Record the question an agent is about to answer (dev mode only). The one function behind `keygraph dev note
-    --json` and the MCP `dev_note` tool, so both return {"noted", "session", "question"}."""
+    --json` and the MCP `dev_note` tool, so both return {"noted", "session", "question", "hint"} (plus "reason"
+    when nothing was recorded: "dev mode is off" or "write failed")."""
     q = mask_text(text)
-    sess = recorder.session if recorder else session or session_id(surface)
+    sess = recorder.session if recorder else session or session_id(surface, out)
     on = enabled(out)
+    r: dict = {"noted": False, "session": sess, "question": q}
     if on:
-        on = (recorder or Recorder(out, surface, client, sess)).record("note", "dev_note", {"question": q})
-    return {"noted": on, "session": sess, "question": q}
+        r["noted"] = (recorder or Recorder(out, surface, client, sess)).record("note", "dev_note", {"question": q})
+        if not r["noted"]:
+            r["reason"] = "write failed"
+    else:
+        r["reason"] = "dev mode is off"
+    r["hint"] = ("export KEYGRAPH_DEV_SESSION=" + sess + " to group the following commands with this note"
+                 if surface == "cli" else "this session is the MCP server's: its calls are grouped with this note automatically")
+    return r
 
 
 # ---- housekeeping used by `keygraph dev` ------------------------------------------------------------------

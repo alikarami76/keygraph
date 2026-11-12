@@ -158,12 +158,13 @@ def test_dev_note_json_and_when_off(tmp_path, capsys, monkeypatch):
     monkeypatch.setenv("KEYGRAPH_DEV_SESSION", "s9")
     assert main(["dev", "note", "how do orders reach shipments? mail a@b.com", "--dir", str(tmp_path), "--json"]) == 0
     off = json.loads(capsys.readouterr().out)
-    assert off["noted"] is False and "a@b.com" not in off["question"] and not events(tmp_path)
+    assert off["noted"] is False and off["reason"] == "dev mode is off" and "a@b.com" not in off["question"] and not events(tmp_path)
     main(["dev", "on", "--dir", str(tmp_path)])
     capsys.readouterr()
     assert main(["dev", "note", "orders", "to", "shipments", "--dir", str(tmp_path), "--json"]) == 0
     on = json.loads(capsys.readouterr().out)
-    assert on == {"noted": True, "session": "s9", "question": "orders to shipments"}
+    assert on == {"noted": True, "session": "s9", "question": "orders to shipments",
+                  "hint": "export KEYGRAPH_DEV_SESSION=s9 to group the following commands with this note"}
     (ev,) = events(tmp_path)
     assert ev["kind"] == "note" and ev["args"]["question"] == "orders to shipments" and ev["session"] == "s9"
 
@@ -357,3 +358,44 @@ def test_trace_byte_cap_and_unicode(tmp_path, monkeypatch):
 def test_unicode_args_round_trip(tmp_path):
     devlog.Recorder(tmp_path).record("note", "dev_note", {"question": "سفارش مشتری"})
     assert "سفارش مشتری" in (tmp_path / "dev" / "events.jsonl").read_text(encoding="utf-8")
+
+
+def test_note_reports_a_failed_write(tmp_path, monkeypatch):
+    main(["dev", "on", "--dir", str(tmp_path)])
+    monkeypatch.setattr(devlog.Recorder, "record", lambda *a, **k: False)
+    r = devlog.note(tmp_path, "q")
+    assert r["noted"] is False and r["reason"] == "write failed"
+
+
+def test_cli_session_falls_back_to_the_parent_process(tmp_path, capsys):
+    main(["dev", "on", "--dir", str(tmp_path)])
+    assert devlog.session_id("cli", tmp_path) == devlog.session_id("cli", tmp_path)
+    assert devlog.session_id("cli", tmp_path) != devlog.session_id("cli", tmp_path / "other")
+    capsys.readouterr()
+    main(["dev", "note", "q", "--dir", str(tmp_path), "--json"])
+    assert json.loads(capsys.readouterr().out)["session"] == devlog.session_id("cli", tmp_path)
+
+
+def test_dev_on_off_clear_take_json(tmp_path, capsys):
+    for argv, key in ((["on"], "enabled"), (["off"], "enabled"), (["clear"], "cleared")):
+        assert main(["dev", *argv, "--dir", str(tmp_path), "--json"]) == 0
+        assert key in json.loads(capsys.readouterr().out)
+
+
+def test_plain_secret_keys_masked_once_for_every_surface():
+    from keygraph.code.refs import mask_secrets
+    from keygraph.queries.fingerprint import mask_sql
+    for t in ("db_password=abc123", "client_secret=abc", "auth_token=abc", "access_token: abc", "DB_PASS=abc",
+              "password=abc", "api_key: sk123", "where token=abc"):
+        assert "abc" not in mask_secrets(t) and "sk123" not in mask_secrets(t), t
+        assert "abc" not in mask_sql(t, True) and "abc" not in devlog.mask_text(t), t
+    for t in ("a.token_id = b.token_id", "token_id = 5", "password = ?", "author = x", "a.password = b.password"):
+        assert mask_secrets(t) == t, t
+
+
+def test_profile_objects_are_whitelisted_and_sql_literals_become_placeholders():
+    prof = {"sample_size": 5, "null_rate": 0.0, "top_values": [["x", 1]], "reconcile": {"undocumented_codes": ["9"]},
+            "new_key": "leak", "pattern": "uuid"}
+    r = devlog.mask_response("describe", {"profile": prof})["profile"]
+    assert r["sample_size"] == 5 and r["pattern"] == "uuid" and r["new_key"] == "<masked>" and r["reconcile"] == "<masked>"
+    assert devlog.mask_args({"sql": "select 1 from t where id = 12345678"})["sql"] == "select ? from t where id = ?"

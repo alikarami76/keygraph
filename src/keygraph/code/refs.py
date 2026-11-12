@@ -58,11 +58,25 @@ class Unresolved:
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 _URL_CRED = re.compile(r"(://)[^/\s:@]+:[^/\s@]+@")
 _KV = re.compile(r"""(?P<k>[A-Za-z_$][\w$.\-]*)(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
+# unquoted `key = value` / `key: value`; the key must name a secret (see _secret_key)
+_PLAIN_KV = re.compile(r"(?<![\w.$])(?P<k>[A-Za-z_]\w{0,60})(?P<sep>\s*[=:]\s*)(?![*?'\"<:$@\s])(?P<v>[^\s'\",;&)]+)")
+_SECRET_SUBSTR = ("password", "passwd", "secret", "token", "api_key", "apikey", "access_key", "accesskey")
+_SECRET_WORDS = {"pass", "pwd", "auth", "authorization"}
 _LONG_TOKEN = re.compile(r"(?<![\w/.-])(?=[A-Za-z0-9_\-+/=]*\d)(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{32,}(?![\w/.-])")
 
 
 def _snake(name: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name.replace("-", "_")).lower()
+
+
+def _secret_key(key: str) -> bool:
+    """A key that names a secret (db_password, client_secret, auth_token, DB_PASS ...) and not a reference to one
+    (token_id, token_ids)."""
+    k = _snake(key)
+    words = k.split("_")
+    if words[-1] in ("id", "ids"):
+        return False
+    return any(w in k for w in _SECRET_SUBSTR) or bool(_SECRET_WORDS & set(words))
 
 
 def mask_secrets(text: str) -> str:
@@ -80,6 +94,13 @@ def mask_secrets(text: str) -> str:
         return whole[:m.start("v") - base] + "***" + whole[m.end("v") - base:]
 
     text = _KV.sub(kv, text)
+
+    def plain(m: re.Match) -> str:  # a dotted value is a column reference (a.token = b.token), not a secret
+        if not _secret_key(m.group("k")) or re.match(r"[\w$]+\.[\w$]", m.group("v")):
+            return m.group(0)
+        return m.group("k") + m.group("sep") + "***"
+
+    text = _PLAIN_KV.sub(plain, text)
     return _LONG_TOKEN.sub("***", text)
 
 

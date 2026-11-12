@@ -178,7 +178,7 @@ def test_a_failing_recorder_leaves_the_result_unchanged(out, monkeypatch, capsys
     assert not events(out)
 
 
-def test_dev_note_only_when_on_and_matches_cli(out, capsys):
+def test_dev_note_only_when_on_and_matches_cli(out, capsys, monkeypatch):
     dev_on(out)
     srv = build_server(out)
     assert names(srv) == TOOLS | {"dev_note"}
@@ -186,11 +186,12 @@ def test_dev_note_only_when_on_and_matches_cli(out, capsys):
     assert len(tool.description) > 80
     err, got = call(srv, "dev_note", question="how do orders reach shipments? password=hunter2")
     assert not err and got["noted"] is True and "hunter2" not in got["question"]
-    import os
-    os.environ["KEYGRAPH_DEV_SESSION"] = got["session"]
+    monkeypatch.setenv("KEYGRAPH_DEV_SESSION", got["session"])
     capsys.readouterr()
     assert main(["dev", "note", "how do orders reach shipments? password=hunter2", "--dir", str(out), "--json"]) == 0
-    assert json.loads(capsys.readouterr().out) == got
+    cli = json.loads(capsys.readouterr().out)
+    assert set(cli) == set(got) and {k: v for k, v in cli.items() if k != "hint"} == {k: v for k, v in got.items() if k != "hint"}
+    assert "KEYGRAPH_DEV_SESSION" in cli["hint"]
     notes = [e for e in events(out) if e["kind"] == "note"]
     assert len(notes) == 2 and notes[0]["surface"] == "mcp" and "dev_note" not in [e["tool"] for e in events(out) if e["kind"] == "call"]
     call(srv, "search", query="orders")
@@ -198,7 +199,7 @@ def test_dev_note_only_when_on_and_matches_cli(out, capsys):
     # the tool answers while dev is off again, and records nothing
     main(["dev", "off", "--dir", str(out)])
     n = len(events(out))
-    assert call(srv, "dev_note", question="x")[1]["noted"] is False and len(events(out)) == n
+    assert call(srv, "dev_note", question="x")[1]["reason"] == "dev mode is off" and len(events(out)) == n
 
 
 def test_doctor_accepts_dev_note(out):
@@ -221,3 +222,36 @@ def test_parity_with_dev_on(out, capsys):
         capsys.readouterr()
         assert main([*argv, "--dir", str(out), "--json"]) == 0
         assert got == json.loads(capsys.readouterr().out), tool
+
+
+def test_no_observed_value_reaches_the_log_on_a_profiled_demo(out):
+    dev_on(out)
+    srv = build_server(out)
+    _, prof = call(srv, "profile_summary", table="shop.orders")
+    call(srv, "describe", table="shop.orders")
+    call(srv, "search", query="orders")
+    observed = {str(v[0]) for c in prof["columns"].values() for v in c.get("top_values", [])}
+    observed |= {str(x) for c in prof["columns"].values() for x in (c.get("reconcile") or {}).get("undocumented_codes", [])}
+    assert observed
+    for e in events(out):
+        for tok in json.dumps(e.get("response", {})).split('"'):
+            assert tok not in observed or tok in ("0", "1") or len(tok) < 2 or tok in json.dumps(e["args"]), (e["tool"], tok)
+    raw = (out / "dev" / "events.jsonl").read_text()
+    assert "undocumented_codes" not in raw and "top_values\": [" not in raw
+
+
+def test_concurrent_calls_keep_their_own_decisions(out, monkeypatch):
+    dev_on(out)
+    real = S.search
+
+    def fake(g, ctx, q, *a, **k):
+        devlog.decide("fake", q=q)
+        return real(g, ctx, q, *a, **k)
+    monkeypatch.setattr(S, "search", fake)
+    srv = build_server(out)
+
+    async def both():
+        await asyncio.gather(srv.call_tool("search", {"query": "orders"}), srv.call_tool("search", {"query": "customers"}))
+    asyncio.run(both())
+    for e in events(out):
+        assert e["decisions"] == [{"kind": "fake", "q": e["args"]["query"]}]

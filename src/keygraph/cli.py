@@ -486,11 +486,12 @@ def cmd_dev(a):
     if a.dev_cmd == "on":
         d.mkdir(parents=True, exist_ok=True)
         (d / "enabled").write_text("", encoding="utf-8")
-        print(f"dev mode on: logging to {d} (KEYGRAPH_DEV=0 overrides)")
+        _emit(a, {"enabled": True, "dir": str(d)}, f"dev mode on: logging to {d} (KEYGRAPH_DEV=0 overrides)")
     elif a.dev_cmd == "off":
         (d / "enabled").unlink(missing_ok=True)
         src = devlog.source(out)
-        print("dev mode off (the log is kept; `keygraph dev clear` deletes it)" if src == "off" else
+        _emit(a, {"enabled": src != "off", "source": src},
+              "dev mode off (the log is kept; `keygraph dev clear` deletes it)" if src == "off" else
               "marker removed, but KEYGRAPH_DEV=1 in the environment still keeps dev mode on (unset it)")
     elif a.dev_cmd == "status":
         st = devlog.status(out)
@@ -498,11 +499,13 @@ def cmd_dev(a):
                      f"{st['trace_files']} trace files in {st['dir']}")
     elif a.dev_cmd == "clear":
         devlog.clear(out, a.all)
-        print("cleared the dev log" + (" and switched dev mode off" if a.all else " (dev mode setting kept)"))
+        _emit(a, {"cleared": True, "dev_mode_off": bool(a.all)},
+              "cleared the dev log" + (" and switched dev mode off" if a.all else " (dev mode setting kept)"))
     else:
         r = devlog.note(out, " ".join(a.text), "cli")
-        _emit(a, r, f"noted: {r['question']}" if r["noted"] else
-              "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)")
+        _emit(a, r, (f"noted: {r['question']}\n{r['hint']}" if r["noted"] else
+                     "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)" if r["reason"] == "dev mode is off"
+                     else "could not write the dev log, so nothing was recorded"))
 
 
 def _code_db(a) -> Path:
@@ -718,11 +721,14 @@ def main(argv=None) -> int:
         _dir_args(q)
         return q
 
-    dev_cmd("on", "start logging to <dir>/dev (or set KEYGRAPH_DEV=1)")
-    dev_cmd("off", "stop logging (keeps the log)")
+    dev_cmd("on", "start logging to <dir>/dev (or set KEYGRAPH_DEV=1)").add_argument("--json", action="store_true")
+    dev_cmd("off", "stop logging (keeps the log)").add_argument("--json", action="store_true")
     dev_cmd("status", "is dev mode on, and how big is the log").add_argument("--json", action="store_true")
-    dev_cmd("clear", "delete the logged events and traces").add_argument("--all", action="store_true", help="also remove the on marker")
-    q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on; no personal data; put -- before text that starts with -)")
+    q = dev_cmd("clear", "delete the logged events and traces (the on marker stays unless --all)")
+    q.add_argument("--all", action="store_true", help="also remove the on marker")
+    q.add_argument("--json", action="store_true")
+    q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on; no personal data; put -- before "
+                        "text that starts with -; run `export KEYGRAPH_DEV_SESSION=<session>` from the output so later commands join this question)")
     q.add_argument("text", nargs="+")
     q.add_argument("--json", action="store_true")
     dialects = sorted({"mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite"})
