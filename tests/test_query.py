@@ -1,8 +1,8 @@
 import json
 
 import pytest
-
 from conftest import needs_yaml
+
 from keygraph import query as Q
 from keygraph.graph import AmbiguousTable, Graph, UnknownTable
 
@@ -12,8 +12,8 @@ def test_resolve(graph):
     assert graph.resolve("SHOP.Orders") == "shop.orders"
     with pytest.raises(UnknownTable):
         graph.resolve("ordrs_x")
-    from keygraph.model import Schema, Table
     from keygraph.graph import build_graph
+    from keygraph.model import Schema, Table
     s = Schema()
     s.add(Table("a", "t"))
     s.add(Table("b", "t"))
@@ -110,9 +110,9 @@ def test_json_roundtrip(graph, tmp_path):
 
 
 def test_path_penalises_hub_fanout_and_log():
-    from keygraph.model import Column, Index, Schema, Table
-    from keygraph.graph import build_graph
     from keygraph import hubs as H
+    from keygraph.graph import build_graph
+    from keygraph.model import Column, Index, Schema, Table
     s = Schema()
     pk = [Index("PRIMARY", ["id"], True, True)]
     s.add(Table("app", "users", [Column("id", "int")], pk))
@@ -132,8 +132,8 @@ def test_path_penalises_hub_fanout_and_log():
 
 
 def test_is_log_uses_name_tokens_not_substrings():
-    from keygraph.model import Column, Index, Schema, Table
     from keygraph.graph import build_graph
+    from keygraph.model import Column, Index, Schema, Table
     s = Schema()
     pk = [Index("PRIMARY", ["id"], True, True)]
     for n in ("catalog_items", "blog_posts", "dialog", "order_logs", "price_history", "items_bak", "audit_log"):
@@ -149,9 +149,9 @@ def test_is_log_uses_name_tokens_not_substrings():
 
 def hub_star():
     """users is a hub (30 x_i point to it); orders -> users, and audit tables reach users too."""
-    from keygraph.model import Column, Index, Schema, Table
-    from keygraph.graph import build_graph
     from keygraph import hubs as H
+    from keygraph.graph import build_graph
+    from keygraph.model import Column, Index, Schema, Table
     s = Schema()
     pk = [Index("PRIMARY", ["id"], True, True)]
     s.add(Table("app", "users", [Column("id", "int")], pk))
@@ -183,8 +183,8 @@ def test_hub_penalty_applies_to_an_intermediate_hub_once():
 
 
 def test_scratch_names_count_as_log_like():
-    from keygraph.model import Column, Index, Schema, Table
     from keygraph.graph import build_graph
+    from keygraph.model import Column, Index, Schema, Table
     s = Schema()
     pk = [Index("PRIMARY", ["id"], True, True)]
     names = ("orders_test", "mass_cancel_shadow_test", "tmp_orders", "temp_x", "orders_backup", "orders_copy",
@@ -222,8 +222,8 @@ def test_near_ties_sort_on_the_unrounded_score():
 
 
 def test_many_to_many_hop_is_fan_out_and_penalised():
-    from keygraph.model import Column, Index, Schema, Table
     from keygraph.graph import build_graph
+    from keygraph.model import Column, Index, Schema, Table
     s = Schema()
     pk = [Index("PRIMARY", ["id"], True, True)]
     s.add(Table("app", "users", [Column("id", "int")], pk))

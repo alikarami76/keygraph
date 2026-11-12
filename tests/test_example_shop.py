@@ -1,5 +1,6 @@
 """The fictional webshop in examples/shop must keep showing what keygraph does."""
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -211,10 +212,8 @@ def test_build_json_is_written_before_graph_json(tmp_path, monkeypatch):
     real = cli.write_build_info
     monkeypatch.setattr(cli, "write_build_info", lambda *a, **k: (order.append("build"), real(*a, **k)))
     monkeypatch.setattr(cli.Graph, "save", lambda self, p: order.append("graph"))
-    try:
+    with contextlib.suppress(Exception):  # graph.json is not really saved here, so later steps may fail
         _build(tmp_path)
-    except Exception:  # noqa: BLE001  (graph.json is not really saved here)
-        pass
     assert order[:2] == ["build", "graph"]
 
 

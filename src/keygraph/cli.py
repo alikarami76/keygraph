@@ -9,23 +9,24 @@ import re
 import sys
 import time
 import webbrowser
+from datetime import UTC
 from pathlib import Path
 
+from . import query as Q
+from . import search as S
 from .areas import apply_curation, area_links, cluster_areas
 from .code_links import merge_code_joins
 from .context import ContextDB, read_copy_globs
 from .docs_out import write_docs
 from .explorer import build_html
-from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
-from .hubs import detect_hubs, mark_hubs
 from .graph import BUILD_FILE, AmbiguousTable, Graph, UnknownTable, build_graph
+from .hubs import detect_hubs, mark_hubs
 from .infer import Options
+from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
 from .model import Schema
 from .overrides import Overrides
 from .report import write_report
 from .summary import relation_summary
-from . import query as Q
-from . import search as S
 
 CUR_PREFIX = "curation: "
 DEFAULT_DIR = os.environ.get("KEYGRAPH_DIR", "keygraph-out")
@@ -193,10 +194,10 @@ def write_build_info(out: Path, g: Graph, sources: list[dict] | None) -> None:
     """build.json: when and from what this map was built. The only file that differs between identical builds.
     Written (atomically) before graph.json, so a graph on disk never pairs with an older build.json."""
     import os
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from . import __version__
-    ts = datetime.fromtimestamp(_build_time(), timezone.utc)
+    ts = datetime.fromtimestamp(_build_time(), UTC)
     info = {"built_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "keygraph_version": __version__,
             "sources": list(sources or []), "schemas": sorted({n["schema"] for n in g.nodes.values()})}
     out.mkdir(parents=True, exist_ok=True)
@@ -254,7 +255,7 @@ def cmd_load(a):
     filt = None
     if a.where:
         pairs = [w.split("=", 1) for w in a.where]
-        filt = lambda r: all(str(r.get(k)) == v for k, v in pairs)  # noqa: E731
+        filt = lambda r: all(str(r.get(k)) == v for k, v in pairs)
     cm = _json_arg(a.columns_map)
     if a.flatten:
         cm["_flatten"] = a.flatten

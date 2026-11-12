@@ -116,8 +116,8 @@ def _nonempty(sch: Schema, label: str) -> Schema:
 def dedicated_scan(kind: str, url: str, schemas: list[str] | None, all_schemas: bool) -> Schema:
     """Scan with the engine's own adapter (comments, enums, row counts, partitions), SELECT-only through assert_select.
     Honours --schema / --all-schemas the way the generic inspector scan does."""
-    from . import open_source
     from ..probe import SelectOnlyRunner
+    from . import open_source
     run = SelectOnlyRunner.from_url(url, as_dicts=True).run
 
     def first_col(r):
@@ -125,7 +125,7 @@ def dedicated_scan(kind: str, url: str, schemas: list[str] | None, all_schemas: 
 
     def names_of(sql: str) -> list[str]:
         return [first_col(r) for r in run(sql)]
-    ok = lambda n: n.lower() not in SYSTEM_SCHEMAS and n.lower() != "system" and not n.startswith("pg_")  # noqa: E731
+    ok = lambda n: n.lower() not in SYSTEM_SCHEMAS and n.lower() != "system" and not n.startswith("pg_")
     if kind == "mysql":
         if not schemas and not all_schemas:
             sch, label = open_source("mysql", run=run).schema(), "the connected database"

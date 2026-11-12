@@ -55,7 +55,7 @@ class SelectOnlyRunner:
         return list(self._execute(assert_select(sql)))
 
     @classmethod
-    def from_url(cls, url: str, as_dicts: bool = False) -> "SelectOnlyRunner":
+    def from_url(cls, url: str, as_dicts: bool = False) -> SelectOnlyRunner:
         """as_dicts: rows keyed by column name (what the information_schema adapters read) instead of tuples."""
         from sqlalchemy import create_engine, text
         eng = create_engine(url)
@@ -68,7 +68,7 @@ class SelectOnlyRunner:
         return cls(ex)
 
     @classmethod
-    def from_dbapi(cls, conn) -> "SelectOnlyRunner":
+    def from_dbapi(cls, conn) -> SelectOnlyRunner:
         def ex(sql):
             cur = conn.cursor()
             try:
