@@ -50,7 +50,7 @@ When a run confirms what a table, column, status code or metric means, save it s
     keygraph context add --kind relation from=customer rel=places to=order
     keygraph context add --kind metric name=revenue definition="..." expression="SUM(...)" tables=schema.a,schema.b
 
-Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. `keygraph context export` dumps everything.
+Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified write never overwrites a verified row from another source; it is skipped with a warning. `keygraph context export` dumps everything.
 
 ## Explorer
 

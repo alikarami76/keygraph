@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- An unverified context write (`context add`, or an import from another source) no longer replaces a verified note for the same concept, link, relation, column, metric or table; keygraph keeps the verified row and reports a warning. A source can still update its own rows, and a verified write still replaces anything.
 - Join paths now flag many-to-many hops (including partial composite-key hops) as fan-out and rank them lower, the same as one-to-many hops, in the CLI, MCP and explorer.
 
 ## 0.3.2 - 2026-11-04

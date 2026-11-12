@@ -263,7 +263,7 @@ Pass it with `--overrides overrides.yaml` to `scan` or `load` and the next build
 
 ## Business context and value profiles
 
-A schema knows column names, not that status 3 means "shipped". Context lives in `keygraph.db`: concepts (with multilingual synonyms), links from concepts to tables and columns, concept relations, column semantics (meaning, unit, status codes, null meaning, PII), metrics, and table notes (grain, freshness, soft-delete and date columns, pitfalls). Every row records its source, a verified flag and an update time.
+A schema knows column names, not that status 3 means "shipped". Context lives in `keygraph.db`: concepts (with multilingual synonyms), links from concepts to tables and columns, concept relations, column semantics (meaning, unit, status codes, null meaning, PII), metrics, and table notes (grain, freshness, soft-delete and date columns, pitfalls). Every row records its source, a verified flag and an update time. An unverified write never replaces a verified row from a different source (keygraph keeps it and warns); a verified write replaces anything.
 
 ```bash
 keygraph context import context/            # YAML/JSON files

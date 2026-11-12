@@ -213,3 +213,63 @@ def test_context_file_that_is_not_a_mapping_is_a_clean_error(tmp_path, capsys):
     bad.write_text("- just\n- a list\n", encoding="utf-8")
     assert main(["context", "import", str(bad), "--dir", str(out)]) == 2
     assert "expected a mapping" in capsys.readouterr().err
+
+
+def _col(ctx, table="shop.orders", col="status"):
+    return next(c for c in ctx.table_context(table)["columns"] if c["col"] == col)
+
+
+def test_unverified_write_never_replaces_verified_row(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "human note"}, "human", True)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "agent guess"}, "agent", False)
+    c = _col(ctx)
+    assert c["meaning"] == "human note" and c["verified"] == 1 and c["source"] == "human"
+    assert ctx.warnings == ["kept verified column note for shop.orders.status (source human); unverified write from agent ignored"]
+    # the same source may update its own verified row (a file re-import)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "edited"}, "human", False)
+    assert _col(ctx)["meaning"] == "edited" and len(ctx.warnings) == 1
+
+
+def test_same_source_reimport_and_verified_overwrite(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v1"}, "a.yaml", False)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v2"}, "a.yaml", False)
+    assert _col(ctx)["meaning"] == "v2"
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "v3"}, "b.yaml", True)
+    assert _col(ctx)["meaning"] == "v3" and _col(ctx)["verified"] == 1
+    assert ctx.warnings == []
+
+
+def test_verified_guard_covers_every_kind(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    items = {
+        "concept": {"name": "Order", "definition": "x"},
+        "link": {"concept": "Order", "table": "shop.orders", "column": "", "role": "primary-record"},
+        "relation": {"from": "Order", "rel": "related-to", "to": "Customer"},
+        "metric": {"name": "gmv", "definition": "x"},
+        "table": {"table": "shop.orders", "grain": "x"},
+    }
+    for kind, d in items.items():
+        ctx.upsert(kind, d, "human", True)
+    n = len(ctx.warnings)
+    for kind, d in items.items():
+        ctx.upsert(kind, {**d, "note": "n", "definition": "y", "grain": "y"}, "agent", False)
+    assert len(ctx.warnings) == n + len(items)
+    assert ctx.rows("concepts")[0]["definition"] == "x" and ctx.rows("metrics")[0]["definition"] == "x"
+    assert ctx.table_context("shop.orders")["notes"]["grain"] == "x"
+    assert ctx.rows("concept_links")[0]["note"] == ""
+
+
+def test_cli_context_add_reports_kept_verified(tmp_path, capsys):
+    out = tmp_path / "out"
+    assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json"), "--statistics", str(FIX / "shop_statistics.json"),
+                 "--key-columns", str(FIX / "shop_key_columns.json")]) == 0
+    base = ["context", "add", "--kind", "column", "table=shop.orders", "column=created_at", "--dir", str(out)]
+    assert main(base + ["meaning=human note", "verified=true", "source=human"]) == 0
+    capsys.readouterr()
+    assert main(base + ["meaning=agent guess"]) == 0
+    j = json.loads(capsys.readouterr().out)
+    assert any("kept verified column note for shop.orders.created_at (source human)" in w for w in j["warnings"])
+    assert main(["describe", "orders", "--dir", str(out), "--json"]) == 0
+    assert "human note" in capsys.readouterr().out

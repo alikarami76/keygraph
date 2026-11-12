@@ -32,7 +32,7 @@ Code refs carry a confidence too: declarations 1.0, SQL parsed by sqlglot 0.95 (
 
 Value profiles (top values, ranges, empty rates) come from a bounded sample and carry `profiled_at`, sample size and method. Treat them as samples that may be out of date, not as the full distribution. For personal data columns raw values are never stored; do not try to recover them.
 
-When you confirm what a table, column or status code means, save it so the next search finds it: `keygraph context add --kind column table=schema.t column=status codes=1:new,2:paid meaning="..." verified=true`. Mark `verified=true` only if you checked it against data or code. Record a wrong or right relation in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
+When you confirm what a table, column or status code means, save it so the next search finds it: `keygraph context add --kind column table=schema.t column=status codes=1:new,2:paid meaning="..." verified=true`. Mark `verified=true` only if you checked it against data or code; an unverified `context add` will not overwrite an existing verified note (you get a warning). Record a wrong or right relation in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
 
 ## Do not
 
