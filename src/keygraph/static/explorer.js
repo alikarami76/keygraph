@@ -210,7 +210,7 @@
     // passing through a hub costs once, on the step that arrives at it; an endpoint the reader chose never does
     const w = []; let f = 1.0;
     if (isHubT(h.far) && h.far !== end) { w.push('hub'); f *= HUB_PENALTY; }
-    if (h.card === 3) { w.push('fan_out'); f *= FANOUT_PENALTY; }
+    if (h.card === 2 || h.card === 3) { w.push('fan_out'); f *= FANOUT_PENALTY; }
     if (isLogT(h.far)) { w.push('log'); f *= LOG_PENALTY; }
     return [w, f];
   }
@@ -666,7 +666,7 @@
     const bar = `<div class="kg-pathbar">${pathField('from', a)}<button class="kg-btn kg-btn--ghost kg-btn--icon kg-btn--sm" data-act="swap" aria-label="Swap from and to" title="Swap">${icon('swap')}</button>${pathField('to', b)}
       <span class="kg-spacer"></span><span class="kg-field-label">Max joins</span><div class="kg-seg" role="group" aria-label="Max joins">${[3, 4, 5].map(h => `<button data-act="hops" data-n="${h}" ${state.maxHops === h ? 'aria-pressed="true"' : ''}>${h}</button>`).join('')}</div></div>`;
     const wrap = inner => `<div style="display:grid;grid-template-rows:auto 1fr;min-height:0;background:var(--kg-canvas)">${bar}<div class="kg-pathscroll">${inner}</div></div>`;
-    const ranking = `<details class="kg-section" open><summary>Ranking</summary><div class="kg-section-body"><p class="kg-muted" style="margin:0;font:var(--kg-type-small)">Score is the product of step confidences, then the number of joins. Passing through a hub (×${HUB_PENALTY}), a one-to-many step (×${FANOUT_PENALTY}) or a log or scratch table such as *_log, *_test, *_shadow, *_tmp or *_backup (×${LOG_PENALTY}) lowers the score; the tables you pick as From and To never count as hubs. Each penalty is shown on its step. Relations below ${floor().toFixed(2)} are not used.</p></div></details>`;
+    const ranking = `<details class="kg-section" open><summary>Ranking</summary><div class="kg-section-body"><p class="kg-muted" style="margin:0;font:var(--kg-type-small)">Score is the product of step confidences, then the number of joins. Passing through a hub (×${HUB_PENALTY}), a one-to-many or many-to-many step (×${FANOUT_PENALTY}) or a log or scratch table such as *_log, *_test, *_shadow, *_tmp or *_backup (×${LOG_PENALTY}) lowers the score; the tables you pick as From and To never count as hubs. Each penalty is shown on its step. Relations below ${floor().toFixed(2)} are not used.</p></div></details>`;
     const unknown = (aName && a < 0 ? aName : '') || (bName && b < 0 ? bName : '');
     if (a < 0 || b < 0 || a === b) {
       const msg = unknown ? `<div class="kg-empty">${bigIcon('empty')}<h3>No table called “${esc(unknown)}”</h3><p>Type part of a name in the fields above and pick a table from the list.</p></div>`
@@ -713,7 +713,7 @@
        <div class="kg-panel-body">
         <details class="kg-section" open><summary>Why each step</summary><div class="kg-section-body--flush">
           ${p.steps.map((s, i) => { const e = E[s.ei]; return `<div class="kg-rel"><div class="kg-rel-line"><span class="kg-hop">${i + 1}</span><span class="kg-mono kg-rel-head" style="font-size:12px" title="${esc(tid(s.far) + '.' + colsTxt(s.far, s.fc))}">${esc(midTrunc(tname(s.far), 24))}.${esc(colsTxt(s.far, s.fc))}</span>${conf(e[4])}</div><div class="kg-rel-tags"><span class="kg-chip" data-kind="${eDecl(e) ? 'declared' : 'inferred'}"><span>${STATUS[e[5]] || 'inferred'}</span></span><span class="kg-chip">${esc(CARD_TXT[s.card])}</span>${s.warnings.map(w => warn(warnLabel(w, s))).join('')}${e[7] ? '<span class="kg-chip kg-chip--warn">ambiguous</span>' : ''}</div>
-            <details class="kg-rel-evidence" ${i < 2 ? 'open' : ''}><summary>Evidence</summary><ul>${e[8].map(x => `<li>${esc(x)}</li>`).join('') || '<li>No evidence recorded</li>'}${s.card === 3 ? `<li data-sign="-">One ${esc(tname(s.near))} row has many ${esc(tname(s.far))} rows, so sums of ${esc(tname(s.near))} columns repeat</li>` : ''}</ul></details></div>`; }).join('')}
+            <details class="kg-rel-evidence" ${i < 2 ? 'open' : ''}><summary>Evidence</summary><ul>${e[8].map(x => `<li>${esc(x)}</li>`).join('') || '<li>No evidence recorded</li>'}${s.card === 2 ? `<li data-sign="-">Many ${esc(tname(s.near))} rows match many ${esc(tname(s.far))} rows, so sums repeat</li>` : ''}${s.card === 3 ? `<li data-sign="-">One ${esc(tname(s.near))} row has many ${esc(tname(s.far))} rows, so sums of ${esc(tname(s.near))} columns repeat</li>` : ''}</ul></details></div>`; }).join('')}
         </div></details>${ranking}
        </div>`);
     KG.maxNodesDrawn = p.tables.length;
@@ -721,8 +721,8 @@
   }
   function shortWhy(e) { const ev = e[8][0] || (eDecl(e) ? 'Declared foreign key' : ''); return ev.length > 60 ? ev.slice(0, 57) + '…' : ev; }
   function sqlFor(p, al) {
-    const fan = p.steps.filter(s => s.card === 3);
-    return `SELECT ${al[0]}.*, ${al[al.length - 1]}.*\n` + p.sql + (fan.length ? '\n' + fan.map(s => `-- fan-out: one ${tname(s.near)} row has many ${tname(s.far)} rows; aggregate before summing ${tname(s.near)} columns`).join('\n') : '');
+    const fan = p.steps.filter(s => s.card === 2 || s.card === 3);
+    return `SELECT ${al[0]}.*, ${al[al.length - 1]}.*\n` + p.sql + (fan.length ? '\n' + fan.map(s => `-- fan-out: ${s.card === 2 ? 'many-to-many between ' + tname(s.near) + ' and ' + tname(s.far) : 'one ' + tname(s.near) + ' row has many ' + tname(s.far) + ' rows'}; aggregate before summing ${tname(s.near)} columns`).join('\n') : '');
   }
   function bindPathFields(a, b) {
     const go = (from, to) => { location.hash = hP(from, to); };
@@ -1083,7 +1083,7 @@
   /* ---------- API for tests and agents ---------- */
   KG.findPaths = (a, b, maxHops = 4, minConf = 0.6, k = 3, withMirrors = false) => findPaths(resolveTable(a), resolveTable(b), maxHops, minConf, k, 300000, withMirrors).map(p => ({
     tables: p.tables.map(tid), confidence: p.confidence, score: p.score, hops: p.hops, sql: p.sql,
-    steps: p.steps.map(s => ({ from: tid(s.near), to: tid(s.far), from_columns: s.nc.map(c => cname(s.near, c)), to_columns: s.fc.map(c => cname(s.far, c)), cardinality: CARDS[s.card], confidence: E[s.ei][4], warnings: s.warnings, fan_out: s.card === 3 }))
+    steps: p.steps.map(s => ({ from: tid(s.near), to: tid(s.far), from_columns: s.nc.map(c => cname(s.near, c)), to_columns: s.fc.map(c => cname(s.far, c)), cardinality: CARDS[s.card], confidence: E[s.ei][4], warnings: s.warnings, fan_out: s.card === 2 || s.card === 3 }))
   }));
   KG.search = q => search(q).map(r => r.e.label);
   KG.searchDetail = q => search(q).slice(0, 20).map(r => ({ kind: r.e.k, label: r.e.label, reason: r.reason }));

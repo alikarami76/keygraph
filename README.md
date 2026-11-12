@@ -51,7 +51,7 @@ Build the map once with `keygraph scan`, then let your agent look up tables, joi
 **The loop.** An agent that uses keygraph follows the same six steps for each question. The order is the one recommended in [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md).
 
 1. `search` the business term (for example "net revenue") to find candidate tables and see why each one matched.
-2. `describe` each candidate to read its grain, keys, columns, status codes and pitfalls.
+2. `describe` each candidate to read its grain, keys, columns, status codes and pitfalls (`describe --brief`, or `brief=true` over MCP, returns just keys, filter columns, notes and columns as name, type, key and codes: a cheaper first look at a wide table).
 3. `path` between the tables to get ranked join routes with confidence, evidence, fan-out warnings and a `JOIN` snippet. Do not write a join from column-name guesses when `path` can answer it.
 4. `keys` on the large tables to pick filters that match an index, leading with the first column of an index.
 5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile. Before you write it, if code or past queries were indexed, `code_where` shows how a column is used in code and `query_for` shows queries that already touched the table, with their business question and timing.
@@ -98,9 +98,11 @@ keygraph ui                                                          # opens key
 keygraph doctor                                                      # checks the install, the map and the MCP server
 ```
 
-`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). Then ask questions from the command line:
+`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, and the connection's current schema for PostgreSQL and SQL Server; a scan that finds no tables stops with a message suggesting `--schema` or `--all-schemas`). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
 
 ```bash
+keygraph describe orders --brief         # keys, filter columns, notes and columns as name/type/key/codes only
+keygraph search "monthly revenue" --no-paths   # skip the suggested join paths
 keygraph path customers shipments        # ranked join paths with a JOIN snippet
 keygraph search "monthly revenue"        # which tables hold this
 keygraph keys orders                     # primary key, unique keys, indexes in column order
@@ -113,7 +115,7 @@ git clone https://github.com/alikarami76/keygraph && cd keygraph
 uv sync && uv run bash examples/shop/build.sh && uv run keygraph ui --dir examples/shop/out
 ```
 
-The build writes `graph.json`, `RELATIONS_REPORT.md`, `keygraph.html` (a self-contained explorer that works from disk, offline), `keygraph.db` (SQLite with full-text search) and the agent pages `areas/*.md` and `tables/*.md`. Details of every step are in [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf) and [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md).
+The build writes `graph.json`, `RELATIONS_REPORT.md`, `keygraph.html` (a self-contained explorer that works from disk, offline), `keygraph.db` (SQLite with full-text search) the agent pages `areas/*.md` and `tables/*.md`, and `build.json` (build time, keygraph version, source kind and database name, covered schemas; no host or credentials; the only file that differs between two identical builds, and `SOURCE_DATE_EPOCH` fixes its time). An unknown-table answer names the schemas the map covers. Details of every step are in [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf) and [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md).
 
 If you cannot connect to the database, build from `information_schema` dumps instead:
 
@@ -132,8 +134,8 @@ Each source is a module in `keygraph.adapters`, read-only by construction. SQL s
 | MySQL, MariaDB | `information_schema` (columns, indexes with column order, foreign keys, table facts, enum members) | `keygraph scan --url`, dumps, or the `mysql` adapter |
 | PostgreSQL | `information_schema` and `pg_catalog` (indexes, foreign keys, enum types, row estimates, comments, checks) | `keygraph scan --url`, or the `postgres` adapter |
 | SQLite | the SQLAlchemy inspector (metadata only) | `keygraph scan --url sqlite:///file.db` |
-| SQL Server | `INFORMATION_SCHEMA` and `sys.*`; samples use `SELECT TOP n` | `sqlserver` adapter, `keygraph profile --source sqlserver` |
-| ClickHouse | `system.tables`, `system.columns`, `system.data_skipping_indices`; the primary key becomes the PRIMARY index, `ORDER BY` an index | `clickhouse` adapter, `keygraph profile --source clickhouse` |
+| SQL Server | `INFORMATION_SCHEMA` and `sys.*`; samples use `SELECT TOP n` | `keygraph scan --url`, the `sqlserver` adapter, `keygraph profile --source sqlserver` |
+| ClickHouse | `system.tables`, `system.columns`, `system.data_skipping_indices`; the primary key becomes the PRIMARY index, `ORDER BY` an index | `keygraph scan --url`, the `clickhouse` adapter, `keygraph profile --source clickhouse` |
 | Metabase | REST `GET /api/database/:id/metadata` (tables, fields, semantic types, foreign-key targets, field fingerprints) and native SELECTs through `POST /api/dataset`; no other request | `metabase` adapter (Python API) |
 | MongoDB | schema inferred from sampled documents (nested paths become columns), indexes, `_id` as primary key, DBRef values as references; only `list_collection_names`, `find`, `index_information` and `estimated_document_count` can be called | `mongodb` adapter, `keygraph profile --source mongodb` |
 | `information_schema` dumps (JSON, JSONL, CSV) | the files you give it | `keygraph load` |
@@ -188,7 +190,7 @@ The Claude Code skill is in [skills/keygraph/SKILL.md](https://github.com/alikar
 ### MCP
 
 `keygraph mcp` serves keygraph's queries to any MCP client over stdio. It needs the `mcp` extra and a built output
-directory (`<out>` below, e.g. `keygraph-out`). Tools: `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
+directory (`<out>` below, e.g. `keygraph-out`). Tools (`describe` takes `brief=true`, `search` takes `with_paths=false`, the same as the CLI `describe --brief` and `search --no-paths`): `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
 `areas`, `area`, `profile_summary` (stored, sampled profiles; PII values are withheld), `code_where` and `code_what`
 (the code index), `query_for`, `query_top` and `query_search` (the query log), and `query_submit`, the one tool that
 writes: it logs a query the agent ran into the query log tables and nothing else. Each returns the same JSON as
@@ -252,7 +254,7 @@ Each inferred relation carries a confidence between 0 and 1 and the evidence lin
 
 **Areas.** Tables that join each other (hubs removed) form a business area. The grouping is deterministic. A short `areas:` curation in the context file renames areas or pins tables to them.
 
-**Path ranking.** `keygraph path` multiplies the confidence of each hop and applies penalties for routes through hubs, one-to-many (fan-out) steps and log, archive or scratch tables (names with a whole token such as `log`, `shadow` or `archive`), then prefers fewer hops. Each fan-out step is flagged in the output, because summing a column across it counts rows more than once.
+**Path ranking.** `keygraph path` multiplies the confidence of each hop and applies penalties for routes through hubs, one-to-many or many-to-many (fan-out) steps and log, archive or scratch tables (names with a whole token such as `log`, `shadow` or `archive`), then prefers fewer hops. Each fan-out step is flagged in the output, because summing a column across it counts rows more than once.
 
 **Mirrors.** A schema that holds copies of another schema's tables (a nightly reporting copy, say) is detected, marked as a mirror, and kept out of areas, hub counts and join paths so nothing is counted twice. `--include-mirrors` brings it back.
 
@@ -270,7 +272,7 @@ Pass it with `--overrides overrides.yaml` to `scan` or `load` and the next build
 
 ## Business context and value profiles
 
-A schema knows column names, not that status 3 means "shipped". Context lives in `keygraph.db`: concepts (with multilingual synonyms), links from concepts to tables and columns, concept relations, column semantics (meaning, unit, status codes, null meaning, PII), metrics, and table notes (grain, freshness, soft-delete and date columns, pitfalls). Every row records its source, a verified flag and an update time.
+A schema knows column names, not that status 3 means "shipped". Context lives in `keygraph.db`: concepts (with multilingual synonyms), links from concepts to tables and columns, concept relations, column semantics (meaning, unit, status codes, null meaning, PII), metrics, and table notes (grain, freshness, soft-delete and date columns, pitfalls). Every row records its source, a verified flag and an update time. An unverified note never replaces a verified one (keygraph keeps the verified row and warns); only re-importing the same context file can update its own rows, and a verified write replaces anything.
 
 ```bash
 keygraph context import context/            # YAML/JSON files

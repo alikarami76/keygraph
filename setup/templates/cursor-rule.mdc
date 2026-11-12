@@ -4,6 +4,7 @@ globs:
 alwaysApply: true
 ---
 
+<!-- keygraph:start (managed by keygraph setup; edit between the markers, a later setup replaces this block) -->
 # Database work: use keygraph first
 
 This project's database is mapped by keygraph (map folder: `{OUT}`). It is connected as the `keygraph` MCP server.
@@ -11,7 +12,7 @@ This project's database is mapped by keygraph (map folder: `{OUT}`). It is conne
 Before you write or change SQL that touches more than one table, or when you do not know where some data lives:
 
 1. **Find:** `search` with the business words of the question (or `areas`, then `area`).
-2. **Understand:** `describe` each candidate table: what one row is, the keys, status codes, pitfalls.
+2. **Understand:** `describe` (with `brief=true` for a first look at a wide table) each candidate table: what one row is, the keys, status codes, pitfalls.
 3. **Join:** `path` between every pair of tables you join. Use its JOIN columns. Never guess join columns from names.
 4. **Filter:** `keys` on large tables, and filter on the leading column of an index.
 5. **Reuse:** `query_for` / `query_search` for queries that worked before.
@@ -25,3 +26,4 @@ After the work:
 - If keygraph errors or is wrong, follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md. Never send a report without the user's yes.
 
 keygraph never runs SQL and never writes to the database.
+<!-- keygraph:end -->

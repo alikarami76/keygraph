@@ -5,14 +5,14 @@ description: Use for database join paths, missing or undeclared foreign keys, sc
 
 # keygraph
 
-keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIONS_REPORT.md`, a self-contained `keygraph.html` explorer and `keygraph.db` (business context with full-text search) in one output directory (default `keygraph-out/`, override with `--dir` or `KEYGRAPH_DIR`). Run it with `uv run keygraph ...` or `keygraph ...`.
+keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIONS_REPORT.md`, a self-contained `keygraph.html` explorer, `keygraph.db` (business context with full-text search) and `build.json` (build time and covered schemas) in one output directory (default `keygraph-out/`, override with `--dir` or `KEYGRAPH_DIR`). Run it with `uv run keygraph ...` or `keygraph ...`.
 
 ## When to use it
 
 0. Orientation: `keygraph areas` lists the business areas (clusters of related tables) and `keygraph area <name>` shows one area's tables, grain, internal relations and neighbouring areas. Use it when you do not know where to start.
 1. Finding data: `keygraph search "<business question or term>"` ranks tables by names, concepts, synonyms, metrics and notes, then shows grain, primary key, efficient filter columns, pitfalls and a join path between the top hits.
 2. Before any join across more than one table: `keygraph path A B` gives ranked join paths with each edge's evidence and a ready `JOIN ... ON ...` snippet. Use `keygraph neighbors T --depth 2` to see what a table connects to.
-3. Before filtering a big table: `keygraph keys T` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index. `keygraph describe T` adds the business context.
+3. Before filtering a big table: `keygraph keys T` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index. `keygraph describe T` adds the business context; use `keygraph describe T --brief` (MCP `describe` with `brief=true`) for a first look at a wide table, and `keygraph search ... --no-paths` (MCP `with_paths=false`) when you only need the table list.
 4. To understand one column: `keygraph explain T.col`.
 All query commands take `--json`. Table names resolve leniently: a bare name works when it is unique, or unique outside mirror and copy schemas (the original wins over its copies); otherwise write `schema.table`.
 
@@ -22,11 +22,11 @@ MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see th
 
 ## Read confidence honestly
 
-Declared foreign keys have confidence 1.0. Inferred edges are guesses from names and key shapes: use 0.8 and above freely, check 0.6 to 0.8 against the evidence lines, and verify anything lower or marked `ambiguous` (and any `fan-out` hop, where one row becomes many) with a small SELECT before relying on it. Polymorphic columns (`x_type` plus `x_id`) have no single target. If a guess is right or wrong, record it in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
+Declared foreign keys have confidence 1.0. Inferred edges are guesses from names and key shapes: use 0.8 and above freely, check 0.6 to 0.8 against the evidence lines, and verify anything lower or marked `ambiguous` (and any `fan-out` hop, meaning a one-to-many or many-to-many step where one row becomes many) with a small SELECT before relying on it. Polymorphic columns (`x_type` plus `x_id`) have no single target. If a guess is right or wrong, record it in an overrides file (`confirm`, `reject`, `add`, `aliases`) and rebuild.
 
 ## Building the graph
 
-- Live database: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas]` (needs `keygraph[live]`; reads metadata only).
+- Live database: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas] [--generic]` (needs `keygraph[live]`; reads metadata only; MySQL, PostgreSQL, SQL Server and ClickHouse URLs use their own adapter and keep comments, enums, row counts and partitions, `--generic` forces the plain inspector).
 - Dumps: `keygraph load --columns columns.jsonl [--statistics s.jsonl] [--key-columns k.jsonl] [--columns-map '{"TABLE_SCHEMA":"db"}'] [--flatten raw] [--where field=value]`. Without statistics it falls back to COLUMN_KEY and marks indexes approximate.
 - Fetch statistics and key usage with any read-only command: `keygraph fetch --cmd 'mytool --sql {sql}' --out dir`.
 - Optional value-overlap check of inferred edges (SELECT only): `keygraph probe --url <url> --sample 500`.
@@ -50,7 +50,7 @@ When a run confirms what a table, column, status code or metric means, save it s
     keygraph context add --kind relation from=customer rel=places to=order
     keygraph context add --kind metric name=revenue definition="..." expression="SUM(...)" tables=schema.a,schema.b
 
-Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. `keygraph context export` dumps everything.
+Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything.
 
 ## Check and report
 

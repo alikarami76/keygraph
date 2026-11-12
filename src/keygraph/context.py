@@ -89,9 +89,23 @@ def copy_globs_split(raw: dict) -> tuple[dict, list]:
     return (mirrors if mirrors else {}), [g for g in dict.fromkeys(globs) if g]
 
 
+class YamlMissing(ValueError):
+    """A YAML context file was given but the optional PyYAML extra is not installed."""
+
+
+def _need_yaml(path=None):
+    """Import PyYAML or raise a clear error (it is an optional extra)."""
+    try:
+        import yaml
+    except ImportError:
+        raise YamlMissing(f"reading YAML context files{f' ({Path(path).name})' if path else ''} needs PyYAML: "
+                          "pip install 'keygraph[yaml]', or write the file as JSON") from None
+    return yaml
+
+
 def read_copy_globs(paths) -> list[str]:
     """Copy-schema globs declared in context files, read before the graph is built (inference needs them).
-    Unreadable files are skipped here; the later import reports them."""
+    Unreadable files are skipped here; the later import reports them. A YAML file without PyYAML is an error."""
     out: list[str] = []
     for path in paths or []:
         p = Path(path)
@@ -101,9 +115,10 @@ def read_copy_globs(paths) -> list[str]:
                 if f.suffix.lower() == ".json":
                     raw = json.loads(text)
                 else:
-                    import yaml
-                    raw = yaml.safe_load(text) or {}
+                    raw = _need_yaml(f).safe_load(text) or {}
                 out += [g for g in copy_globs_split(raw)[1] if g not in out] if isinstance(raw, dict) else []
+            except YamlMissing:
+                raise
             except Exception:  # noqa: BLE001
                 continue
     return out
@@ -131,6 +146,7 @@ class ContextDB:
                     self.db.execute(stmt.replace("IF NOT EXISTS ", "IF NOT EXISTS temp.", 1))
         self.graph = graph
         self.warnings: list[str] = []
+        self.kept: dict[str, int] = {}  # verified rows kept against an unverified write, by kind
 
     def close(self) -> None:
         try:
@@ -167,18 +183,38 @@ class ContextDB:
         return (safe_source(d.get("source") or default_source) or "unknown", 1 if v in (True, 1, "true", "yes") else 0,
                 time.strftime("%Y-%m-%dT%H:%M:%S"))
 
-    def upsert(self, kind: str, d: dict, source: str = "", verified=False) -> None:
+    def _keeps_verified(self, kind: str, table: str, keys: dict, label: str, src: tuple, same_ok: bool = False) -> bool:
+        """True (with a warning) when an unverified write would replace a verified row.
+        Only a file import (same_ok) may update its own rows; a verified write replaces anything."""
+        if src[1]:
+            return False
+        where = " AND ".join(f"{k}=?" for k in keys)
+        old = self.db.execute(f"SELECT source, verified FROM {table} WHERE {where}", tuple(keys.values())).fetchone()
+        old_src = safe_source(old["source"]) if old else ""
+        if not old or not old["verified"] or (same_ok and old_src == src[0]):
+            return False
+        self.kept[kind] = self.kept.get(kind, 0) + 1
+        self.warnings.append(f"kept verified {kind} note for {label} (source {old_src}); unverified write from {src[0]} ignored; "
+                              "pass --verified (or verified=true) if you have confirmed it")
+        return True
+
+    def upsert(self, kind: str, d: dict, source: str = "", verified=False,
+               allow_same_source: bool = False) -> bool:
+        """Write one context item; False when a verified row was kept instead. allow_same_source (file imports only)
+        lets an unverified write update a verified row that came from the same source."""
         if kind not in KINDS:
             raise ValueError(f"unknown kind '{kind}'; use one of {sorted(KINDS)}")
         src = self._meta(d, source, verified)
         x = self.db
         if kind == "concept":
             name = str(d["name"]).strip()
-            x.execute("INSERT OR REPLACE INTO concepts VALUES(?,?,?,?,?,?,?,?)",
-                      (name, d.get("definition", ""), d.get("domain", ""), d.get("owner", ""), _j(_l(d.get("synonyms"))), *src))
+            written = not self._keeps_verified(kind, "concepts", {"name": name}, name, src, allow_same_source)
+            if written:
+                x.execute("INSERT OR REPLACE INTO concepts VALUES(?,?,?,?,?,?,?,?)",
+                          (name, d.get("definition", ""), d.get("domain", ""), d.get("owner", ""), _j(_l(d.get("synonyms"))), *src))
             for ln in d.get("links") or []:
                 self.upsert("link", {**ln, "concept": name, "source": ln.get("source") or d.get("source"),
-                                     "verified": ln.get("verified", d.get("verified"))}, source, verified)
+                                     "verified": ln.get("verified", d.get("verified"))}, source, verified, allow_same_source)
         elif kind == "link":
             tid = self._tid(d["table"])
             col = d.get("column") or ""
@@ -186,30 +222,44 @@ class ContextDB:
             role = d.get("role") or ("primary-record" if not col else "attribute")
             if role not in ROLES:
                 self.warnings.append(f"link role '{role}' is not one of {ROLES}")
+            if self._keeps_verified(kind, "concept_links", {"concept": d["concept"], "table_id": tid, "col": col, "role": role},
+                                    f"{d['concept']} -> {tid}{'.' + col if col else ''} ({role})", src, allow_same_source):
+                return False
             x.execute("INSERT OR REPLACE INTO concept_links VALUES(?,?,?,?,?,?,?,?)",
                       (d["concept"], tid, col, role, d.get("note", ""), *src))
         elif kind == "relation":
+            rel = d.get("rel", "related-to")
+            if self._keeps_verified(kind, "concept_relations", {"from_concept": d["from"], "rel": rel, "to_concept": d["to"]},
+                                    f"{d['from']} {rel} {d['to']}", src, allow_same_source):
+                return False
             x.execute("INSERT OR REPLACE INTO concept_relations VALUES(?,?,?,?,?,?,?,?)",
                       (d["from"], d.get("rel", "related-to"), d["to"], d.get("edge", ""), d.get("note", ""), *src))
         elif kind == "column":
             tid = self._tid(d["table"])
             self._check_col(tid, d["column"])
+            if self._keeps_verified(kind, "column_semantics", {"table_id": tid, "col": d["column"]}, f"{tid}.{d['column']}", src, allow_same_source):
+                return False
             x.execute("INSERT OR REPLACE INTO column_semantics VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                       (tid, d["column"], d.get("meaning", ""), d.get("unit", ""), _j(d.get("codes") or {}),
                        d.get("null_meaning", ""), 1 if d.get("pii") in (True, 1, "true", "yes") else 0,
                        _j(d.get("typical_filters", "")), d.get("index_hint", ""), *src))
         elif kind == "metric":
             tbls = [self._tid(t) for t in _l(d.get("tables"))]
+            if self._keeps_verified(kind, "metrics", {"name": d["name"]}, d["name"], src, allow_same_source):
+                return False
             x.execute("INSERT OR REPLACE INTO metrics VALUES(?,?,?,?,?,?,?,?,?,?)",
                       (d["name"], d.get("definition", ""), d.get("expression", ""), d.get("grain", ""), _j(tbls),
                        d.get("filters", ""), d.get("caveats", ""), *src))
         elif kind == "table":
             tid = self._tid(d["table"])
             self._check_col(tid, d.get("date_column"))
+            if self._keeps_verified(kind, "table_notes", {"table_id": tid}, tid, src, allow_same_source):
+                return False
             x.execute("INSERT OR REPLACE INTO table_notes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                       (tid, d.get("grain", ""), d.get("freshness", ""), d.get("soft_delete", ""), d.get("date_column", ""),
                        _j(_l(d.get("recommended_indexes"))), d.get("pitfalls", ""), d.get("summary", ""), *src))
         x.commit()
+        return written if kind == "concept" else True
 
     def import_path(self, path: str | Path, default_verified=False) -> dict:
         p = Path(path)
@@ -220,8 +270,7 @@ class ContextDB:
             if f.suffix.lower() == ".json":
                 raw = json.loads(text)
             else:
-                import yaml
-                raw = yaml.safe_load(text) or {}
+                raw = _need_yaml(f).safe_load(text) or {}
             rel = f.relative_to(p).as_posix() if p.is_dir() else f.name
             if not isinstance(raw, dict):
                 raise ValueError(f"context file {rel}: expected a mapping at the top level, got {type(raw).__name__}")
@@ -230,8 +279,8 @@ class ContextDB:
             for key, kind in (("concepts", "concept"), ("relations", "relation"), ("columns", "column"),
                               ("metrics", "metric"), ("tables", "table")):
                 for item in raw.get(key) or []:
-                    self.upsert(kind, item, src, ver)
-                    counts[key] += 1
+                    if self.upsert(kind, item, src, ver, allow_same_source=True):
+                        counts[key] += 1
         self.reindex()
         return counts
 
@@ -423,7 +472,7 @@ class ContextDB:
                     "SELECT kind, ref, bm25(search_fts, 0.0, 0.0, 3.0, 1.0) AS s FROM search_fts WHERE search_fts MATCH ? AND kind != 'query' "
                     "ORDER BY s LIMIT ?", (match, limit))
             except sqlite3.OperationalError:
-                return
+                return False
             for r in cur:
                 k = (r["kind"], r["ref"])
                 if k not in scores:

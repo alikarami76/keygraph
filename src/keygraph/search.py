@@ -125,10 +125,19 @@ def format_search(r: dict) -> str:
     return "\n".join(out)
 
 
-def describe(graph: Graph, ctx: ContextDB, ref: str) -> dict:
-    from .query import keys, neighbors
+def describe(graph: Graph, ctx: ContextDB, ref: str, brief: bool = False) -> dict:
+    """Everything about one table. brief: keys, filter columns, table notes and columns as name/type/key/codes only
+    (no profiles, relations or per-column prose), a cheap first look at a wide table."""
+    from .query import keys
     t = graph.resolve(ref)
     c = ctx.table_context(t)
+    if brief:
+        codes = {x["col"]: x["codes"] for x in c["columns"] if x.get("codes")}
+        return {"table": t, "brief": True, "keys": keys(graph, t), "filter_columns": filter_columns(graph.nodes[t], c["notes"]),
+                "context": {"notes": c["notes"]}, "info_line": table_info_line(graph.nodes[t]),
+                "columns": [{"name": x["name"], "type": x["type"], **({"key": x["key"]} if x.get("key") else {}),
+                             **({"codes": codes[x["name"]]} if x["name"] in codes else {})} for x in graph.nodes[t]["columns"]]}
+    from .query import neighbors
     nb = neighbors(graph, t, 1)
     return {"table": t, "keys": keys(graph, t), "filter_columns": filter_columns(graph.nodes[t], c["notes"]),
             "context": c, "relations": nb["levels"].get("1", []),
@@ -140,6 +149,19 @@ def describe(graph: Graph, ctx: ContextDB, ref: str) -> dict:
 def format_describe(d: dict) -> str:
     from .query import format_keys
     out = [format_keys(d["keys"])]
+    if d.get("brief"):
+        n = d["context"]["notes"]
+        if n:
+            out.append(f"  grain: {n['grain']}")
+            for k in ("summary", "pitfalls"):
+                if n.get(k):
+                    out.append(f"  {k}: {n[k]}")
+        out.append("  efficient filters: " + (", ".join(d["filter_columns"]) or "n/a"))
+        out.append("  columns:")
+        for c in d["columns"]:
+            codes = " codes: " + ", ".join(f"{k}={v}" for k, v in c["codes"].items()) if c.get("codes") else ""
+            out.append(f"    {c['name']} {c['type']}{' ' + c['key'] if c.get('key') else ''}{codes}")
+        return "\n".join(out)
     n = d["context"]["notes"]
     if n:
         out.append(f"  grain: {n['grain']}")

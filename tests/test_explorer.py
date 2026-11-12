@@ -318,3 +318,27 @@ def test_csp_allows_the_page_and_the_gzip_decode(page, tmp_path, dump_schema):
         page.wait_for_selector(f"[data-view={view}]")
     assert page.evaluate("document.fonts.check('12px Inter')")
     assert not page.errors and not console, (page.errors, console)
+
+
+def test_many_to_many_step_is_fan_out_in_explorer_paths(page, tmp_path):
+    from keygraph.explorer import build_html
+    from keygraph.graph import Graph
+    from keygraph.model import Column, Index, Schema, Table
+    from keygraph.query import find_paths
+    s = Schema()
+    pk = [Index("PRIMARY", ["id"], True, True)]
+    s.add(Table("app", "users", [Column("id", "int")], pk))
+    s.add(Table("app", "orders", [Column("id", "int"), Column("user_id", "int")], list(pk)))
+    build(tmp_path, s)
+    g = Graph.load(tmp_path / "graph.json")
+    assert g.edges
+    for e in g.edges:
+        e["cardinality"] = "many-to-many"
+    f = tmp_path / "m2m.html"
+    f.write_text(build_html(g, None), encoding="utf-8")
+    page.goto(f.as_uri())
+    page.wait_for_selector("[data-view=areas]")
+    py = find_paths(g, "app.orders", "app.users", 4, 0.4, 3)
+    js = page.evaluate("([a, b]) => window.__kg.findPaths(a, b, 4, 0.4, 3)", ["app.orders", "app.users"])
+    assert "fan_out" in js[0]["steps"][0]["warnings"]
+    assert [(p["score"], [x["warnings"] for x in p["steps"]]) for p in js] == [(p["score"], [x["warnings"] for x in p["steps"]]) for p in py]

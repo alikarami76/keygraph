@@ -5,26 +5,28 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import webbrowser
+from datetime import UTC
 from pathlib import Path
 
+from . import query as Q
+from . import search as S
 from .areas import apply_curation, area_links, cluster_areas
 from .code_links import merge_code_joins
 from .context import ContextDB, read_copy_globs
 from .docs_out import write_docs
 from .explorer import build_html
-from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
+from .graph import BUILD_FILE, AmbiguousTable, Graph, UnknownTable, build_graph
 from .hubs import detect_hubs, mark_hubs
-from .graph import AmbiguousTable, Graph, UnknownTable, build_graph
 from .infer import Options
+from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
 from .model import Schema
 from .overrides import Overrides
 from .report import write_report
 from .summary import relation_summary
-from . import query as Q
-from . import search as S
 
 CUR_PREFIX = "curation: "
 DEFAULT_DIR = os.environ.get("KEYGRAPH_DIR", "keygraph-out")
@@ -120,15 +122,6 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
     qlog = _query_summary(ctx) if opts.get("queries") else {}
     cur = ctx.curation() if ctx else {"areas": [], "hubs": {}, "mirrors": {}}
     warns: list[str] = list(cur.get("warnings", []))
-    names: dict[str, list[str]] = {}
-    for k in ("include", "exclude"):
-        names[k] = []
-        for t in cur["hubs"].get(k, []):
-            try:
-                g.resolve(t)
-                names[k].append(t)
-            except ValueError as exc:
-                warns.append(f"hubs {k} '{t}' ignored: {exc}")
     mcur = cur.get("mirrors") or {}
     schemas = {n["schema"] for n in g.nodes.values()}
     for m, o in mcur.items():
@@ -138,6 +131,15 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
     mark_mirrors(g, detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
                                    never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns))
     transfer_mirror_edges(g)  # relations of the original tables, copied onto their mirror copies
+    names: dict[str, list[str]] = {}
+    for k in ("include", "exclude"):
+        names[k] = []
+        for t in cur["hubs"].get(k, []):
+            try:
+                g.resolve(t)
+                names[k].append(t)
+            except ValueError as exc:
+                warns.append(f"hubs {k} '{t}' ignored: {exc}")
     if ctx:
         merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
     mark_hubs(g, detect_hubs(g, include=names["include"], exclude=names["exclude"]))
@@ -157,9 +159,57 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
             "keygraph.html": len(html.encode("utf-8"))}
 
 
+def url_source(url: str) -> dict:
+    """Describe a database URL as {"kind", "database"}: never the host, user, password, port or query.
+    The database name is kept only when it is a plain name; anything odd is left out rather than risk a leak."""
+    kind = url.split(":", 1)[0].split("+", 1)[0].lower()
+    db = ""
+    try:
+        from sqlalchemy.engine.url import make_url
+        db = make_url(url).database or ""
+    except Exception:  # noqa: BLE001  (no SQLAlchemy, or a URL it cannot parse): parse by hand
+        rest = url.split("://", 1)[1] if "://" in url else ""
+        rest = rest.split("?", 1)[0].split("#", 1)[0].rsplit("@", 1)[-1]
+        db = rest.partition("/")[2] if kind != "sqlite" else rest
+    if kind == "sqlite":
+        db = re.split(r"[\\/]", db)[-1]
+    else:
+        db = db.split("/")[0]
+    return {"kind": kind, "database": db} if db and re.fullmatch(r"[\w.$-]+", db) else {"kind": kind}
+
+
+def _build_time() -> float:
+    """Now, or SOURCE_DATE_EPOCH when it is a plain number of seconds (reproducible builds)."""
+    import os
+    sde = os.environ.get("SOURCE_DATE_EPOCH")
+    if sde is None or sde == "":
+        return time.time()
+    if re.fullmatch(r"[0-9]{1,11}", sde):
+        return float(int(sde))
+    print("keygraph: ignoring SOURCE_DATE_EPOCH (not a plain number of seconds); using the current time", file=sys.stderr)
+    return time.time()
+
+
+def write_build_info(out: Path, g: Graph, sources: list[dict] | None) -> None:
+    """build.json: when and from what this map was built. The only file that differs between identical builds.
+    Written (atomically) before graph.json, so a graph on disk never pairs with an older build.json."""
+    import os
+    from datetime import datetime
+
+    from . import __version__
+    ts = datetime.fromtimestamp(_build_time(), UTC)
+    info = {"built_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "keygraph_version": __version__,
+            "sources": list(sources or []), "schemas": sorted({n["schema"] for n in g.nodes.values()})}
+    out.mkdir(parents=True, exist_ok=True)
+    tmp = out / (BUILD_FILE + ".tmp")
+    tmp.write_text(json.dumps(info, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, out / BUILD_FILE)
+    g.build = info
+
+
 def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, context: list[str] | None = None,
                  notes: list[dict] | None = None, options: Options | None = None, verbose=True, snippets: bool = False,
-                 queries: bool = False, copy_schemas: list[str] | None = None) -> dict:
+                 queries: bool = False, copy_schemas: list[str] | None = None, sources: list[dict] | None = None) -> dict:
     out = Path(out)
     t0 = time.time()
     ov = Overrides.load(overrides) if overrides else None
@@ -180,6 +230,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
     if prof:
         g.data["profiles"] = prof
     S.apply_context_to_graph(g, ctx)
+    write_build_info(out, g, sources)
     sizes = render(out, g, ctx, snippets=snippets, queries=queries)
     result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
               "warnings": g.data["warnings"][:10] + ctx.warnings[:10]}
@@ -192,9 +243,11 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
 
 
 def cmd_scan(a):
-    from .adapters.live import scan_url
-    run_pipeline(scan_url(a.url, a.schema, a.all_schemas), a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
-                 copy_schemas=getattr(a, "copy_schema", None))
+    from .adapters.live import scan_any
+    sch, via = scan_any(a.url, a.schema, a.all_schemas, getattr(a, "generic", False))
+    src = {**url_source(a.url), "kind": via}
+    run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
+                 copy_schemas=getattr(a, "copy_schema", None), sources=[src])
 
 
 def cmd_load(a):
@@ -202,14 +255,15 @@ def cmd_load(a):
     filt = None
     if a.where:
         pairs = [w.split("=", 1) for w in a.where]
-        filt = lambda r: all(str(r.get(k)) == v for k, v in pairs)  # noqa: E731
+        filt = lambda r: all(str(r.get(k)) == v for k, v in pairs)
     cm = _json_arg(a.columns_map)
     if a.flatten:
         cm["_flatten"] = a.flatten
     sch = load_dump(a.columns, a.statistics, a.key_columns, a.default_schema, cm, _json_arg(a.statistics_map),
                     _json_arg(a.kcu_map), filt, tables=a.tables)
+    names = [Path(str(x)).name for x in (a.columns, a.statistics, a.key_columns, a.tables) if x]
     run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
-                 copy_schemas=getattr(a, "copy_schema", None))
+                 copy_schemas=getattr(a, "copy_schema", None), sources=[{"kind": "dump", "files": names}])
 
 
 def cmd_render(a):
@@ -262,9 +316,11 @@ def path_result(g: Graph, a: str, b: str, max_hops=4, min_confidence=0.6, k=3, i
     return {"from": g.resolve(a), "to": g.resolve(b), "paths": ps}
 
 
-def describe_result(dir, g: Graph, table: str, readonly: bool = False) -> dict:
+def describe_result(dir, g: Graph, table: str, readonly: bool = False, brief: bool = False) -> dict:
     with ContextDB(Path(dir) / "keygraph.db", g, readonly) as ctx:
-        r = S.describe(g, ctx, table)
+        r = S.describe(g, ctx, table, brief)
+    if brief:
+        return r
     r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []))
     return r
 
@@ -302,14 +358,14 @@ def cmd_keys(a):
 def cmd_search(a):
     g = _load(a)
     with _ctx(a, g) as ctx:
-        r = S.search(g, ctx, " ".join(a.query), a.limit)
+        r = S.search(g, ctx, " ".join(a.query), a.limit, with_paths=not a.no_paths)
     _emit(a, r, S.format_search(r))
 
 
 def cmd_describe(a):
     g = _load(a)
-    r = describe_result(a.dir, g, a.table)
-    _emit(a, r, S.format_describe(r) + "\n" + Q.format_relation_summary(r["relation_summary"]))
+    r = describe_result(a.dir, g, a.table, brief=a.brief)
+    _emit(a, r, S.format_describe(r) + ("" if a.brief else "\n" + Q.format_relation_summary(r["relation_summary"])))
 
 
 def cmd_areas(a):
@@ -351,16 +407,17 @@ def cmd_context(a):
             else:
                 import yaml
                 Path(a.out).write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        counts = {"tables": 0, "columns": 0}
         for kind, key in (("table", "tables"), ("column", "columns")):
             for item in data[key]:
-                ctx.upsert(kind, item, item.get("source", ""), item.get("verified", False))
+                if ctx.upsert(kind, item, item.get("source", ""), item.get("verified", False)):
+                    counts[key] += 1
         ctx.reindex()
-        counts = {"tables": len(data["tables"]), "columns": len(data["columns"])}
     elif a.action == "add":
         d = _kv(a.fields)
-        ctx.upsert(a.kind, d, d.get("source") or "agent", d.get("verified") in ("true", "yes", "1"))
+        ok = ctx.upsert(a.kind, d, d.get("source") or "agent", a.verified or d.get("verified") in ("true", "yes", "1"))
         ctx.reindex()
-        counts = {a.kind: 1}
+        counts = {a.kind: 1 if ok else 0}
     elif a.action == "export":
         data = ctx.dump()
         text = json.dumps(data, ensure_ascii=False, indent=1)
@@ -376,7 +433,7 @@ def cmd_context(a):
         return
     S.apply_context_to_graph(g, ctx)
     render(Path(a.dir), g, ctx)
-    print(json.dumps({"imported": counts, "warnings": ctx.warnings}, ensure_ascii=False, indent=1))
+    print(json.dumps({"imported": counts, "kept": ctx.kept, "warnings": ctx.warnings}, ensure_ascii=False, indent=1))
     ctx.close()
 
 
@@ -514,10 +571,11 @@ def main(argv=None) -> int:
         p.add_argument("--snippets", action="store_true", help="include code snippets in keygraph.html (default: locations only)")
         p.add_argument("--queries", action="store_true", help="include the query log in keygraph.html and the table pages")
 
-    p = add("scan", cmd_scan, "scan a live database through SQLAlchemy (metadata only)")
+    p = add("scan", cmd_scan, "scan a live database (metadata only; MySQL, Postgres, SQL Server and ClickHouse use their own adapter)")
     p.add_argument("--url", required=True)
     p.add_argument("--schema", action="append")
     p.add_argument("--all-schemas", action="store_true")
+    p.add_argument("--generic", action="store_true", help="always use the SQLAlchemy inspector, not the engine's own adapter")
     build_opts(p)
     p = add("load", cmd_load, "build from information_schema dumps (JSON/JSONL/CSV)", "build")
     p.add_argument("--columns", required=True)
@@ -575,9 +633,11 @@ def main(argv=None) -> int:
     p = add("search", cmd_search, "find tables by business meaning")
     p.add_argument("query", nargs="+")
     p.add_argument("--limit", type=int, default=8)
+    p.add_argument("--no-paths", action="store_true", help="skip the suggested join paths between the top hits")
     p.add_argument("--json", action="store_true")
     p = add("describe", cmd_describe, "keys plus business context for a table")
     p.add_argument("table")
+    p.add_argument("--brief", action="store_true", help="keys, filter columns, notes and columns as name/type/key/codes only")
     p.add_argument("--json", action="store_true")
     p = add("areas", cmd_areas, "list the business areas (clusters of related tables)")
     p.add_argument("--json", action="store_true")

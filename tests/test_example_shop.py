@@ -1,5 +1,6 @@
 """The fictional webshop in examples/shop must keep showing what keygraph does."""
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -139,3 +140,115 @@ def test_demo_with_app_is_deterministic(tmp_path):
     _build(tmp_path / "b", app=True)
     for f in ("graph.json", "keygraph.html", "tables/shop.orders.md"):
         assert (tmp_path / "a" / f).read_bytes() == (tmp_path / "b" / f).read_bytes(), f
+
+
+def _tree(d: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(d)): p.read_bytes() for p in sorted(d.rglob("*")) if p.is_file() and p.suffix != ".db"}
+
+
+def test_build_json_is_the_only_file_that_differs_between_builds(tmp_path, monkeypatch):
+    import keygraph
+
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    a, b = tmp_path / "a", tmp_path / "b"
+    _build(a)
+    _build(b)
+    ta, tb = _tree(a), _tree(b)
+    assert ta.keys() == tb.keys() and "build.json" in ta
+    assert [k for k in ta if ta[k] != tb[k] and k != "build.json"] == []
+    meta = json.loads(ta["build.json"])
+    assert meta["keygraph_version"] == keygraph.__version__
+    assert meta["schemas"] == sorted({n["schema"] for n in json.loads(ta["graph.json"])["nodes"]})
+    assert meta["sources"] == [{"kind": "dump", "files": ["columns.json", "statistics.json", "key_columns.json", "tables.json"]}]
+    assert "built_at" in meta and "built_at" not in ta["graph.json"].decode()
+    assert str(tmp_path) not in ta["build.json"].decode()
+
+
+def test_build_json_honours_source_date_epoch_and_survives_render(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    _build(tmp_path)
+    first = (tmp_path / "build.json").read_text()
+    assert json.loads(first)["built_at"] == "2023-11-14T22:13:20Z"
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1800000000")
+    assert main(["render", "--dir", str(tmp_path)]) == 0
+    assert (tmp_path / "build.json").read_text() == first
+
+
+TRICKY_URLS = [
+    ("mysql://u:pa/ss@hostx/shop", "shop"),
+    ("mysql://u:pa/ss@hostx", None),
+    ("mysql://u:pw/@hostx", None),
+    ("mysql://us3r:p@ss:w@hostx:3307/shop", "shop"),
+    ("mysql+pymysql://us3r:pw@hostx/shop?ssl=1&unix_socket=/tmp/hostx.sock", "shop"),
+    ("mssql+pyodbc:///?odbc_connect=DRIVER%3DX%3BSERVER%3Dhostx%3BPWD%3Dpw", None),
+    ("postgresql://us3r:pw@hostx:5432/", None),
+    ("postgresql://us3r:pw@hostx:5432/we!rd@db", None),
+    ("mysql://us3r:pw@hostx/\u0645\u062a\u0631\u0648", "\u0645\u062a\u0631\u0648"),
+]
+
+
+@pytest.mark.parametrize("url,db", TRICKY_URLS)
+def test_scan_source_description_has_no_credentials(url, db):
+    from keygraph.cli import url_source
+    src = url_source(url)
+    assert src.get("database") == db
+    for frag in ("hostx", "us3r", "pw", "3307", "5432", "ssl", "sock", "pa/ss", "p@ss"):
+        assert frag not in json.dumps(src), (url, frag)
+    assert url_source("sqlite:////tmp/x/shop.db") == {"kind": "sqlite", "database": "shop.db"}
+
+
+def test_bad_source_date_epoch_is_ignored_with_a_warning(tmp_path, monkeypatch, capsys):
+    for bad in ("\u00b2", "9" * 30, "abc", "-5"):
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", bad)
+        d = tmp_path / ("o" + str(abs(hash(bad))))
+        _build(d)
+        assert (d / "build.json").exists()
+        assert "SOURCE_DATE_EPOCH" in capsys.readouterr().err
+
+
+def test_build_json_is_written_before_graph_json(tmp_path, monkeypatch):
+    from keygraph import cli
+    order = []
+    real = cli.write_build_info
+    monkeypatch.setattr(cli, "write_build_info", lambda *a, **k: (order.append("build"), real(*a, **k)))
+    monkeypatch.setattr(cli.Graph, "save", lambda self, p: order.append("graph"))
+    with contextlib.suppress(Exception):  # graph.json is not really saved here, so later steps may fail
+        _build(tmp_path)
+    assert order[:2] == ["build", "graph"]
+
+
+def test_unknown_table_names_coverage_cli_and_mcp_alike(built, capsys):
+    assert main(["describe", "custmers", "--dir", str(built)]) == 2
+    cli = capsys.readouterr().err.strip().removeprefix("keygraph: ")
+    assert cli.startswith("unknown table 'custmers'")
+    assert "this map covers schemas" in cli and "built " in cli and "from dump" in cli and "dump files loaded" in cli and "--all-schemas" not in cli
+    pytest.importorskip("mcp")
+    import asyncio
+
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    from keygraph.mcp_server import build_server
+    with pytest.raises(ToolError) as exc:
+        asyncio.run(build_server(built).call_tool("describe", {"table": "custmers"}))
+    assert str(exc.value).removeprefix("Error executing tool describe: ") == cli
+
+
+def test_hub_include_of_a_mirrored_bare_name_does_not_warn_ambiguous(tmp_path):
+    _build(tmp_path)
+    f = tmp_path / "hubs.yaml"
+    f.write_text("hubs:\n  include: [customers]\n", encoding="utf-8")
+    assert main(["context", "import", str(f), "--dir", str(tmp_path)]) == 0
+    assert main(["render", "--dir", str(tmp_path)]) == 0
+    warns = json.loads((tmp_path / "graph.json").read_text())["warnings"]
+    assert not [w for w in warns if "hubs include" in w], warns
+
+
+def test_readme_quickstart_brief_and_no_paths_work_without_mcp(built, capsys):
+    capsys.readouterr()
+    assert main(["describe", "shop.orders", "--brief", "--dir", str(built)]) == 0
+    text = capsys.readouterr().out
+    assert "columns:" in text and "relations:" not in text
+    assert main(["describe", "shop.orders", "--brief", "--json", "--dir", str(built)]) == 0
+    assert json.loads(capsys.readouterr().out)["brief"] is True
+    assert main(["search", "orders", "--no-paths", "--json", "--dir", str(built)]) == 0
+    assert json.loads(capsys.readouterr().out)["join_paths"] == []

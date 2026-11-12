@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `context add` honours `--verified`, and `context add`, `import` and `import-notes` count only rows actually written; the JSON gains a `kept` object for verified rows that were kept. The Postgres scan filters schemas in its SQL, every metadata query that returns exactly its row limit prints a warning, `build.json` names the engine (`sqlite`, `postgres (generic)`), and the unknown-table hint fits the build type. `examples/shop/build.sh` works from any folder.
+- `keygraph doctor` has a `metadata` check that counts the layers the map has (column comments, enum columns, row estimates) and warns, with a fix, when it has none. `doctor --json` gains a `graph.metadata` object.
+- Smaller answers on request: `keygraph describe T --brief` (MCP `describe` with `brief=true`) returns keys, filter columns, notes and columns as name, type, key and codes only, with no profiles or relations; `keygraph search --no-paths` (MCP `search` with `with_paths=false`) leaves out the suggested join paths. CLI and MCP return the same JSON.
+- `keygraph scan --url` now uses the dedicated adapter for MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs (still SELECT-only), so scanned maps keep column comments, enum members, row-count estimates and partitions like `load` does. `--schema` and `--all-schemas` behave as before; SQLite and other databases keep the SQLAlchemy inspector, an adapter error falls back to it with a stderr warning, and the new `--generic` flag forces it. `build.json` records the path used.
+- New `build.json` next to `graph.json` (build time, keygraph version, source kind and database or dump file names, covered schemas; never a URL, host, credentials or absolute path; `SOURCE_DATE_EPOCH` sets the time). An unknown-table error now says which schemas the map covers and when it was built, and suggests rebuilding with `--schema` or `--all-schemas`. `graph.json` and the pages stay byte-identical.
+- An unverified context write (`context add`, or an import from another source) no longer replaces a verified note for the same concept, link, relation, column, metric or table; keygraph keeps the verified row and reports a warning. Only re-importing the same context file can update its own rows, and a verified write still replaces anything. Reading a YAML context file without PyYAML now fails with a clear message instead of a raw ImportError.
+- Join paths now flag many-to-many hops (including partial composite-key hops) as fan-out and rank them lower, the same as one-to-many hops, in the CLI, MCP and explorer.
+
 ## 0.3.3 - 2026-11-12
 
 - Continuous integration on GitHub Actions: Python 3.11, 3.12 and 3.13, each with a core-only install (no extras) and with all extras; the README quickstart and `keygraph doctor` on the demo; ruff; a build with `twine check`. Tagged versions publish to PyPI through trusted publishing. The test suite skips tests that need an optional library when it is missing.
