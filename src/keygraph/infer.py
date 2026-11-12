@@ -438,6 +438,12 @@ class Inferer:
             elif conf > 0.75:
                 conf = 0.75
                 ev.append("capped at 0.75: a shared name alone is not proof of a reference")
+        elif all("(reference prefix 'id_' stripped)" in r or "(reference prefix 'ref_' stripped)" in r for r in reasons):
+            if conf > 0.75:  # id_card, ref_code, id_type are often attributes, not references
+                exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
+                if not (exact and ix):
+                    conf = 0.75
+                    ev.append("capped at 0.75: no exact type match plus an index on the source column")
         elif all("numbered role column" in r or "(rule: bare id)" in r or "(rule: table_column)" in r for r in reasons):
             if any("its name is part of this table's name" in r for r in reasons) and conf > 0.70:
                 conf = 0.70

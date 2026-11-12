@@ -241,3 +241,15 @@ def test_many_keyless_tables_stay_fast():
     t0 = time.perf_counter()
     inf.run()
     assert time.perf_counter() - t0 < 5  # was about 20x slower before the per-schema maps
+
+
+def test_b_id_and_ref_prefixes_are_capped_but_link_to_is_not():
+    g = graph(T("cards", [("id", "int")], pk=["id"]), T("codes", [("id", "int")], pk=["id"]),
+              T("types", [("id", "int")], pk=["id"]), T("members", [("id", "int")], pk=["id"]),
+              T("people", [("id", "int"), ("id_card", "int")], pk=["id"]),
+              T("things", [("ref_code", "int")]), T("users", [("id", "int"), ("id_type", "int")], pk=["id"]),
+              T("att", [("link_to_member", "int")]))
+    assert edge(g, "s.people", "id_card", "s.cards")["confidence"] == 0.75
+    assert edge(g, "s.things", "ref_code", "s.codes")["confidence"] == 0.75
+    assert edge(g, "s.users", "id_type", "s.types")["confidence"] == 0.75
+    assert edge(g, "s.att", "link_to_member", "s.members")["confidence"] == 0.91
