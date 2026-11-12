@@ -83,7 +83,13 @@ Use keygraph when you need to:
 
 ## Quickstart
 
-keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
+**With your AI agent.** Paste this into Claude Code, Codex, Cursor, ZCode, OpenCode, Unsloth Studio or any other coding agent:
+
+> Set up keygraph for this project. Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md exactly.
+
+The agent detects your database and its own harness, then asks you up to six questions. It builds the map, connects keygraph over MCP, and checks the result with `keygraph doctor`. Your credentials never go into a config file. Details are in [setup/](https://github.com/alikarami76/keygraph/blob/main/setup/README.md).
+
+**By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
 
 ```bash
 pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...

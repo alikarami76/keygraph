@@ -11,6 +11,9 @@
 
 ## For AI agents
 
+- [Agent setup protocol](https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md): follow this when a user asks you to set up keygraph. You detect, ask up to six questions, install, build, connect MCP and verify with `keygraph doctor`. Per-harness files cover Claude Code, Codex, Cursor, ZCode, OpenCode, Unsloth Studio and others.
+- [Bug reports for agents](https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md): how to tell a keygraph bug from a local problem, redact it, and open an issue only after the user says yes.
+
 - [Build a data analyst agent with keygraph](https://github.com/alikarami76/keygraph/blob/main/README.md#how-do-i-build-a-data-analyst-agent-with-keygraph): the search, describe, path, keys, write SQL, check loop and how to plug it into any agent that can call MCP tools or run a CLI.
 - [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md): the command sequence (search, describe, path, keys), how to read confidence, what not to do.
 - [Claude Code skill](https://github.com/alikarami76/keygraph/blob/main/skills/keygraph/SKILL.md): when to use each command and how to build and extend the graph.
