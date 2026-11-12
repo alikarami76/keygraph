@@ -74,6 +74,25 @@ def extract_stem(col: str) -> str | None:
     return None
 
 
+REF_PREFIXES = ("link_to_", "ref_", "fk_", "id_")
+EXTRA_ROLE_WORDS = {"home", "away"}  # only for numbered columns (home_player_1)
+
+
+def reference_stem(col: str) -> tuple[str, str] | None:
+    """link_to_member / ref_member / fk_member / id_member -> ('member', 'link_to_'), for names with no _id suffix."""
+    n = snake(col)
+    for p in REF_PREFIXES:
+        if n.startswith(p) and len(n) - len(p) >= 2:
+            return n[len(p):], p
+    return None
+
+
+def numbered_stem(col: str) -> str | None:
+    """home_player_1 / awayPlayer2 -> 'home_player' (the name without its trailing number), else None."""
+    m = re.fullmatch(r"([a-z][a-z_]*?[a-z])_?(\d+)", snake(col))
+    return m.group(1) if m else None
+
+
 def related_schemas(a: str, b: str) -> bool:
     """Two different schema names are related when one, split on '_', contains the other's whole token run
     (app ~ ods_app, app_replica, app_v2; ods_app ~ app). A partial token never counts (app is not related to apple)."""
@@ -145,6 +164,7 @@ class Inferer:
         self.lookup: dict[str, list[tuple[str, str]]] = {}
         self.suffix_lookup: dict[str, list[str]] = {}
         self.pkname: dict[str, list[str]] = {}
+        self.keyname: dict[str, set[str]] = {}  # single-column PK or UNIQUE key name -> tables
         self._index()
 
     def _auto_prefixes(self) -> dict[str, set[str]]:
@@ -180,6 +200,9 @@ class Inferer:
             pk = t.primary_key
             if len(pk) == 1 and pk[0].lower() != "id":
                 self.pkname.setdefault(pk[0].lower(), []).append(t.id)
+            for k in ([pk] if len(pk) == 1 else []) + [u for u in t.unique_keys if len(u) == 1]:
+                if k[0].lower() != "id" and len(k[0]) >= 3:
+                    self.keyname.setdefault(k[0].lower(), set()).add(t.id)
 
     def _log_subject(self, t: Table) -> str | None:
         """The table a log/history/audit table is about: '<base>_log' -> '<base>', looked up in the same
@@ -204,16 +227,83 @@ class Inferer:
         return None
 
     # --- candidate generation -------------------------------------------------
-    def _add(self, cands: dict, tid: str, base: float, reason: str) -> None:
+    def _add(self, cands: dict, tid: str, base: float, reason: str, key=None) -> None:
         cur = cands.get(tid)
         if cur is None:
             cands[tid] = {"base": base, "reasons": [reason]}
+            cur = cands[tid]
         else:
             cur["base"] = max(cur["base"], base)
             if reason not in cur["reasons"]:
                 cur["reasons"].append(reason)
+        if key:  # a rule that names the exact target key (target_key would pick the primary key instead)
+            cur["key"] = key
 
-    def candidates(self, t: Table, colname: str, stem: str) -> dict:
+    @staticmethod
+    def _single_keys(tt: Table) -> list[tuple[list[str], str, float]]:
+        out = [(tt.primary_key, "primary key", 0.08)] if len(tt.primary_key) == 1 else []
+        return out + [(u, "unique key", 0.03) for u in tt.unique_keys if len(u) == 1]
+
+    def _extras(self, t: Table, colname: str, c: dict) -> None:
+        """Rules that do not need an '<x>_id' stem: shared key name (a), numbered roles (c), table_column (d), bare id (e)."""
+        low, n = colname.lower(), snake(colname)
+        if low != "id" and len(low) >= 3:  # (a) shared key name
+            others = sorted(self.keyname.get(low, set()) - {t.id})
+            if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
+                tt = self.s.tables[others[0]]
+                k = next(k for k in self._single_keys(tt) if k[0][0].lower() == low)
+                self._add(c, tt.id, 0.70, f"column name '{colname}' equals the key column of {tt.id} (rule: shared key name)", k)
+        num = numbered_stem(colname)  # (c) numbered role columns
+        if num:
+            words = num.split("_")
+            if words[-1] == "id" and len(words) > 1:
+                words = words[:-1]
+            roles = self.o.role_words | EXTRA_ROLE_WORDS
+            while len(words) > 1 and words[0] in roles:
+                words = words[1:]
+            stem = "_".join(words)
+            for f in forms(stem):
+                for tid, _ in self.lookup.get(f, []):
+                    tt = self.s.tables[tid]
+                    if tid == t.id:
+                        continue
+                    pre = {x + "_" for x in forms(stem)}
+                    pk = tt.primary_key
+                    ukeys = [u for u in tt.unique_keys if len(u) == 1 and u[0].lower().startswith(tuple(pre))]
+                    if len(pk) == 1 and pk[0].lower().startswith(tuple(pre)):
+                        k = (pk, "primary key", 0.08)
+                    elif len(ukeys) == 1:
+                        k = (ukeys[0], "unique key", 0.03)
+                    elif len(pk) == 1:
+                        k = (pk, "primary key", 0.08)
+                    else:
+                        continue
+                    self._add(c, tid, 0.60, f"numbered role column '{colname}' reads as a reference to '{stem}'", k)
+        parts = n.split("_")  # (d) <table>_<column>
+        for i in range(1, len(parts)):
+            cname = "_".join(parts[i:])
+            if cname == "id":
+                continue
+            hits = [tid for f in forms("_".join(parts[:i])) for tid, _ in self.lookup.get(f, [])
+                    if tid != t.id and self.s.tables[tid].schema == t.schema]
+            if len(set(hits)) != 1:
+                continue
+            tt = self.s.tables[hits[0]]
+            for k in self._single_keys(tt):
+                if snake(k[0][0]) == cname:
+                    self._add(c, tt.id, 0.68, f"column name '{colname}' reads as {tt.name}.{k[0][0]} (rule: table_column)", k)
+        if low == "id" and not t.primary_key and not t.unique_keys:  # (e) bare id without a key of its own
+            idt = [x for x in self.s.tables.values() if x.id != t.id and x.schema == t.schema
+                   and len(x.primary_key) == 1 and x.primary_key[0].lower() == "id"]
+            toks = {singular(w) for w in snake(t.name).split("_")}
+            named = [x for x in idt if singular(x.name.lower()) in toks]
+            copy = any(x.name.lower() == t.name.lower() and x.schema != t.schema for x in self.s.tables.values())
+            for x in named or (idt if len(idt) == 1 and not copy else []):  # no name match: not for a copy of another schema's table
+                self._add(c, x.id, 0.62, f"bare 'id' in a table with no key of its own; {x.id} is the table keyed by id"
+                          + (" and its name is part of this table's name" if named else "") + " (rule: bare id)",
+                          (x.primary_key, "primary key", 0.08))
+
+    def candidates(self, t: Table, colname: str, stem: str, refpref: str = "") -> dict:
         c: dict = {}
         words = stem.split("_")
         for key in ["_".join(words[i:]) for i in range(len(words))]:
@@ -239,9 +329,10 @@ class Inferer:
                 self._add(c, tid, 0.70, f"log table '{t.name}' names its subject table; '{colname}' points at it")
         for f in forms(stem):
             for tid, pref in self.lookup.get(f, []):
-                self._add(c, tid, 0.72 if not pref else 0.68,
+                self._add(c, tid, 0.72 if not (pref or refpref) else 0.68,
                           f"column name '{colname}' matches table name"
-                          + (f" (prefix '{pref}' stripped)" if pref else ""))
+                          + (f" (prefix '{pref}' stripped)" if pref else "")
+                          + (f" (reference prefix '{refpref}' stripped)" if refpref else ""))
         for i in range(1, len(words)):
             rest = "_".join(words[i:])
             allrole = all(w in self.o.role_words for w in words[:i])
@@ -265,6 +356,7 @@ class Inferer:
         for tid in self.pkname.get(colname.lower(), []):
             if tid != t.id:
                 self._add(c, tid, 0.70, f"column name '{colname}' equals the primary key name of {tid}")
+        self._extras(t, colname, c)
         if not c:
             tails = {tid for f in forms(stem) for tid in self.suffix_lookup.get(f, []) if tid.startswith(t.schema + ".")}
             if len(tails) == 1:  # several tail matches is noise (e.g. every '*_users' table), so none is kept
@@ -276,7 +368,7 @@ class Inferer:
     # --- scoring --------------------------------------------------------------
     def score(self, t: Table, colname: str, stem: str, tid: str, cand: dict):
         tt = self.s.tables[tid]
-        tk = target_key(tt, stem, colname)
+        tk = cand.get("key") or target_key(tt, stem, colname)
         if not tk:
             return None
         tcols, tdesc, tboost = tk
@@ -340,18 +432,25 @@ class Inferer:
             for col in t.columns:
                 if col.name in declared_from:
                     continue
-                stem = extract_stem(col.name)
+                stem, refpref = extract_stem(col.name), ""
+                if stem is None and (rs := reference_stem(col.name)):
+                    stem, refpref = rs
                 if stem is None:
-                    continue
+                    extra: dict = {}
+                    self._extras(t, col.name, extra)
+                    extra.pop(t.id, None)
+                    cand_map = extra
+                else:
+                    cand_map = None
                 base = snake(col.name)[:-3] if snake(col.name).endswith("_id") else stem
-                pol = [base + "_" + s for s in POLY_SUFFIXES if (base + "_" + s) in colnames]
+                pol = [base + "_" + s for s in POLY_SUFFIXES if (base + "_" + s) in colnames] if cand_map is None else []
                 if pol:
                     poly_cols.setdefault(t.id, []).append(
                         {"id_column": col.name, "type_column": next(c.name for c in t.columns if c.name.lower() == pol[0]),
                          "note": "polymorphic: the type column decides the target table; no single target"})
                     continue
                 scored = []
-                for tid, cand in self.candidates(t, col.name, stem).items():
+                for tid, cand in (cand_map if cand_map is not None else self.candidates(t, col.name, stem, refpref)).items():
                     r = self.score(t, col.name, stem, tid, cand)
                     if r:
                         scored.append(r)
@@ -379,7 +478,7 @@ class Inferer:
                         "cardinality": "many-to-many" if r["partial"] else cardinality(t, [col.name]),
                         "ambiguous": amb, "evidence": r["evidence"],
                     })
-                if not kept:
+                if not kept and cand_map is None:
                     unresolved.setdefault(t.id, []).append(col.name)
         self.polymorphic, self.unresolved = poly_cols, unresolved
         return edges

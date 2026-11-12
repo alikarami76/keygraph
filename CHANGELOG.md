@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Inference recovers more foreign keys in databases that declare none: shared key names (any column name equal to one other table's single-column primary or unique key), `link_to_`/`ref_`/`fk_`/`id_` reference prefixes, numbered role columns (`home_player_1`), `<table>_<column>` and camelCase names (`setCode`), and a bare `id` column in a keyless table. Each new edge names its rule in its evidence and stays below 0.95.
 - `context add` honours `--verified`, and `context add`, `import` and `import-notes` count only rows actually written; the JSON gains a `kept` object for verified rows that were kept. The Postgres scan filters schemas in its SQL, every metadata query that returns exactly its row limit prints a warning, `build.json` names the engine (`sqlite`, `postgres (generic)`), and the unknown-table hint fits the build type. `examples/shop/build.sh` works from any folder.
 - `keygraph doctor` has a `metadata` check that counts the layers the map has (column comments, enum columns, row estimates) and warns, with a fix, when it has none. `doctor --json` gains a `graph.metadata` object.
 - Smaller answers on request: `keygraph describe T --brief` (MCP `describe` with `brief=true`) returns keys, filter columns, notes and columns as name, type, key and codes only, with no profiles or relations; `keygraph search --no-paths` (MCP `search` with `with_paths=false`) leaves out the suggested join paths. CLI and MCP return the same JSON.
