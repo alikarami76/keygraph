@@ -593,7 +593,7 @@ def cmd_ui(a):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="keygraph", description="Map database keys and table relations; find join paths.")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="command", required=True)
 
     def add(name, fn, help_, *aliases):
         p = sub.add_parser(name, help=help_, aliases=list(aliases))
@@ -807,14 +807,14 @@ def main(argv=None) -> int:
     if extra:
         # Python 3.11 argparse stops filling `path`/`fields` once an option (--kind) appears between
         # positionals, so the trailing key=value pairs arrive here. Put them back where 3.12+ puts them.
-        if a.cmd != "context" or any(x.startswith("-") for x in extra):
+        if a.command != "context" or any(x.startswith("-") for x in extra):
             ap.error("unrecognized arguments: " + " ".join(extra))
         if a.path is None:
             a.path, extra = extra[0], extra[1:]
         a.fields = list(a.fields or []) + extra
-    if a.cmd == "context" and a.action == "add" and not a.kind:
+    if a.command == "context" and a.action == "add" and not a.kind:
         ap.error("context add needs --kind")
-    if a.cmd == "context" and a.action == "add" and a.path:
+    if a.command == "context" and a.action == "add" and a.path:
         a.fields = [a.path] + a.fields
     try:
         _run(a)
@@ -860,18 +860,18 @@ _VALUE_FREE = {"path", "neighbors", "explain", "keys", "areas", "area", "doctor"
 
 
 def _command_name(a) -> str:
-    return " ".join(x for x in (a.cmd, getattr(a, "code_cmd", None), getattr(a, "q_cmd", None)) if x)
+    return " ".join(x for x in (a.command, getattr(a, "code_cmd", None), getattr(a, "q_cmd", None)) if x)
 
 
 def _run(a) -> None:
     """Run the command; with dev mode on, also record it (masked args, timing, exit status, stdout hash)."""
     from . import devlog
     d = getattr(a, "dir", None)
-    if a.cmd in ("dev", "mcp", "ui") or d is None or not devlog.enabled(d):
+    if a.command in ("dev", "mcp", "ui") or d is None or not devlog.enabled(d):
         a.fn(a)
         return
     name = _command_name(a)
-    args = {k: v for k, v in vars(a).items() if k not in ("fn", "dir", "cmd", "code_cmd", "q_cmd")}
+    args = {k: v for k, v in vars(a).items() if k not in ("fn", "dir", "command", "code_cmd", "q_cmd")}
     real, tee, t0, ok, err, status = sys.stdout, None, time.perf_counter(), True, None, 0
     try:
         tee = sys.stdout = _Tee(real)
@@ -889,7 +889,7 @@ def _run(a) -> None:
         sys.stdout = real
         try:
             text = "".join(tee.parts) if tee else ""
-            resp = devlog.stdout_fields(name, text, tee.bytes, tee.h.hexdigest(), tee.chars // 4, a.cmd in _VALUE_FREE, tee.lines) if tee else {}
+            resp = devlog.stdout_fields(name, text, tee.bytes, tee.h.hexdigest(), tee.chars // 4, a.command in _VALUE_FREE, tee.lines) if tee else {}
             args["exit_status"] = status
             devlog.Recorder(d, "cli").record("command", name, args,
                                              (time.perf_counter() - t0) * 1000, ok, err, resp)

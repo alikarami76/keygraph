@@ -68,7 +68,7 @@ def enabled(out) -> bool:
 def mask_text(s: str) -> str:
     """Secrets masked and any scheme://... redacted."""
     from .code.refs import mask_secrets
-    s = _LONG.sub(lambda m: f"<long-token:{len(m.group(0))}>", s)
+    s = _LONG.sub(lambda m: f"<long-run:{len(m.group(0))}>", s)
     return _URL.sub(lambda m: m.group(0).split("://", 1)[0] + "://***", mask_secrets(s))
 
 
@@ -209,7 +209,9 @@ class Recorder:
             data = (json.dumps(ev, ensure_ascii=False, sort_keys=True, default=str) + "\n").encode("utf-8", "replace")
             fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
             try:
-                os.write(fd, data)  # one syscall on an O_APPEND fd, so concurrent writers do not interleave lines
+                view = memoryview(data)  # normally one syscall on an O_APPEND fd, so writers do not interleave lines
+                while view:
+                    view = view[os.write(fd, view):]
             finally:
                 os.close(fd)
             return True

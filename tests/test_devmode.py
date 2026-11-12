@@ -233,7 +233,7 @@ def test_long_token_masks_fast():
     import time
     t = time.perf_counter()
     out = devlog.mask_text("x" * 16384 + " tail")
-    assert time.perf_counter() - t < 0.5 and out.startswith("<long-token:16384>") and out.endswith("tail")
+    assert time.perf_counter() - t < 0.5 and out.startswith("<long-run:16384>") and out.endswith("tail")
     t = time.perf_counter()
     devlog.mask_args({"sql": "select '" + "a" * 16000})
     assert time.perf_counter() - t < 0.5
@@ -247,9 +247,19 @@ def test_cmd_templates_are_redacted():
 def test_fetch_cmd_not_logged_with_credentials(tmp_path):
     main(["dev", "on", "--dir", str(tmp_path)])
     with pytest.raises((Exception, SystemExit)):
-        main(["fetch", "--cmd", "mysql -pS3cretPass -e {sql}", "--dir", str(tmp_path)])
-    text = (tmp_path / "dev" / "events.jsonl").read_text() if (tmp_path / "dev" / "events.jsonl").exists() else ""
-    assert "S3cret" not in text
+        main(["fetch", "--cmd", "no_such_program_xyz -pS3cretPass password=hunter2 {sql}", "--out", str(tmp_path),
+              "--dir", str(tmp_path)])
+    (ev,) = events(tmp_path)
+    assert ev["tool"] == "fetch" and ev["args"]["cmd"] == "no_such_program_xyz <redacted-cmd>"
+    for f in (tmp_path / "dev").rglob("*"):
+        if f.is_file():
+            assert "S3cret" not in f.read_text() and "hunter2" not in f.read_text()
+
+
+def test_plain_key_value_secrets_are_masked():
+    from keygraph.code.refs import mask_secrets
+    for t in ("password=hunter2", "db_pass: hunter2", "api_key=abcd", "TOKEN = hunter2"):
+        assert "hunter2" not in mask_secrets(t) and "abcd" not in mask_secrets(t)
 
 
 def test_query_and_code_stdout_is_ref_only(tmp_path, capsys):
@@ -271,7 +281,7 @@ def test_mcp_and_ui_are_not_wrapped(tmp_path, monkeypatch):
     main(["dev", "on", "--dir", str(tmp_path)])
     import keygraph.cli as C
     monkeypatch.setattr(C, "cmd_ui", lambda a: None, raising=True)
-    a = C.argparse.Namespace(cmd="ui", dir=str(tmp_path), fn=lambda a: None)
+    a = C.argparse.Namespace(command="ui", dir=str(tmp_path), fn=lambda a: None)
     C._run(a)
     assert not events(tmp_path)
 
