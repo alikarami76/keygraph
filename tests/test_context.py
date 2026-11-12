@@ -338,3 +338,39 @@ def test_missing_yaml_error_names_the_file_and_is_typed(graph, tmp_path, monkeyp
     monkeypatch.setitem(__import__("sys").modules, "yaml", None)
     with pytest.raises(YamlMissing, match="notes.yaml"):
         ContextDB(tmp_path / "k.db", graph).import_path(f)
+
+
+def _setup_out(tmp_path):
+    out = tmp_path / "out"
+    assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json"), "--statistics", str(FIX / "shop_statistics.json"),
+                 "--key-columns", str(FIX / "shop_key_columns.json")]) == 0
+    return out
+
+
+def test_context_add_honours_the_verified_flag_and_reports_kept(tmp_path, capsys):
+    out = _setup_out(tmp_path)
+    base = ["context", "add", "--kind", "column", "table=shop.orders", "column=status", "--dir", str(out)]
+    capsys.readouterr()
+    assert main(base + ["meaning=checked", "--verified"]) == 0
+    j = json.loads(capsys.readouterr().out)
+    assert j["imported"] == {"column": 1} and j["kept"] == {}
+    assert main(base + ["meaning=guess"]) == 0
+    j = json.loads(capsys.readouterr().out)
+    assert j["imported"] == {"column": 0} and j["kept"] == {"column": 1} and j["warnings"]
+    assert main(["describe", "orders", "--dir", str(out), "--json"]) == 0
+    text = capsys.readouterr().out
+    assert "checked" in text and "guess" not in text
+
+
+def test_import_notes_counts_only_rows_written(tmp_path, capsys):
+    out = _setup_out(tmp_path)
+    capsys.readouterr()
+    assert main(["context", "add", "--kind", "table", "table=shop.orders", "grain=x", "--verified", "--dir", str(out)]) == 0
+    notes = tmp_path / "notes"
+    notes.mkdir()
+    (notes / "orders.md").write_text("---\nschema: shop\ntable: orders\ngrain: from notes\n---\nbody\n", encoding="utf-8")
+    capsys.readouterr()
+    assert main(["context", "import-notes", str(notes), "--dir", str(out)]) == 0
+    j = json.loads(capsys.readouterr().out)
+    assert j["imported"]["tables"] + j["kept"].get("table", 0) == 1
+    assert j["imported"]["tables"] == 0 and j["kept"]["table"] == 1

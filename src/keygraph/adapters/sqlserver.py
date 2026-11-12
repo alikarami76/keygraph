@@ -35,30 +35,30 @@ class SQLServerSource(Source):
 
     def schema(self) -> Schema:
         sch = Schema()
-        for r in dicts(self.run(COLS), COLN):
+        for r in dicts(self.fetch("columns", COLS), COLN):
             t = sch.get_or_create(r["schema"], r["table"])
             t.columns.append(Column(r["column"], str(r["type"]), str(r["nullable"]).upper() != "NO", int(r["pos"]),
                                     default=None if r["default"] is None else str(r["default"]),
                                     charset=r["charset"] or "", collation=r["collation"] or ""))
         groups: dict = {}
-        for r in dicts(self.run(IDX), IDXN):
+        for r in dicts(self.fetch("indexes", IDX), IDXN):
             groups.setdefault((r["schema"], r["table"], r["index"]), {"u": bool(r["unique"]), "p": bool(r["primary"]), "c": []})["c"].append(r["col"])
         for (s, tn, name), g in groups.items():
             if f"{s}.{tn}" in sch.tables:
                 sch.tables[f"{s}.{tn}"].indexes.append(Index(name, g["c"], g["u"], g["p"]))
         fks: dict = {}
-        for r in dicts(self.run(FK), FKN):
+        for r in dicts(self.fetch("foreign keys", FK), FKN):
             g = fks.setdefault((r["schema"], r["table"], r["name"], r["ref_schema"], r["ref_table"]), ([], []))
             g[0].append(r["col"])
             g[1].append(r["ref_col"])
         for (s, tn, name, rs, rt), (cols, rcols) in fks.items():
             if f"{s}.{tn}" in sch.tables:
                 sch.tables[f"{s}.{tn}"].foreign_keys.append(ForeignKey(name, cols, rs, rt, rcols))
-        for r in dicts(self.run(ROWS), ["schema", "table", "rows"]):
+        for r in dicts(self.fetch("row estimates", ROWS), ["schema", "table", "rows"]):
             t = sch.tables.get(f"{r['schema']}.{r['table']}")
             if t and r["rows"] is not None:
                 t.info["rows_estimate"] = int(r["rows"])
-        for r in dicts(self.run(CHECKS), ["schema", "table", "name", "expr"]):
+        for r in dicts(self.fetch("checks", CHECKS), ["schema", "table", "name", "expr"]):
             t = sch.tables.get(f"{r['schema']}.{r['table']}")
             if t:
                 t.info.setdefault("checks", []).append({"name": r["name"], "expr": r["expr"]})

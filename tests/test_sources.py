@@ -241,7 +241,7 @@ def test_scan_sqlite_stays_on_inspector(tmp_path, monkeypatch):
     _patch_runner(monkeypatch, lambda sql: (_ for _ in ()).throw(AssertionError("dedicated adapter used")))
     out = tmp_path / "o"
     assert main(["scan", "--url", f"sqlite:///{db}", "--dir", str(out)]) == 0
-    assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "sqlalchemy"
+    assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "sqlite"
 
 
 def test_scan_falls_back_when_adapter_fails(monkeypatch, tmp_path, capsys):
@@ -261,7 +261,7 @@ def test_scan_falls_back_when_adapter_fails(monkeypatch, tmp_path, capsys):
     assert main(["scan", "--url", "mysql://u:pw@secret-host/d", "--dir", str(out)]) == 0
     err = capsys.readouterr().err
     assert "mysql adapter failed (RuntimeError" in err and "secret-host" not in err and "pw" not in err
-    assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "sqlalchemy"
+    assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "mysql (generic)"
 
 
 def test_scan_generic_flag_forces_inspector(monkeypatch, tmp_path):
@@ -401,3 +401,60 @@ def test_mysql_scan_drops_foreign_keys_to_other_schemas(monkeypatch):
     monkeypatch.setattr("keygraph.adapters.open_source", lambda kind, **k: Src())
     _patch_runner(monkeypatch, lambda sql: [])
     assert live.dedicated_scan("mysql", "mysql://h/d", None, False).tables["d.t"].foreign_keys == []
+
+
+def test_postgres_filters_schemas_in_the_sql():
+    from keygraph.adapters import postgres as P
+    seen = []
+
+    def run(sql):
+        seen.append(sql)
+        return []
+    P.PostgresSource(run, schemas=["app", "we'ird"][:1]).schema()
+    assert len(seen) >= 6
+    for sql in seen:
+        if "nspname" in sql or "table_schema" in sql:
+            assert "IN ('app')" in sql and "NOT IN" not in sql, sql
+    seen.clear()
+    P.PostgresSource(run).schema()
+    assert any("NOT IN ('pg_catalog'" in s for s in seen)
+
+
+def test_scan_passes_the_schema_to_the_postgres_adapter(monkeypatch):
+    from keygraph.adapters import live
+    from keygraph.model import Column, Schema, Table
+    got = {}
+
+    class Src:
+        def schema(self):
+            s = Schema()
+            s.add(Table("audit", "t", [Column("id", "int")]))
+            return s
+    monkeypatch.setattr("keygraph.adapters.open_source", lambda kind, **k: got.update(k) or Src())
+    _patch_runner(monkeypatch, lambda sql: [])
+    live.dedicated_scan("postgres", "postgresql://h/d", ["audit"], False)
+    assert got["schemas"] == ["audit"]
+    got.clear()
+    live.dedicated_scan("postgres", "postgresql://h/d", None, True)
+    assert got.get("schemas") is None
+
+
+def test_hitting_a_row_limit_warns_with_the_query_kind(capsys):
+    from keygraph.adapters import postgres as P
+    cap = int(__import__("re").search(r"LIMIT (\d+)", P.IDX).group(1))
+
+    def run(sql):
+        if sql == P.IDX:
+            return [{"nspname": "a", "relname": "t", "relname_2": "i", "indisunique": 0, "indisprimary": 0, "array_to_string": "id"}] * cap
+        return []
+    P.PostgresSource(run).schema()
+    err = capsys.readouterr().err
+    assert "indexes" in err and str(cap) in err and "--schema" in err
+
+
+def test_redact_replaces_whole_tokens_only():
+    from keygraph.adapters.live import redact
+    msg = "connection to a failed for user u: password p rejected at mysql://u:p@a:3306/shop (port 3306)"
+    out = redact(msg, "mysql://u:p@a:3306/shop")
+    assert "rejected" in out and "password" in out and "connection to" in out and "failed" in out
+    assert "mysql://" not in out and "@a" not in out and "3306" not in out

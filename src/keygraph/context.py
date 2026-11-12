@@ -146,6 +146,7 @@ class ContextDB:
                     self.db.execute(stmt.replace("IF NOT EXISTS ", "IF NOT EXISTS temp.", 1))
         self.graph = graph
         self.warnings: list[str] = []
+        self.kept: dict[str, int] = {}  # verified rows kept against an unverified write, by kind
 
     def close(self) -> None:
         try:
@@ -192,6 +193,7 @@ class ContextDB:
         old_src = safe_source(old["source"]) if old else ""
         if not old or not old["verified"] or (same_ok and old_src == src[0]):
             return False
+        self.kept[kind] = self.kept.get(kind, 0) + 1
         self.warnings.append(f"kept verified {kind} note for {label} (source {old_src}); unverified write from {src[0]} ignored; "
                               "pass --verified (or verified=true) if you have confirmed it")
         return True

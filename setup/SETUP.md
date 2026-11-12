@@ -99,11 +99,11 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 # (c) a read-only command template that prints JSON rows for {sql}
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
-# (d) demo: clone the repo, then
-# from the repository root, with keygraph on PATH (for a venv: export PATH="$VENV/bin:$PATH");
-# build.sh reads examples/shop by relative path and already imports the demo's context,
-# code index, query log and profiles, so for the demo skip the extras below except render
-OUT="$(pwd)/keygraph-out" && sh examples/shop/build.sh "$OUT"
+# (d) demo: clone the repo, then, with keygraph on PATH (for a venv: export PATH="$VENV/bin:$PATH");
+# build.sh finds the demo files next to itself, so it works from any folder (or a copy of examples/shop);
+# it already imports the demo's context, code index, query log and profiles, so skip the extras below except render.
+# Without an argument it writes examples/shop/out next to the script.
+OUT="$(pwd)/keygraph-out" && sh path/to/examples/shop/build.sh "$OUT"
 ```
 
 Then, in this order, only the extras the user said yes to:
@@ -160,14 +160,14 @@ Each harness file says where these go. Do both:
 2. Reload your harness's MCP servers as the harness file says (often a restart). If you cannot restart yourself, tell the user exactly what to click or run, and give them this check to paste into the new session: *"Use keygraph: search for <a business word>, then show the join path between <table A> and <table B>."*
 3. Through the MCP tools (not the CLI), call `search` with a business word that fits this database, then `path` between two tables that should be related. Both must return results. Pick the words from what the build found, for example two tables joined by a declared foreign key (`keygraph describe <table> --dir "$OUT"` lists its relations; declared ones have confidence 1.00).
 
-If you cannot call MCP tools until the harness restarts, run the same two calls in-process as a stand-in and still give the user the paste check from 7.2:
+If you cannot call MCP tools until the harness restarts, run the same two calls in-process as a stand-in (below), and give the user the paste check from 7.2:
 
 ```bash
 # use the Python that keygraph is installed in (mcp_launch.command from doctor --json)
 "$PYTHON" -c 'import asyncio, sys; from keygraph.mcp_server import build_server; s = build_server(sys.argv[1]); print(asyncio.run(s.call_tool("search", {"query": "order"})).content[0].text)' "$OUT"
 ```
 
-The setup is done only when step 7.3 works through MCP. (For a harness with no MCP, see `other.md`: the CLI with `--json` counts.)
+The setup is done when step 7.3 works through MCP. If the harness cannot reload MCP servers without a restart, it is done when the in-process stand-in above returns results and the user has the paste check to run in the new session; say in your report which of the two you reached. (For a harness with no MCP, see `other.md`: the CLI with `--json` counts.)
 
 ## Step 8. Record the setup and report
 

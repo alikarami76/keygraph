@@ -110,8 +110,13 @@ class Graph:
         srcs = [f"{x['kind']}:{x['database']}" if x.get("database") else str(x.get("kind", "")) for x in b.get("sources") or []]
         if srcs := [x for x in srcs if x]:
             bits.append("from " + ", ".join(srcs))
-        return (f"this map covers schemas {shown}" + (f" ({' '.join(bits)})" if bits else "")
-                + "; if the table is in another schema or database, rebuild with --schema/--all-schemas")
+        dumps = [x for x in b.get("sources") or [] if x.get("kind") == "dump"]
+        if dumps:
+            files = ", ".join(f for x in dumps for f in x.get("files") or [])
+            tail = "; if the table is missing, it is not in the dump files loaded" + (f" ({files})" if files else "")
+        else:
+            tail = "; if the table is in another schema or database, rebuild with --schema/--all-schemas"
+        return f"this map covers schemas {shown}" + (f" ({' '.join(bits)})" if bits else "") + tail
 
     def save(self, path: str | Path) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)

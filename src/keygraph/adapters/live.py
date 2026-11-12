@@ -81,9 +81,11 @@ def redact(text: str, url: str) -> str:
         m = re.match(r"^[\w+]+://(?:([^:@/]*)(?::([^@]*))?@)?([^/:?]*)(?::(\d+))?", url)
         if m:
             bits += [x or "" for x in m.groups()]
-    for b in sorted({b for b in bits if b}, key=len, reverse=True):
-        text = text.replace(b, "***")
-    return re.sub(r"[\w+]+://\S+", "<url>", text)
+    text = text.replace(url, "<url>")
+    text = re.sub(r"[\w+]+://\S+", "<url>", text)
+    for b in sorted({b for b in bits if b and b != url}, key=len, reverse=True):
+        text = re.sub(r"(?<![\w])" + re.escape(b) + r"(?![\w])", "***", text)  # whole tokens, so short names do not mangle words
+    return text
 
 
 def _lit(name: str) -> str:
@@ -138,8 +140,8 @@ def dedicated_scan(kind: str, url: str, schemas: list[str] | None, all_schemas: 
                             if all_schemas else None)
         return _nonempty(open_source("clickhouse", run=run, databases=names).schema(),
                          "database " + ", ".join(names) if names else "the connected database")
-    sch = open_source(kind, run=run).schema()
     if all_schemas:
+        sch = open_source(kind, run=run).schema()
         return _nonempty(_keep(sch, {t.schema for t in sch.tables.values() if ok(t.schema)}), "any user schema")
     if schemas:
         want = list(schemas)
@@ -149,6 +151,7 @@ def dedicated_scan(kind: str, url: str, schemas: list[str] | None, all_schemas: 
         except Exception:  # noqa: BLE001
             cur = []
         want = [cur[0] if cur and cur[0] else DEFAULT_SCHEMA[kind]]
+    sch = open_source(kind, run=run, **({"schemas": want} if kind == "postgres" else {})).schema()
     return _nonempty(_keep(sch, set(want)), "schema " + ", ".join(want))
 
 
@@ -157,6 +160,7 @@ def scan_any(url: str, schemas: list[str] | None = None, all_schemas: bool = Fal
     import sys
     url = normalise_url(url)
     kind = DEDICATED.get(url_dialect(url))
+    generic_name = f"{kind} (generic)" if kind else url_dialect(url)
     if kind and not generic:
         try:
             return dedicated_scan(kind, url, schemas, all_schemas), kind
@@ -165,4 +169,4 @@ def scan_any(url: str, schemas: list[str] | None = None, all_schemas: bool = Fal
         except Exception as exc:  # noqa: BLE001
             print(f"keygraph: the {kind} adapter failed ({type(exc).__name__}: {redact(str(exc), url)[:200]}); "
                   "falling back to the generic SQLAlchemy scan", file=sys.stderr)
-    return scan_url(url, schemas, all_schemas), "sqlalchemy"
+    return scan_url(url, schemas, all_schemas), generic_name

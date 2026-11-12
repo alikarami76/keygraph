@@ -35,8 +35,8 @@ class ClickHouseSource(Source):
 
     def schema(self) -> Schema:
         sch = Schema()
-        info = {(r["database"], r["name"]): r for r in dicts(self.run(TABLES.format(dbs=self.dbs)), TABN)}
-        for r in dicts(self.run(COLUMNS.format(dbs=self.dbs)), COLN):
+        info = {(r["database"], r["name"]): r for r in dicts(self.fetch("tables", TABLES.format(dbs=self.dbs)), TABN)}
+        for r in dicts(self.fetch("columns", COLUMNS.format(dbs=self.dbs)), COLN):
             if (r["database"], r["table"]) not in info:
                 continue
             t = sch.get_or_create(r["database"], r["table"])
@@ -58,7 +58,7 @@ class ClickHouseSource(Source):
             t.info.update({k: v for k, v in (("engine", r["engine"]), ("rows_estimate", r["total_rows"]), ("data_bytes", r["total_bytes"]),
                                              ("partition_key", r["partition_key"]), ("sorting_key", r["sorting_key"]), ("comment", r["comment"]))
                            if v not in (None, "")})
-        for r in dicts(self.run(SKIP.format(dbs=self.dbs)), SKIPN):
+        for r in dicts(self.fetch("data-skipping indexes", SKIP.format(dbs=self.dbs)), SKIPN):
             t = sch.tables.get(f"{r['database']}.{r['table']}")
             if t:
                 cols = key_columns(r["expr"], {c.name for c in t.columns})

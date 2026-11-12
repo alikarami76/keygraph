@@ -40,6 +40,17 @@ class Source:
     quote = '"'
     read_only = "all SQL passes keygraph.probe.assert_select (single SELECT only)"
 
+    def fetch(self, what: str, sql: str) -> list:
+        """Run a metadata query; warn when it returned as many rows as its own LIMIT / TOP (the map may be incomplete)."""
+        import re
+        import sys
+        rows = self.run(sql)  # type: ignore[attr-defined]
+        m = re.search(r"\bLIMIT (\d+)\s*$", sql) or re.search(r"\bTOP (\d+)\b", sql)
+        if m and len(rows) >= int(m.group(1)):
+            print(f"keygraph: the {what} query returned its limit of {m.group(1)} rows, so the map may be incomplete; "
+                  "rerun with --schema to scan fewer schemas", file=sys.stderr)
+        return rows
+
     def schema(self) -> Schema:  # pragma: no cover - interface
         raise NotImplementedError
 

@@ -113,3 +113,20 @@ def test_doctor_reports_metadata_layers(shop, tmp_path):
     g.save(out / "graph.json")
     m = {c["name"]: c for c in D.run(out)["checks"]}["metadata"]
     assert m["status"] == "warn" and "dedicated adapter" in m["fix"]
+
+
+def test_doctor_metadata_fix_for_sqlite_maps(shop, tmp_path):
+    from keygraph.graph import Graph
+    g = Graph.load(shop / "graph.json")
+    for n in g.data["nodes"]:
+        n["info"] = {}
+        for c in n["columns"]:
+            c.pop("comment", None)
+            c.pop("values", None)
+    out = tmp_path / "lite"
+    out.mkdir()
+    g.save(out / "graph.json")
+    (out / "build.json").write_text(json.dumps({"built_at": "2026-01-01T00:00:00Z", "sources": [{"kind": "sqlite", "database": "x.db"}],
+                                                "schemas": ["main"], "keygraph_version": "0"}), encoding="utf-8")
+    m = {c["name"]: c for c in D.run(out)["checks"]}["metadata"]
+    assert m["status"] == "warn" and "SQLite" in m["fix"] and "context file" in m["fix"]

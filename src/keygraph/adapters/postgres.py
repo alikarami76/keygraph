@@ -34,34 +34,39 @@ CHECKS = ("SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oi
 class PostgresSource(Source):
     kind, dialect, quote = "postgres", "postgres", '"'
 
-    def __init__(self, run):
+    def __init__(self, run, schemas: list[str] | None = None):
+        """schemas: read only these (filtered in the SQL, so a big database does not hit the row limits); default all user schemas."""
+        from .live import _lit
         self.run = guarded(run)
+        lits = ", ".join(_lit(s) for s in schemas) if schemas else None
+        self.q = {k: (v.replace(f"NOT IN {SYS}", f"IN ({lits})") if lits else v)
+                  for k, v in (("COLS", COLS), ("ENUMS", ENUMS), ("IDX", IDX), ("FK", FK), ("ROWS", ROWS), ("CHECKS", CHECKS))}
 
     def schema(self) -> Schema:
         sch = Schema()
-        for r in dicts(self.run(COLS), COLN):
+        for r in dicts(self.fetch("columns", self.q['COLS']), COLN):
             t = sch.get_or_create(r["schema"], r["table"])
             gen = r["genexpr"] if str(r["generated"]).upper() == "ALWAYS" else ""
             t.columns.append(Column(r["column"], str(r["type"]), str(r["nullable"]).upper() != "NO", int(r["pos"]),
                                     default=None if r["default"] is None else str(r["default"]), comment=r["comment"] or "",
                                     generated=gen or ""))
-        enums = {n: v.split(",") for n, v in (tuple(x.values()) if isinstance(x, dict) else x for x in self.run(ENUMS))}
+        enums = {n: v.split(",") for n, v in (tuple(x.values()) if isinstance(x, dict) else x for x in self.fetch("enum types", self.q['ENUMS']))}
         for t in sch.tables.values():
             for c in t.columns:
                 c.values = enums.get(c.type, [])
-        for r in dicts(self.run(IDX), IDXN):
+        for r in dicts(self.fetch("indexes", self.q['IDX']), IDXN):
             t = sch.tables.get(f"{r['schema']}.{r['table']}")
             if t:
                 t.indexes.append(Index(r["index"], r["cols"].split(","), bool(r["unique"]), bool(r["primary"])))
-        for r in dicts(self.run(FK), FKN):
+        for r in dicts(self.fetch("foreign keys", self.q['FK']), FKN):
             t = sch.tables.get(f"{r['schema']}.{r['table']}")
             if t:
                 t.foreign_keys.append(ForeignKey(r["name"], r["cols"].split(","), r["ref_schema"], r["ref_table"], r["ref_cols"].split(",")))
-        for r in dicts(self.run(ROWS), ["schema", "table", "rows", "bytes", "comment"]):
+        for r in dicts(self.fetch("row estimates", self.q['ROWS']), ["schema", "table", "rows", "bytes", "comment"]):
             t = sch.tables.get(f"{r['schema']}.{r['table']}")
             if t:
                 t.info.update({k: v for k, v in (("rows_estimate", r["rows"]), ("data_bytes", r["bytes"]), ("comment", r["comment"])) if v not in (None, "")})
-        for r in dicts(self.run(CHECKS), ["schema", "table", "name", "expr"]):
+        for r in dicts(self.fetch("checks", self.q['CHECKS']), ["schema", "table", "name", "expr"]):
             t = sch.tables.get(f"{r['schema']}.{r['table']}")
             if t:
                 t.info.setdefault("checks", []).append({"name": r["name"], "expr": r["expr"]})

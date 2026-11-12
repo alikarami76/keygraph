@@ -222,7 +222,7 @@ def test_unknown_table_names_coverage_cli_and_mcp_alike(built, capsys):
     assert main(["describe", "custmers", "--dir", str(built)]) == 2
     cli = capsys.readouterr().err.strip().removeprefix("keygraph: ")
     assert cli.startswith("unknown table 'custmers'")
-    assert "this map covers schemas" in cli and "built " in cli and "from dump" in cli and "--all-schemas" in cli
+    assert "this map covers schemas" in cli and "built " in cli and "from dump" in cli and "dump files loaded" in cli and "--all-schemas" not in cli
     pytest.importorskip("mcp")
     import asyncio
 
@@ -242,3 +242,14 @@ def test_hub_include_of_a_mirrored_bare_name_does_not_warn_ambiguous(tmp_path):
     assert main(["render", "--dir", str(tmp_path)]) == 0
     warns = json.loads((tmp_path / "graph.json").read_text())["warnings"]
     assert not [w for w in warns if "hubs include" in w], warns
+
+
+def test_readme_quickstart_brief_and_no_paths_work_without_mcp(built, capsys):
+    capsys.readouterr()
+    assert main(["describe", "shop.orders", "--brief", "--dir", str(built)]) == 0
+    text = capsys.readouterr().out
+    assert "columns:" in text and "relations:" not in text
+    assert main(["describe", "shop.orders", "--brief", "--json", "--dir", str(built)]) == 0
+    assert json.loads(capsys.readouterr().out)["brief"] is True
+    assert main(["search", "orders", "--no-paths", "--json", "--dir", str(built)]) == 0
+    assert json.loads(capsys.readouterr().out)["join_paths"] == []

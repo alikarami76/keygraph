@@ -4,6 +4,7 @@ globs:
 alwaysApply: true
 ---
 
+<!-- keygraph:start (managed by keygraph setup; edit between the markers, a later setup replaces this block) -->
 # Database work: use keygraph first
 
 This project's database is mapped by keygraph (map folder: `{OUT}`). It is connected as the `keygraph` MCP server.
@@ -25,3 +26,4 @@ After the work:
 - If keygraph errors or is wrong, follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md. Never send a report without the user's yes.
 
 keygraph never runs SQL and never writes to the database.
+<!-- keygraph:end -->

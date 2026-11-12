@@ -406,16 +406,17 @@ def cmd_context(a):
             else:
                 import yaml
                 Path(a.out).write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        counts = {"tables": 0, "columns": 0}
         for kind, key in (("table", "tables"), ("column", "columns")):
             for item in data[key]:
-                ctx.upsert(kind, item, item.get("source", ""), item.get("verified", False))
+                if ctx.upsert(kind, item, item.get("source", ""), item.get("verified", False)):
+                    counts[key] += 1
         ctx.reindex()
-        counts = {"tables": len(data["tables"]), "columns": len(data["columns"])}
     elif a.action == "add":
         d = _kv(a.fields)
-        ctx.upsert(a.kind, d, d.get("source") or "agent", d.get("verified") in ("true", "yes", "1"))
+        ok = ctx.upsert(a.kind, d, d.get("source") or "agent", a.verified or d.get("verified") in ("true", "yes", "1"))
         ctx.reindex()
-        counts = {a.kind: 1}
+        counts = {a.kind: 1 if ok else 0}
     elif a.action == "export":
         data = ctx.dump()
         text = json.dumps(data, ensure_ascii=False, indent=1)
@@ -431,7 +432,7 @@ def cmd_context(a):
         return
     S.apply_context_to_graph(g, ctx)
     render(Path(a.dir), g, ctx)
-    print(json.dumps({"imported": counts, "warnings": ctx.warnings}, ensure_ascii=False, indent=1))
+    print(json.dumps({"imported": counts, "kept": ctx.kept, "warnings": ctx.warnings}, ensure_ascii=False, indent=1))
     ctx.close()
 
 

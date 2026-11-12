@@ -102,7 +102,10 @@ def run(out: str | Path) -> dict:
         graph_stats["metadata"] = layers
         have = any(layers.values())
         checks.append(_check("metadata", "ok" if have else "warn", ", ".join(f"{v} {k}" for k, v in layers.items()),
-                             None if have else "scan --url uses the dedicated adapter for comments and enums; or load information_schema dumps"))
+                             None if have else (
+                                 "SQLite has no column comments or enum values; add them with a context file (keygraph context import)"
+                                 if any(str(x.get("kind", "")).startswith("sqlite") for x in (g.build or {}).get("sources") or [])
+                                 else "scan --url uses the dedicated adapter for comments and enums; or load information_schema dumps")))
         edges = sorted((e for e in g.edges if e["from"] != e["to"]), key=lambda e: -e["confidence"])  # self-references have no path
         if edges:
             e = edges[0]
