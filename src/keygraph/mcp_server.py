@@ -45,7 +45,8 @@ def build_server(dir: str | Path) -> MCPServer:
 
     def graph() -> Graph:
         """The graph, reloaded only when graph.json changed (the directory may be rebuilt while we serve)."""
-        stamp = (out / "graph.json").stat().st_mtime_ns
+        bj = out / "build.json"
+        stamp = ((out / "graph.json").stat().st_mtime_ns, bj.stat().st_mtime_ns if bj.exists() else 0)
         if cache.get("stamp") != stamp:
             cache["stamp"], cache["g"] = stamp, load_graph(out)
         return cache["g"]

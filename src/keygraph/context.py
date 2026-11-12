@@ -89,12 +89,17 @@ def copy_globs_split(raw: dict) -> tuple[dict, list]:
     return (mirrors if mirrors else {}), [g for g in dict.fromkeys(globs) if g]
 
 
-def _need_yaml():
+class YamlMissing(ValueError):
+    """A YAML context file was given but the optional PyYAML extra is not installed."""
+
+
+def _need_yaml(path=None):
     """Import PyYAML or raise a clear error (it is an optional extra)."""
     try:
         import yaml
     except ImportError:
-        raise ValueError("reading YAML context files needs PyYAML: pip install 'keygraph[yaml]', or write the file as JSON") from None
+        raise YamlMissing(f"reading YAML context files{f' ({Path(path).name})' if path else ''} needs PyYAML: "
+                          "pip install 'keygraph[yaml]', or write the file as JSON") from None
     return yaml
 
 
@@ -110,12 +115,10 @@ def read_copy_globs(paths) -> list[str]:
                 if f.suffix.lower() == ".json":
                     raw = json.loads(text)
                 else:
-                    raw = _need_yaml().safe_load(text) or {}
+                    raw = _need_yaml(f).safe_load(text) or {}
                 out += [g for g in copy_globs_split(raw)[1] if g not in out] if isinstance(raw, dict) else []
-            except ValueError as exc:
-                if "PyYAML" in str(exc):
-                    raise
-                continue
+            except YamlMissing:
+                raise
             except Exception:  # noqa: BLE001
                 continue
     return out
@@ -189,7 +192,8 @@ class ContextDB:
         old_src = safe_source(old["source"]) if old else ""
         if not old or not old["verified"] or (same_ok and old_src == src[0]):
             return False
-        self.warnings.append(f"kept verified {kind} note for {label} (source {old_src}); unverified write from {src[0]} ignored")
+        self.warnings.append(f"kept verified {kind} note for {label} (source {old_src}); unverified write from {src[0]} ignored; "
+                              "pass --verified (or verified=true) if you have confirmed it")
         return True
 
     def upsert(self, kind: str, d: dict, source: str = "", verified=False,
@@ -264,7 +268,7 @@ class ContextDB:
             if f.suffix.lower() == ".json":
                 raw = json.loads(text)
             else:
-                raw = _need_yaml().safe_load(text) or {}
+                raw = _need_yaml(f).safe_load(text) or {}
             rel = f.relative_to(p).as_posix() if p.is_dir() else f.name
             if not isinstance(raw, dict):
                 raise ValueError(f"context file {rel}: expected a mapping at the top level, got {type(raw).__name__}")

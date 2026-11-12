@@ -225,7 +225,7 @@ def test_unverified_write_never_replaces_verified_row(graph, tmp_path):
     ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "agent guess"}, "agent", False)
     c = _col(ctx)
     assert c["meaning"] == "human note" and c["verified"] == 1 and c["source"] == "human"
-    assert ctx.warnings == ["kept verified column note for shop.orders.status (source human); unverified write from agent ignored"]
+    assert ctx.warnings == ["kept verified column note for shop.orders.status (source human); unverified write from agent ignored; pass --verified (or verified=true) if you have confirmed it"]
     # the same source may update its own verified row (a file re-import)
     ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "edited"}, "human", False, allow_same_source=True)
     assert _col(ctx)["meaning"] == "edited" and len(ctx.warnings) == 1
@@ -317,3 +317,14 @@ def test_yaml_context_without_pyyaml_is_a_clear_error(graph, tmp_path, monkeypat
     j = tmp_path / "c.json"
     j.write_text('{"copies": ["ods_*"]}', encoding="utf-8")
     assert read_copy_globs([j]) == ["ods_*"]
+
+
+def test_missing_yaml_error_names_the_file_and_is_typed(graph, tmp_path, monkeypatch):
+    import pytest
+
+    from keygraph.context import YamlMissing
+    f = tmp_path / "notes.yaml"
+    f.write_text("a: 1\n", encoding="utf-8")
+    monkeypatch.setitem(__import__("sys").modules, "yaml", None)
+    with pytest.raises(YamlMissing, match="notes.yaml"):
+        ContextDB(tmp_path / "k.db", graph).import_path(f)

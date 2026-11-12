@@ -240,3 +240,21 @@ def test_query_submit_then_read(tmp_path, out):
     assert not err and hits["queries"][0]["fp"] == got["fp"]
     err, msg = call(s, "query_submit", sql="", source="x")
     assert err and "empty SQL" in msg
+
+
+def test_server_reloads_when_only_build_json_changes(tmp_path):
+    import os
+
+    d = tmp_path / "o"
+    _build(d)
+    s = build_server(d)
+    err, msg = call(s, "keys", table="custmers")
+    assert err and "built " in msg
+    bj = d / "build.json"
+    data = json.loads(bj.read_text())
+    data["built_at"] = "2001-02-03T00:00:00Z"
+    bj.write_text(json.dumps(data))
+    st = bj.stat()
+    os.utime(bj, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+    err, msg = call(s, "keys", table="custmers")
+    assert err and "built 2001-02-03" in msg

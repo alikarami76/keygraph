@@ -169,11 +169,49 @@ def test_build_json_honours_source_date_epoch_and_survives_render(tmp_path, monk
     assert (tmp_path / "build.json").read_text() == first
 
 
-def test_scan_source_description_has_no_credentials():
+TRICKY_URLS = [
+    ("mysql://u:pa/ss@hostx/shop", "shop"),
+    ("mysql://u:pa/ss@hostx", None),
+    ("mysql://u:pw/@hostx", None),
+    ("mysql://us3r:p@ss:w@hostx:3307/shop", "shop"),
+    ("mysql+pymysql://us3r:pw@hostx/shop?ssl=1&unix_socket=/tmp/hostx.sock", "shop"),
+    ("mssql+pyodbc:///?odbc_connect=DRIVER%3DX%3BSERVER%3Dhostx%3BPWD%3Dpw", None),
+    ("postgresql://us3r:pw@hostx:5432/", None),
+    ("postgresql://us3r:pw@hostx:5432/we!rd@db", None),
+    ("mysql://us3r:pw@hostx/\u0645\u062a\u0631\u0648", "\u0645\u062a\u0631\u0648"),
+]
+
+
+@pytest.mark.parametrize("url,db", TRICKY_URLS)
+def test_scan_source_description_has_no_credentials(url, db):
     from keygraph.cli import url_source
-    src = url_source("mysql+pymysql://bob:s3cret@db.internal:3306/shop?ssl=1")
-    assert src == {"kind": "mysql", "database": "shop"}
+    src = url_source(url)
+    assert src.get("database") == db
+    for frag in ("hostx", "us3r", "pw", "3307", "5432", "ssl", "sock", "pa/ss", "p@ss"):
+        assert frag not in json.dumps(src), (url, frag)
     assert url_source("sqlite:////tmp/x/shop.db") == {"kind": "sqlite", "database": "shop.db"}
+
+
+def test_bad_source_date_epoch_is_ignored_with_a_warning(tmp_path, monkeypatch, capsys):
+    for bad in ("\u00b2", "9" * 30, "abc", "-5"):
+        monkeypatch.setenv("SOURCE_DATE_EPOCH", bad)
+        d = tmp_path / ("o" + str(abs(hash(bad))))
+        _build(d)
+        assert (d / "build.json").exists()
+        assert "SOURCE_DATE_EPOCH" in capsys.readouterr().err
+
+
+def test_build_json_is_written_before_graph_json(tmp_path, monkeypatch):
+    from keygraph import cli
+    order = []
+    real = cli.write_build_info
+    monkeypatch.setattr(cli, "write_build_info", lambda *a, **k: (order.append("build"), real(*a, **k)))
+    monkeypatch.setattr(cli.Graph, "save", lambda self, p: order.append("graph"))
+    try:
+        _build(tmp_path)
+    except Exception:  # noqa: BLE001  (graph.json is not really saved here)
+        pass
+    assert order[:2] == ["build", "graph"]
 
 
 def test_unknown_table_names_coverage_cli_and_mcp_alike(built, capsys):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import webbrowser
@@ -158,25 +159,50 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
 
 
 def url_source(url: str) -> dict:
-    """Describe a database URL as {"kind", "database"}: never the host, user, password, port or query."""
-    from urllib.parse import urlsplit
-    u = urlsplit(url)
-    kind = u.scheme.split("+")[0]
-    db = (u.path or "").rstrip("/").rsplit("/", 1)[-1]
-    return {"kind": kind, "database": db} if db else {"kind": kind}
+    """Describe a database URL as {"kind", "database"}: never the host, user, password, port or query.
+    The database name is kept only when it is a plain name; anything odd is left out rather than risk a leak."""
+    kind = url.split(":", 1)[0].split("+", 1)[0].lower()
+    db = ""
+    try:
+        from sqlalchemy.engine.url import make_url
+        db = make_url(url).database or ""
+    except Exception:  # noqa: BLE001  (no SQLAlchemy, or a URL it cannot parse): parse by hand
+        rest = url.split("://", 1)[1] if "://" in url else ""
+        rest = rest.split("?", 1)[0].split("#", 1)[0].rsplit("@", 1)[-1]
+        db = rest.partition("/")[2] if kind != "sqlite" else rest
+    if kind == "sqlite":
+        db = re.split(r"[\\/]", db)[-1]
+    else:
+        db = db.split("/")[0]
+    return {"kind": kind, "database": db} if db and re.fullmatch(r"[\w.$-]+", db) else {"kind": kind}
+
+
+def _build_time() -> float:
+    """Now, or SOURCE_DATE_EPOCH when it is a plain number of seconds (reproducible builds)."""
+    import os
+    sde = os.environ.get("SOURCE_DATE_EPOCH")
+    if sde is None or sde == "":
+        return time.time()
+    if re.fullmatch(r"[0-9]{1,11}", sde):
+        return float(int(sde))
+    print("keygraph: ignoring SOURCE_DATE_EPOCH (not a plain number of seconds); using the current time", file=sys.stderr)
+    return time.time()
 
 
 def write_build_info(out: Path, g: Graph, sources: list[dict] | None) -> None:
-    """build.json: when and from what this map was built. The only file that differs between identical builds."""
+    """build.json: when and from what this map was built. The only file that differs between identical builds.
+    Written (atomically) before graph.json, so a graph on disk never pairs with an older build.json."""
     import os
     from datetime import datetime, timezone
 
     from . import __version__
-    sde = os.environ.get("SOURCE_DATE_EPOCH", "")
-    ts = datetime.fromtimestamp(int(sde) if sde.isdigit() else time.time(), timezone.utc)
+    ts = datetime.fromtimestamp(_build_time(), timezone.utc)
     info = {"built_at": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "keygraph_version": __version__,
             "sources": list(sources or []), "schemas": sorted({n["schema"] for n in g.nodes.values()})}
-    (out / BUILD_FILE).write_text(json.dumps(info, indent=1) + "\n", encoding="utf-8")
+    out.mkdir(parents=True, exist_ok=True)
+    tmp = out / (BUILD_FILE + ".tmp")
+    tmp.write_text(json.dumps(info, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, out / BUILD_FILE)
     g.build = info
 
 
@@ -203,8 +229,8 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
     if prof:
         g.data["profiles"] = prof
     S.apply_context_to_graph(g, ctx)
-    sizes = render(out, g, ctx, snippets=snippets, queries=queries)
     write_build_info(out, g, sources)
+    sizes = render(out, g, ctx, snippets=snippets, queries=queries)
     result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
               "warnings": g.data["warnings"][:10] + ctx.warnings[:10]}
     ctx.close()
