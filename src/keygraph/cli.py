@@ -121,15 +121,6 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
     qlog = _query_summary(ctx) if opts.get("queries") else {}
     cur = ctx.curation() if ctx else {"areas": [], "hubs": {}, "mirrors": {}}
     warns: list[str] = list(cur.get("warnings", []))
-    names: dict[str, list[str]] = {}
-    for k in ("include", "exclude"):
-        names[k] = []
-        for t in cur["hubs"].get(k, []):
-            try:
-                g.resolve(t)
-                names[k].append(t)
-            except ValueError as exc:
-                warns.append(f"hubs {k} '{t}' ignored: {exc}")
     mcur = cur.get("mirrors") or {}
     schemas = {n["schema"] for n in g.nodes.values()}
     for m, o in mcur.items():
@@ -139,6 +130,15 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
     mark_mirrors(g, detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
                                    never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns))
     transfer_mirror_edges(g)  # relations of the original tables, copied onto their mirror copies
+    names: dict[str, list[str]] = {}
+    for k in ("include", "exclude"):
+        names[k] = []
+        for t in cur["hubs"].get(k, []):
+            try:
+                g.resolve(t)
+                names[k].append(t)
+            except ValueError as exc:
+                warns.append(f"hubs {k} '{t}' ignored: {exc}")
     if ctx:
         merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
     mark_hubs(g, detect_hubs(g, include=names["include"], exclude=names["exclude"]))

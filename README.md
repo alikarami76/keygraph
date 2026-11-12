@@ -91,9 +91,11 @@ keygraph scan --url postgresql://user@host/db --schema public       # read-only 
 keygraph ui                                                          # opens keygraph-out/keygraph.html
 ```
 
-`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, `public` for PostgreSQL, `dbo` for SQL Server). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
+`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, and the connection's current schema for PostgreSQL and SQL Server; a scan that finds no tables stops with a message suggesting `--schema` or `--all-schemas`). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
 
 ```bash
+keygraph describe orders --brief         # keys, filter columns, notes and columns as name/type/key/codes only
+keygraph search "monthly revenue" --no-paths   # skip the suggested join paths
 keygraph path customers shipments        # ranked join paths with a JOIN snippet
 keygraph search "monthly revenue"        # which tables hold this
 keygraph keys orders                     # primary key, unique keys, indexes in column order
@@ -125,8 +127,8 @@ Each source is a module in `keygraph.adapters`, read-only by construction. SQL s
 | MySQL, MariaDB | `information_schema` (columns, indexes with column order, foreign keys, table facts, enum members) | `keygraph scan --url`, dumps, or the `mysql` adapter |
 | PostgreSQL | `information_schema` and `pg_catalog` (indexes, foreign keys, enum types, row estimates, comments, checks) | `keygraph scan --url`, or the `postgres` adapter |
 | SQLite | the SQLAlchemy inspector (metadata only) | `keygraph scan --url sqlite:///file.db` |
-| SQL Server | `INFORMATION_SCHEMA` and `sys.*`; samples use `SELECT TOP n` | `sqlserver` adapter, `keygraph profile --source sqlserver` |
-| ClickHouse | `system.tables`, `system.columns`, `system.data_skipping_indices`; the primary key becomes the PRIMARY index, `ORDER BY` an index | `clickhouse` adapter, `keygraph profile --source clickhouse` |
+| SQL Server | `INFORMATION_SCHEMA` and `sys.*`; samples use `SELECT TOP n` | `keygraph scan --url`, the `sqlserver` adapter, `keygraph profile --source sqlserver` |
+| ClickHouse | `system.tables`, `system.columns`, `system.data_skipping_indices`; the primary key becomes the PRIMARY index, `ORDER BY` an index | `keygraph scan --url`, the `clickhouse` adapter, `keygraph profile --source clickhouse` |
 | Metabase | REST `GET /api/database/:id/metadata` (tables, fields, semantic types, foreign-key targets, field fingerprints) and native SELECTs through `POST /api/dataset`; no other request | `metabase` adapter (Python API) |
 | MongoDB | schema inferred from sampled documents (nested paths become columns), indexes, `_id` as primary key, DBRef values as references; only `list_collection_names`, `find`, `index_information` and `estimated_document_count` can be called | `mongodb` adapter, `keygraph profile --source mongodb` |
 | `information_schema` dumps (JSON, JSONL, CSV) | the files you give it | `keygraph load` |

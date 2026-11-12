@@ -260,7 +260,7 @@ def test_scan_falls_back_when_adapter_fails(monkeypatch, tmp_path, capsys):
     out = tmp_path / "o"
     assert main(["scan", "--url", "mysql://u:pw@secret-host/d", "--dir", str(out)]) == 0
     err = capsys.readouterr().err
-    assert "mysql adapter failed (RuntimeError)" in err and "secret-host" not in err and "pw" not in err
+    assert "mysql adapter failed (RuntimeError" in err and "secret-host" not in err and "pw" not in err
     assert json.loads((out / "build.json").read_text())["sources"][0]["kind"] == "sqlalchemy"
 
 
@@ -290,3 +290,114 @@ def test_scan_postgres_keeps_requested_schemas_only(monkeypatch):
     assert list(live.dedicated_scan("postgres", "postgresql://h/d", None, False).tables) == ["public.t"]
     assert list(live.dedicated_scan("postgres", "postgresql://h/d", ["audit"], False).tables) == ["audit.t"]
     assert sorted(live.dedicated_scan("postgres", "postgresql://h/d", None, True).tables) == ["audit.t", "public.t"]
+
+
+def test_row_dict_keeps_duplicate_labels():
+    from keygraph.probe import row_dict
+    assert row_dict(["a", "b", "a", "a"], (1, 2, 3, 4)) == {"a": 1, "b": 2, "a_2": 3, "a_3": 4}
+
+
+def test_runner_keeps_duplicate_labels_from_real_sqlalchemy(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    from keygraph.probe import SelectOnlyRunner
+    r = SelectOnlyRunner.from_url(f"sqlite:///{tmp_path / 'x.db'}", as_dicts=True)
+    assert list(r.run("SELECT 1 AS relname, 2 AS relname")[0].values()) == [1, 2]
+
+
+def test_postgres_adapter_survives_duplicate_labels():
+    """The real Postgres query shapes repeat relname/nspname/array_to_string; a dict-per-row runner must not collapse them."""
+    from keygraph.adapters import postgres as P
+    from keygraph.probe import row_dict
+
+    labels = {P.IDX: ["nspname", "relname", "relname", "indisunique", "indisprimary", "array_to_string"],
+              P.FK: ["nspname", "relname", "conname", "array_to_string", "nspname", "relname", "array_to_string"],
+              P.COLS: ["table_schema", "table_name", "column_name", "ordinal_position", "case", "is_nullable", "column_default",
+                       "is_generated", "generation_expression", "col_description"]}
+    data = {P.COLS: [("app", "orders", "id", 1, "bigint", "NO", None, "NEVER", None, None),
+                     ("app", "users", "id", 1, "bigint", "NO", None, "NEVER", None, None)],
+            P.IDX: [("app", "users", "users_pkey", True, True, "id"), ("app", "orders", "orders_pkey", True, True, "id")],
+            P.FK: [("app", "orders", "fk_u", "user_id", "app", "users", "id")]}
+
+    def run(sql):
+        for q, rows in data.items():
+            if sql == q:
+                return [row_dict(labels[q], r) for r in rows]
+        return []
+    sch = P.PostgresSource(run).schema()
+    assert sch.tables["app.users"].primary_key == ["id"]
+    fk = sch.tables["app.orders"].foreign_keys[0]
+    assert (fk.columns, fk.ref_table, fk.ref_columns) == (["user_id"], "users", ["id"])
+
+
+def test_postgres_default_schema_is_read_from_the_database(monkeypatch):
+    from keygraph.adapters import live
+    from keygraph.model import Column, Schema, Table
+    full = Schema()
+    for s in ("tenant_a", "public"):
+        full.add(Table(s, "t", [Column("id", "int")]))
+    seen = []
+
+    class Src:
+        def schema(self):
+            return full
+    monkeypatch.setattr("keygraph.adapters.open_source", lambda kind, **k: Src())
+    _patch_runner(monkeypatch, lambda sql: seen.append(sql) or [{"current_schema": "tenant_a"}])
+    assert list(live.dedicated_scan("postgres", "postgresql://h/d", None, False).tables) == ["tenant_a.t"]
+    assert seen == ["SELECT current_schema()"]
+
+
+def test_empty_scan_fails_clearly_without_fallback(monkeypatch, tmp_path, capsys):
+    from keygraph.adapters import live
+    from keygraph.cli import main
+    from keygraph.model import Schema
+
+    class Src:
+        def schema(self):
+            return Schema()
+    monkeypatch.setattr("keygraph.adapters.open_source", lambda kind, **k: Src())
+    _patch_runner(monkeypatch, lambda sql: [{"x": "public"}])
+    _no_inspector(monkeypatch)
+    assert main(["scan", "--url", "postgres://u:pw@secret-host/d", "--dir", str(tmp_path / "o")]) == 2
+    err = capsys.readouterr().err
+    assert "no tables in schema public" in err and "--all-schemas" in err and "secret-host" not in err and "pw" not in err
+    assert live.url_dialect("postgres://h/d") == "postgres"
+
+
+def test_postgres_scheme_is_normalised_for_both_paths(monkeypatch):
+    from keygraph.adapters import live
+    from keygraph.model import Schema
+    seen = []
+    monkeypatch.setattr(live, "dedicated_scan", lambda kind, url, s, a: seen.append(url) or Schema())
+    live.scan_any("postgres://h/d")
+    assert seen == ["postgresql://h/d"]
+
+
+def test_fallback_warning_redacts_url_pieces(monkeypatch, tmp_path, capsys):
+    from keygraph.adapters import live
+    from keygraph.model import Column, Schema, Table
+
+    def broken(sql):
+        raise RuntimeError("could not connect to mysql://bob:hunter2@db.internal:3306/shop: host db.internal user bob password hunter2")
+    _patch_runner(monkeypatch, broken)
+    sch = Schema()
+    sch.add(Table("d", "t", [Column("id", "int")]))
+    monkeypatch.setattr(live, "scan_url", lambda *a, **k: sch)
+    live.scan_any("mysql://bob:hunter2@db.internal:3306/shop")
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "could not connect" in err
+    for frag in ("hunter2", "db.internal", "bob", "3306"):
+        assert frag not in err
+
+
+def test_mysql_scan_drops_foreign_keys_to_other_schemas(monkeypatch):
+    from keygraph.adapters import live
+    from keygraph.model import Column, ForeignKey, Schema, Table
+    s = Schema()
+    s.add(Table("d", "t", [Column("id", "int")], foreign_keys=[ForeignKey("f", ["id"], "other", "x", ["id"])]))
+
+    class Src:
+        def schema(self):
+            return s
+    monkeypatch.setattr("keygraph.adapters.open_source", lambda kind, **k: Src())
+    _patch_runner(monkeypatch, lambda sql: [])
+    assert live.dedicated_scan("mysql", "mysql://h/d", None, False).tables["d.t"].foreign_keys == []

@@ -35,6 +35,18 @@ def assert_select(sql: str) -> str:
     return s
 
 
+def row_dict(labels: list[str], row) -> dict:
+    """A row keyed by its column labels, keeping repeated labels (relname, relname_2, ...) instead of dropping values."""
+    out: dict = {}
+    for label, v in zip(labels, row):
+        k, n = str(label), 1
+        while k in out:
+            n += 1
+            k = f"{label}_{n}"
+        out[k] = v
+    return out
+
+
 class SelectOnlyRunner:
     def __init__(self, execute: Callable[[str], list]):
         self._execute = execute
@@ -50,7 +62,9 @@ class SelectOnlyRunner:
 
         def ex(sql):
             with eng.connect() as c:
-                return [dict(r._mapping) if as_dicts else tuple(r) for r in c.execute(text(sql))]
+                res = c.execute(text(sql))
+                labels = list(res.keys())
+                return [row_dict(labels, r) if as_dicts else tuple(r) for r in res]
         return cls(ex)
 
     @classmethod
