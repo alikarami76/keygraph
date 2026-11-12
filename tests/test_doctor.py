@@ -80,3 +80,36 @@ def test_doctor_on_a_corrupt_graph_reports_a_failed_check(tmp_path, capsys):
     except SystemExit as exc:
         assert exc.code == 1
     assert report.exists() and "graph" in report.read_text(encoding="utf-8")
+
+
+def test_report_redacts_home_paths_in_a_failing_check(shop, tmp_path, monkeypatch):
+    pytest.importorskip("mcp")
+    home = shop.parent
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    def boom(out):
+        raise RuntimeError(f"cannot start from {out}")
+    monkeypatch.setattr(D, "_mcp_tools", boom)
+    r = D.run(shop)
+    assert any(c["name"] == "mcp" and c["status"] == "fail" for c in r["checks"])
+    r["checks"].append(D._check("extra", "warn", f"seen at {shop}/x"))
+    text = D.report(r)
+    assert str(home) not in text and "~" in text
+
+
+def test_doctor_reports_metadata_layers(shop, tmp_path):
+    by = {c["name"]: c for c in D.run(shop)["checks"]}
+    assert by["metadata"]["status"] == "ok"
+    assert "comments" in by["metadata"]["detail"] and "enum" in by["metadata"]["detail"] and "row estimates" in by["metadata"]["detail"]
+    from keygraph.graph import Graph
+    g = Graph.load(shop / "graph.json")
+    for n in g.data["nodes"]:
+        n["info"] = {}
+        for c in n["columns"]:
+            c.pop("comment", None)
+            c.pop("values", None)
+    out = tmp_path / "bare"
+    out.mkdir()
+    g.save(out / "graph.json")
+    m = {c["name"]: c for c in D.run(out)["checks"]}["metadata"]
+    assert m["status"] == "warn" and "dedicated adapter" in m["fix"]

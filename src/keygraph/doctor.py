@@ -95,6 +95,14 @@ def run(out: str | Path) -> dict:
         status = "ok" if graph_stats["tables"] else "fail"
         checks.append(_check("graph", status, f"{graph_stats['tables']} tables, {graph_stats['edges']} relations, "
                              f"{graph_stats['schemas']} schemas", None if status == "ok" else "the build found no tables; check --schema"))
+        nodes = list(g.nodes.values())
+        cols = [c for n in nodes for c in n["columns"]]
+        layers = {"column comments": sum(1 for c in cols if c.get("comment")), "enum columns": sum(1 for c in cols if c.get("values")),
+                  "row estimates": sum(1 for n in nodes if (n.get("info") or {}).get("rows_estimate") is not None)}
+        graph_stats["metadata"] = layers
+        have = any(layers.values())
+        checks.append(_check("metadata", "ok" if have else "warn", ", ".join(f"{v} {k}" for k, v in layers.items()),
+                             None if have else "scan --url uses the dedicated adapter for comments and enums; or load information_schema dumps"))
         edges = sorted((e for e in g.edges if e["from"] != e["to"]), key=lambda e: -e["confidence"])  # self-references have no path
         if edges:
             e = edges[0]

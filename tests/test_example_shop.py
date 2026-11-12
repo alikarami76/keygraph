@@ -232,3 +232,13 @@ def test_unknown_table_names_coverage_cli_and_mcp_alike(built, capsys):
     with pytest.raises(ToolError) as exc:
         asyncio.run(build_server(built).call_tool("describe", {"table": "custmers"}))
     assert str(exc.value).removeprefix("Error executing tool describe: ") == cli
+
+
+def test_hub_include_of_a_mirrored_bare_name_does_not_warn_ambiguous(tmp_path):
+    _build(tmp_path)
+    f = tmp_path / "hubs.yaml"
+    f.write_text("hubs:\n  include: [customers]\n", encoding="utf-8")
+    assert main(["context", "import", str(f), "--dir", str(tmp_path)]) == 0
+    assert main(["render", "--dir", str(tmp_path)]) == 0
+    warns = json.loads((tmp_path / "graph.json").read_text())["warnings"]
+    assert not [w for w in warns if "hubs include" in w], warns

@@ -28,8 +28,8 @@ Any agent that can run shell commands can use keygraph. Every query command take
 
 | MCP tool | CLI |
 |---|---|
-| `search` | `keygraph search "<words>" --json --dir OUT` |
-| `describe` | `keygraph describe <table> --json --dir OUT` |
+| `search` | `keygraph search "<words>" [--no-paths] --json --dir OUT` |
+| `describe` | `keygraph describe <table> [--brief] --json --dir OUT` |
 | `path` | `keygraph path <A> <B> --json --dir OUT` |
 | `keys` | `keygraph keys <table> --json --dir OUT` |
 | `explain` | `keygraph explain <table.column> --json --dir OUT` |
