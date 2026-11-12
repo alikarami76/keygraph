@@ -253,3 +253,22 @@ def test_b_id_and_ref_prefixes_are_capped_but_link_to_is_not():
     assert edge(g, "s.things", "ref_code", "s.codes")["confidence"] == 0.75
     assert edge(g, "s.users", "id_type", "s.types")["confidence"] == 0.75
     assert edge(g, "s.att", "link_to_member", "s.members")["confidence"] == 0.91
+
+
+def test_c_surrogate_id_with_a_named_key_points_at_the_named_key():
+    g = graph(T("players", [("id", "int"), ("player_ref_id", "int")], pk=["id"], uniq=["player_ref_id"]),
+              T("matches", [("home_player_1", "int")]))
+    e = edge(g, "s.matches", "home_player_1", "s.players")
+    assert e["to_columns"] == ["player_ref_id"] and e["confidence"] == 0.75
+    assert ev(e, "target table has a surrogate id and a named key 'player_ref_id'; numbered role columns usually hold the named key")
+    g = graph(T("players", [("id", "int")], pk=["id"]), T("matches", [("home_player_1", "int")]))
+    assert edge(g, "s.matches", "home_player_1", "s.players")["to_columns"] == ["id"]
+
+
+def test_a_name_suffix_columns_are_attributes_unless_the_target_is_a_pk():
+    g = graph(T("grand_prix_names", [("id", "int"), ("full_name", "text")], pk=["id"], uniq=["full_name"]),
+              T("drivers", [("full_name", "text")]))
+    assert edge(g, "s.drivers", "full_name") is None
+    g = graph(T("people", [("full_name", "varchar(40)")], pk=["full_name"]),
+              T("drivers", [("id", "int"), ("full_name", "varchar(40)")], pk=["id"]))
+    assert edge(g, "s.drivers", "full_name", "s.people")

@@ -77,6 +77,7 @@ def extract_stem(col: str) -> str | None:
 GENERIC_KEY_NAMES = {"name", "title", "code", "email", "login", "username", "slug", "label", "description",
                      "type", "status", "phone", "url", "key", "value", "sku"}  # often unique, rarely references
 PK_ONLY_KEY_NAMES = {"uuid", "guid", "token", "hash", "ip", "number", "external_id", "checksum"}  # references only when the target is a primary key
+GENERIC_SUFFIXES = ("_name", "_title", "_description", "_label")  # full_name, display_name: attributes
 REF_PREFIXES = ("link_to_", "ref_", "fk_", "id_")
 EXTRA_ROLE_WORDS = {"home", "away"}  # only for numbered columns (home_player_1)
 
@@ -276,7 +277,7 @@ class Inferer:
             if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
                 tt = self.s.tables[others[0]]
                 k = next(k for k in self._single_keys(tt) if k[0][0].lower() == low)
-                if low in PK_ONLY_KEY_NAMES and k[1] != "primary key":
+                if (low in PK_ONLY_KEY_NAMES or low.endswith(GENERIC_SUFFIXES)) and k[1] != "primary key":
                     others = []
             if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
                 self._add_rule(c, tt.id, 0.70, f"column name '{colname}' equals the key column of {tt.id} (rule: shared key name)", k)
@@ -296,16 +297,21 @@ class Inferer:
                         continue
                     pre = {x + "_" for x in forms(stem)}
                     pk = tt.primary_key
-                    ukeys = [u for u in tt.unique_keys if len(u) == 1 and u[0].lower().startswith(tuple(pre))]
+                    ukeys = [u for u in tt.unique_keys if len(u) == 1 and u[0].lower().startswith(tuple(pre)) and u[0].lower().endswith("_id")]
+                    note = ""
                     if len(pk) == 1 and pk[0].lower().startswith(tuple(pre)):
                         k = (pk, "primary key", 0.08)
-                    elif len(ukeys) == 1:
+                    elif len(ukeys) == 1 and len(pk) == 1 and pk[0].lower() == "id":
+                        k = (ukeys[0], "unique key", 0.03)
+                        note = (f"; target table has a surrogate id and a named key '{ukeys[0][0]}'; "
+                                "numbered role columns usually hold the named key")
+                    elif len(ukeys) == 1 and not pk:
                         k = (ukeys[0], "unique key", 0.03)
                     elif len(pk) == 1:
                         k = (pk, "primary key", 0.08)
                     else:
                         continue
-                    self._add_rule(c, tid, 0.60, f"numbered role column '{colname}' reads as a reference to '{stem}'", k)
+                    self._add_rule(c, tid, 0.60, f"numbered role column '{colname}' reads as a reference to '{stem}'{note}", k)
         parts = n.split("_")  # (d) <table>_<column>
         for i in range(1, len(parts)):
             cname = "_".join(parts[i:])
