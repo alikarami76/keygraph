@@ -479,6 +479,33 @@ def cmd_doctor(a):
         raise SystemExit(1)
 
 
+def cmd_dev(a):
+    """keygraph dev on|off|status|clear|note. None of these needs a graph; only `note` writes an event."""
+    from . import devlog
+    out, d = Path(a.dir), devlog.dev_dir(a.dir)
+    if a.dev_cmd == "on":
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "enabled").write_text("", encoding="utf-8")
+        print(f"dev mode on: logging to {d} (KEYGRAPH_DEV=0 overrides)")
+    elif a.dev_cmd == "off":
+        (d / "enabled").unlink(missing_ok=True)
+        print("dev mode off (the log is kept; `keygraph dev clear` deletes it)")
+    elif a.dev_cmd == "status":
+        st = devlog.status(out)
+        _emit(a, st, f"dev mode {'on' if st['enabled'] else 'off'} ({st['source']}); {st['events_bytes']} bytes of events, "
+                     f"{st['trace_files']} trace files in {st['dir']}")
+    elif a.dev_cmd == "clear":
+        devlog.clear(out, a.all)
+        print("cleared the dev log" + (" and switched dev mode off" if a.all else " (dev mode setting kept)"))
+    else:
+        q = devlog.mask_text(" ".join(a.text))
+        sess, on = devlog.session_id("cli"), devlog.enabled(out)
+        if on:
+            devlog.Recorder(out, "cli", session=sess).record("note", "dev_note", {"question": q})
+        _emit(a, {"noted": on, "session": sess, "question": q},
+              f"noted: {q}" if on else "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)")
+
+
 def _code_db(a) -> Path:
     load_graph(a.dir)  # a clear message when nothing was built
     return Path(a.dir) / "keygraph.db"
@@ -683,6 +710,22 @@ def main(argv=None) -> int:
     p = add("doctor", cmd_doctor, "check the install and a built directory; print the MCP launch command")
     p.add_argument("--json", action="store_true")
     p.add_argument("--report", metavar="FILE", help="also write a redacted environment block for a bug report")
+    p = sub.add_parser("dev", help="dev mode: log how agents use keygraph, locally (on, off, status, clear, note)")
+    p.set_defaults(fn=cmd_dev)
+    ds = p.add_subparsers(dest="dev_cmd", required=True)
+
+    def dev_cmd(name, help_):
+        q = ds.add_parser(name, help=help_)
+        _dir_args(q)
+        return q
+
+    dev_cmd("on", "start logging to <dir>/dev (or set KEYGRAPH_DEV=1)")
+    dev_cmd("off", "stop logging (keeps the log)")
+    dev_cmd("status", "is dev mode on, and how big is the log").add_argument("--json", action="store_true")
+    dev_cmd("clear", "delete the logged events and traces").add_argument("--all", action="store_true", help="also remove the on marker")
+    q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on)")
+    q.add_argument("text", nargs="+")
+    q.add_argument("--json", action="store_true")
     dialects = sorted({"mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite"})
     pc = sub.add_parser("code", help="link source code to tables and columns (index, where, what, stats)")
     pc.set_defaults(fn=cmd_code)
@@ -772,11 +815,75 @@ def main(argv=None) -> int:
     if a.cmd == "context" and a.action == "add" and a.path:
         a.fields = [a.path] + a.fields
     try:
-        a.fn(a)
+        _run(a)
     except (AmbiguousTable, UnknownTable, ValueError) as exc:
         print(f"keygraph: {exc}", file=sys.stderr)
         return 2
     return 0
+
+
+class _Tee:
+    """Forwards stdout and keeps its hash, size and (up to 16 KB) text, for the dev log."""
+
+    def __init__(self, real):
+        import hashlib
+        self.real, self.h, self.bytes, self.chars, self.parts = real, hashlib.sha256(), 0, 0, []
+
+    def write(self, s):
+        try:
+            b = s.encode("utf-8", "replace")
+            self.h.update(b)
+            self.bytes += len(b)
+            self.chars += len(s)
+            if self.bytes <= 16 * 1024 + len(b):
+                self.parts.append(s)
+        except Exception:  # noqa: BLE001  (logging never changes output)
+            pass
+        return self.real.write(s)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+_TEXT_PROFILE = {"describe", "profile", "search"}  # text output may carry sampled profile values: hash only
+
+
+def _command_name(a) -> str:
+    return " ".join(x for x in (a.cmd, getattr(a, "code_cmd", None), getattr(a, "q_cmd", None)) if x)
+
+
+def _run(a) -> None:
+    """Run the command; with dev mode on, also record it (masked args, timing, exit status, stdout hash)."""
+    from . import devlog
+    d = getattr(a, "dir", None)
+    if a.cmd == "dev" or d is None or not devlog.enabled(d):
+        a.fn(a)
+        return
+    name = _command_name(a)
+    args = {k: v for k, v in vars(a).items() if k not in ("fn", "dir", "cmd", "code_cmd", "q_cmd")}
+    real, tee, t0, ok, err, status = sys.stdout, None, time.perf_counter(), True, None, 0
+    try:
+        tee = sys.stdout = _Tee(real)
+        a.fn(a)
+    except BaseException as exc:
+        ok = False
+        err = {"type": type(exc).__name__, "message": str(exc)}
+        status = exc.code if isinstance(exc, SystemExit) and isinstance(exc.code, int) else \
+            0 if isinstance(exc, SystemExit) and not exc.code else 2 if isinstance(exc, (AmbiguousTable, UnknownTable, ValueError)) else 1
+        ok = status == 0
+        if ok:
+            err = None
+        raise
+    finally:
+        sys.stdout = real
+        try:
+            text = "".join(tee.parts) if tee else ""
+            resp = devlog.stdout_fields(name, text, tee.bytes, tee.h.hexdigest(), tee.chars // 4, a.cmd not in _TEXT_PROFILE) if tee else {}
+            args["exit_status"] = status
+            devlog.Recorder(d, "cli").record("command", name, args,
+                                             (time.perf_counter() - t0) * 1000, ok, err, resp)
+        except Exception as exc:  # noqa: BLE001
+            devlog._warn(exc)
 
 
 if __name__ == "__main__":

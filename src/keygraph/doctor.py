@@ -143,6 +143,9 @@ def run(out: str | Path) -> dict:
             except Exception as exc:  # noqa: BLE001  (report, never crash the doctor)
                 checks.append(_check("mcp", "fail", f"server failed to start: {type(exc).__name__}",
                                      "file a bug: keygraph doctor --report bug.md"))
+    from . import devlog
+    on = devlog.enabled(out)
+    checks.append(_check("dev_mode", "ok", f"on: logging to {devlog.dev_dir(out)} ({devlog.events_bytes(out) // 1024} KB)" if on else "off"))
     worst = "fail" if any(c["status"] == "fail" for c in checks) else "warn" if any(c["status"] == "warn" for c in checks) else "ok"
     return {"status": worst, "keygraph": __version__, "python": py, "platform": platform.platform(terse=True),
             "out": str(out.resolve()), "extras": extras, "graph": graph_stats, "checks": checks,
