@@ -72,7 +72,7 @@ def test_arg_masking():
 
 def test_scan_url_is_redacted_in_the_log(tmp_path, monkeypatch):
     main(["dev", "on", "--dir", str(tmp_path)])
-    with pytest.raises(BaseException):  # no driver or no server: either way the command fails and is logged
+    with pytest.raises((Exception, SystemExit)):  # no driver or no server: either way the command fails and is logged
         main(["scan", "--url", "mysql://u:secret@127.0.0.1:1/db", "--dir", str(tmp_path)])
     text = (tmp_path / "dev" / "events.jsonl").read_text()
     assert "secret" not in text and "mysql://***" in text

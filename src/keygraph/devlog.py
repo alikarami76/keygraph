@@ -152,7 +152,7 @@ def session_id(surface: str) -> str:
 
 
 def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="milliseconds")
+    return dt.datetime.now(dt.UTC).isoformat(timespec="milliseconds")
 
 
 class Recorder:
@@ -209,7 +209,7 @@ class Tracer:
 
     def __init__(self, path: Path):
         self.path, self.n, self.size, self.done = path, 0, 0, False
-        self.f = open(path, "a", encoding="utf-8")
+        self.f = open(path, "a", encoding="utf-8")  # noqa: SIM115  (held open for the length of a build)
 
     def emit(self, kind: str, fields: dict) -> None:
         if self.done:
@@ -258,7 +258,7 @@ def tracing(out, name: str):
         if enabled(out):
             d = dev_dir(out) / "traces"
             d.mkdir(parents=True, exist_ok=True)
-            path = d / f"{dt.datetime.now(dt.timezone.utc):%Y%m%dT%H%M%S%f}-{name}.jsonl"
+            path = d / f"{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S%f}-{name}.jsonl"
             t = Tracer(path)
             _prune(d)
     except Exception as exc:  # noqa: BLE001

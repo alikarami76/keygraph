@@ -837,8 +837,9 @@ class _Tee:
             self.chars += len(s)
             if self.bytes <= 16 * 1024 + len(b):
                 self.parts.append(s)
-        except Exception:  # noqa: BLE001  (logging never changes output)
-            pass
+        except Exception as exc:  # noqa: BLE001  (logging never changes output)
+            from . import devlog
+            devlog._warn(exc)
         return self.real.write(s)
 
     def __getattr__(self, name):
