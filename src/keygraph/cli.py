@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import webbrowser
 from datetime import UTC
 from pathlib import Path
 
+from . import devlog
 from . import query as Q
 from . import search as S
 from .areas import apply_curation, area_links, cluster_areas
@@ -111,6 +113,11 @@ def _query_summary(ctx: ContextDB | None) -> dict:
 def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = None, queries: bool | None = None) -> dict:
     """Write graph.json, RELATIONS_REPORT.md and keygraph.html. snippets / queries: put code snippets and the query
     log into the explorer and docs; None keeps the choice an earlier build stored in graph.json (render_options)."""
+    with devlog.tracing(out, "render"):
+        return _render(out, g, ctx, snippets, queries)
+
+
+def _render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None, queries: bool | None) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     opts = dict(g.data.get("render_options") or {})
     if snippets is not None:
@@ -118,8 +125,9 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
     if queries is not None:
         opts["queries"] = bool(queries)
     g.data["render_options"] = {k: opts[k] for k in sorted(opts)}
-    code = _code_summary(ctx, opts.get("snippets", False))
-    qlog = _query_summary(ctx) if opts.get("queries") else {}
+    with devlog.phase("render.code_queries"):
+        code = _code_summary(ctx, opts.get("snippets", False))
+        qlog = _query_summary(ctx) if opts.get("queries") else {}
     cur = ctx.curation() if ctx else {"areas": [], "hubs": {}, "mirrors": {}}
     warns: list[str] = list(cur.get("warnings", []))
     mcur = cur.get("mirrors") or {}
@@ -128,9 +136,13 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
         if o in (False, None) and m not in schemas:
             warns.append(f"mirrors.yaml: '{m}: {o}' ignored: unknown schema")
     g.data["copy_schemas"] = sorted(dict.fromkeys(cur.get("copies") or []))
-    mark_mirrors(g, detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
-                                   never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns))
-    transfer_mirror_edges(g)  # relations of the original tables, copied onto their mirror copies
+    with devlog.phase("render.mirrors_detect"):
+        found = detect_mirrors(g, force={m: o for m, o in mcur.items() if isinstance(o, str)},
+                               never={m for m, o in mcur.items() if o in (False, None)}, warnings=warns)
+    with devlog.phase("render.mirrors_mark", mirrors=len(found)):
+        mark_mirrors(g, found)
+    with devlog.phase("render.mirrors_transfer") as ph:
+        ph["edges"] = transfer_mirror_edges(g)  # relations of the original tables, copied onto their mirror copies
     names: dict[str, list[str]] = {}
     for k in ("include", "exclude"):
         names[k] = []
@@ -140,21 +152,33 @@ def render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None = N
                 names[k].append(t)
             except ValueError as exc:
                 warns.append(f"hubs {k} '{t}' ignored: {exc}")
-    if ctx:
-        merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
-    mark_hubs(g, detect_hubs(g, include=names["include"], exclude=names["exclude"]))
-    areas, cwarns = apply_curation(g, cluster_areas(g), cur["areas"])
-    g.data["areas"], g.data["area_links"] = areas, area_links(g, areas)
+    with devlog.phase("render.code_joins"):
+        if ctx:
+            merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
+    with devlog.phase("render.hubs") as ph:
+        hubs = detect_hubs(g, include=names["include"], exclude=names["exclude"])
+        mark_hubs(g, hubs)
+        ph["hubs"] = len(hubs)
+    with devlog.phase("render.areas") as ph:
+        areas, cwarns = apply_curation(g, cluster_areas(g), cur["areas"])
+        g.data["areas"], g.data["area_links"] = areas, area_links(g, areas)
+        ph["areas"] = len(areas)
     # a re-render reloads graph.json, so drop curation warnings from the previous render first
     g.data["warnings"] = [w for w in g.data.get("warnings", []) if not w.startswith(CUR_PREFIX)]
     g.data["warnings"] += [CUR_PREFIX + w for w in warns + cwarns]
     dump = ctx.dump() if ctx else None  # one dump for the docs and the HTML (write_docs only reads it)
-    docs = write_docs(out, g, areas, dump, code=code, queries=qlog)
-    _drop_stale_pages(out, docs["files"])
-    g.save(out / "graph.json")
-    (out / "RELATIONS_REPORT.md").write_text(write_report(g, ctx), encoding="utf-8")
-    html = build_html(g, dump, code=code, queries=qlog)
-    (out / "keygraph.html").write_text(html, encoding="utf-8")
+    with devlog.phase("render.docs") as ph:
+        docs = write_docs(out, g, areas, dump, code=code, queries=qlog)
+        _drop_stale_pages(out, docs["files"])
+        ph["pages"] = len(docs["files"])
+    with devlog.phase("render.graph_json"):
+        g.save(out / "graph.json")
+    with devlog.phase("render.report"):
+        (out / "RELATIONS_REPORT.md").write_text(write_report(g, ctx), encoding="utf-8")
+    with devlog.phase("render.html") as ph:
+        html = build_html(g, dump, code=code, queries=qlog)
+        (out / "keygraph.html").write_text(html, encoding="utf-8")
+        ph["bytes"] = len(html.encode("utf-8"))
     return {"graph.json": (out / "graph.json").stat().st_size, "RELATIONS_REPORT.md": (out / "RELATIONS_REPORT.md").stat().st_size,
             "keygraph.html": len(html.encode("utf-8"))}
 
@@ -212,29 +236,36 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
                  queries: bool = False, copy_schemas: list[str] | None = None, sources: list[dict] | None = None) -> dict:
     out = Path(out)
     t0 = time.time()
-    ov = Overrides.load(overrides) if overrides else None
-    options = options or Options()
-    globs = list(dict.fromkeys(list(copy_schemas or []) + read_copy_globs(context)))
-    options.copy_schemas.extend(x for x in globs if x not in options.copy_schemas)  # inference runs before context import
-    g = build_graph(schema, ov, options)
-    ctx = ContextDB(out / "keygraph.db", g)
-    ctx.index_graph(g)
-    if context:
-        ctx.clear_curation()  # rules from files that are no longer imported must not apply
-    for path in context or []:
-        ctx.import_path(path)
-    if copy_schemas:
-        ctx.add_copy_schemas(copy_schemas)
-    ctx.reindex()
-    prof = ctx.load_profiles()
-    if prof:
-        g.data["profiles"] = prof
-    S.apply_context_to_graph(g, ctx)
-    write_build_info(out, g, sources)
-    sizes = render(out, g, ctx, snippets=snippets, queries=queries)
-    result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
-              "warnings": g.data["warnings"][:10] + ctx.warnings[:10]}
-    ctx.close()
+    with devlog.tracing(out, "build"):
+        ov = Overrides.load(overrides) if overrides else None
+        options = options or Options()
+        globs = list(dict.fromkeys(list(copy_schemas or []) + read_copy_globs(context)))
+        options.copy_schemas.extend(x for x in globs if x not in options.copy_schemas)  # inference runs before context import
+        with devlog.phase("build_graph", tables=len(schema.tables)) as ph:
+            g = build_graph(schema, ov, options)
+            ph["edges"] = len(g.edges)
+        ctx = ContextDB(out / "keygraph.db", g)
+        with devlog.phase("index_graph"):
+            ctx.index_graph(g)
+        with devlog.phase("context_import", files=len(context or [])) as ph:
+            if context:
+                ctx.clear_curation()  # rules from files that are no longer imported must not apply
+            for path in context or []:
+                ctx.import_path(path)
+            if copy_schemas:
+                ctx.add_copy_schemas(copy_schemas)
+        with devlog.phase("reindex"):
+            ctx.reindex()
+        prof = ctx.load_profiles()
+        if prof:
+            g.data["profiles"] = prof
+        with devlog.phase("apply_context") as ph:
+            ph["edges_touched"] = S.apply_context_to_graph(g, ctx)
+        write_build_info(out, g, sources)
+        sizes = render(out, g, ctx, snippets=snippets, queries=queries)
+        result = {"stats": g.data["stats"], "context": ctx.counts(), "files": sizes, "seconds": round(time.time() - t0, 1),
+                  "warnings": g.data["warnings"][:10] + ctx.warnings[:10]}
+        ctx.close()
     if verbose:
         st = result["stats"]
         print(f"keygraph: {st['tables']} tables, {st['columns']} columns, {st['indexes']} indexes, {st['edges']} edges "
@@ -479,6 +510,47 @@ def cmd_doctor(a):
         raise SystemExit(1)
 
 
+def cmd_dev(a):
+    """keygraph dev on|off|status|report|export|clear|note. None of these needs a graph; only `note` writes an event."""
+    from . import devlog
+    out, d = Path(a.dir), devlog.dev_dir(a.dir)
+    if a.dev_cmd == "on":
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "enabled").write_text("", encoding="utf-8")
+        _emit(a, {"enabled": True, "dir": str(d)}, f"dev mode on: logging to {d} (KEYGRAPH_DEV=0 overrides)")
+    elif a.dev_cmd == "off":
+        (d / "enabled").unlink(missing_ok=True)
+        src = devlog.source(out)
+        _emit(a, {"enabled": src != "off", "source": src},
+              "dev mode off (the log is kept; `keygraph dev clear` deletes it)" if src == "off" else
+              "marker removed, but KEYGRAPH_DEV=1 in the environment still keeps dev mode on (unset it)")
+    elif a.dev_cmd == "status":
+        st = devlog.status(out)
+        _emit(a, st, f"dev mode {'on' if st['enabled'] else 'off'} ({st['source']}); {st['events_bytes']} bytes of events, "
+                     f"{st['trace_files']} trace files in {st['dir']}")
+    elif a.dev_cmd == "clear":
+        devlog.clear(out, a.all)
+        _emit(a, {"cleared": True, "dev_mode_off": bool(a.all)},
+              "cleared the dev log" + (" and switched dev mode off" if a.all else " (dev mode setting kept)"))
+    elif a.dev_cmd == "report":
+        from . import devreport
+        r = devreport.report(out, a.since, a.session)
+        _emit(a, r, devreport.format_report(r).rstrip("\n"))
+    elif a.dev_cmd == "export":
+        from . import devreport
+        r = devreport.export(out, a.file, a.since)
+        if not r["lines"]:
+            print("no events: nothing exported")
+        else:
+            print(devreport.WARNING)
+            print(f"wrote {r['path']}: {r['lines']} lines from {len(r['files'])} files")
+    else:
+        r = devlog.note(out, " ".join(a.text), "cli")
+        _emit(a, r, (f"noted: {r['question']}\n{r['hint']}" if r["noted"] else
+                     "dev mode is off, so nothing was recorded (turn it on: keygraph dev on)" if r["reason"] == "dev mode is off"
+                     else "could not write the dev log, so nothing was recorded"))
+
+
 def _code_db(a) -> Path:
     load_graph(a.dir)  # a clear message when nothing was built
     return Path(a.dir) / "keygraph.db"
@@ -569,7 +641,7 @@ def cmd_ui(a):
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="keygraph", description="Map database keys and table relations; find join paths.")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="command", required=True)
 
     def add(name, fn, help_, *aliases):
         p = sub.add_parser(name, help=help_, aliases=list(aliases))
@@ -693,6 +765,32 @@ def main(argv=None) -> int:
     p = add("doctor", cmd_doctor, "check the install and a built directory; print the MCP launch command")
     p.add_argument("--json", action="store_true")
     p.add_argument("--report", metavar="FILE", help="also write a redacted environment block for a bug report")
+    p = sub.add_parser("dev", help="dev mode: log how agents use keygraph, locally (on, off, status, report, export, clear, note)")
+    p.set_defaults(fn=cmd_dev)
+    ds = p.add_subparsers(dest="dev_cmd", required=True)
+
+    def dev_cmd(name, help_):
+        q = ds.add_parser(name, help=help_)
+        _dir_args(q)
+        return q
+
+    dev_cmd("on", "start logging to <dir>/dev (or set KEYGRAPH_DEV=1)").add_argument("--json", action="store_true")
+    dev_cmd("off", "stop logging (keeps the log)").add_argument("--json", action="store_true")
+    dev_cmd("status", "is dev mode on, and how big is the log").add_argument("--json", action="store_true")
+    q = dev_cmd("clear", "delete the logged events and traces (the on marker stays unless --all)")
+    q.add_argument("--all", action="store_true", help="also remove the on marker")
+    q.add_argument("--json", action="store_true")
+    q = dev_cmd("report", "what agents did with keygraph: usage, latency, errors, empty and ambiguous answers, notes, the latest build")
+    q.add_argument("--json", action="store_true")
+    q.add_argument("--since", metavar="ISO_DATE", help="only events from this date or time on (for example 2026-11-12)")
+    q.add_argument("--session", metavar="ID", help="only one session's events")
+    q = dev_cmd("export", "write every event and trace line to one file (FILE ending .gz is gzipped); it holds table names and agent-written text")
+    q.add_argument("file", metavar="FILE")
+    q.add_argument("--since", metavar="ISO_DATE", help="only events from this date or time on")
+    q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on; no personal data; put -- before "
+                        "text that starts with -; run `export KEYGRAPH_DEV_SESSION=<session>` from the output so later commands join this question)")
+    q.add_argument("text", nargs="+")
+    q.add_argument("--json", action="store_true")
     dialects = sorted({"mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite"})
     pc = sub.add_parser("code", help="link source code to tables and columns (index, where, what, stats)")
     pc.set_defaults(fn=cmd_code)
@@ -772,21 +870,105 @@ def main(argv=None) -> int:
     if extra:
         # Python 3.11 argparse stops filling `path`/`fields` once an option (--kind) appears between
         # positionals, so the trailing key=value pairs arrive here. Put them back where 3.12+ puts them.
-        if a.cmd != "context" or any(x.startswith("-") for x in extra):
+        if a.command != "context" or any(x.startswith("-") for x in extra):
             ap.error("unrecognized arguments: " + " ".join(extra))
         if a.path is None:
             a.path, extra = extra[0], extra[1:]
         a.fields = list(a.fields or []) + extra
-    if a.cmd == "context" and a.action == "add" and not a.kind:
+    if a.command == "context" and a.action == "add" and not a.kind:
         ap.error("context add needs --kind")
-    if a.cmd == "context" and a.action == "add" and a.path:
+    if a.command == "context" and a.action == "add" and a.path:
         a.fields = [a.path] + a.fields
     try:
-        a.fn(a)
+        _run(a)
     except (AmbiguousTable, UnknownTable, ValueError) as exc:
         print(f"keygraph: {exc}", file=sys.stderr)
         return 2
     return 0
+
+
+def _devlog():
+    from . import devlog
+    return devlog
+
+
+class _Tee:
+    """Forwards stdout and keeps its hash, size and (up to 16 KB) text, for the dev log."""
+
+    def __init__(self, real):
+        import hashlib
+        self.real, self.h, self.bytes, self.chars, self.lines, self.parts = real, hashlib.sha256(), 0, 0, 0, []
+
+    def write(self, s):
+        try:
+            b = s.encode("utf-8", "replace")
+            self.h.update(b)
+            self.bytes += len(b)
+            self.chars += len(s)
+            self.lines += s.count("\n")
+            if self.bytes <= _devlog().INLINE_MAX and len(b) <= _devlog().INLINE_MAX:
+                self.parts.append(s)
+        except Exception as exc:  # noqa: BLE001  (logging never changes output)
+            from . import devlog
+            devlog._warn(exc)
+        return self.real.write(s)
+
+    def __getattr__(self, name):
+        return getattr(self.real, name)
+
+
+# Only these commands print nothing a person typed or sampled (no SQL literals, snippets, profile values), so only
+# their text output is stored whole; every other command stores a hash, size and shape.
+_VALUE_FREE = {"path", "neighbors", "explain", "keys", "areas", "area", "doctor", "dev"}
+
+
+def _command_name(a) -> str:
+    return " ".join(x for x in (a.command, getattr(a, "code_cmd", None), getattr(a, "q_cmd", None)) if x)
+
+
+def _trace_name(a) -> str | None:
+    """Long tasks that write a build trace in dev mode: scan, load, render, profile, probe, code index, queries import."""
+    n = _command_name(a)
+    return n.replace(" ", "-") if n in ("scan", "load", "render", "profile", "probe", "code index", "queries import") else None
+
+
+def _run(a) -> None:
+    """Run the command; with dev mode on, also record it (masked args, timing, exit status, stdout hash)."""
+    from . import devlog
+    d = getattr(a, "dir", None)
+    if a.command in ("dev", "mcp", "ui") or d is None or not devlog.enabled(d):
+        a.fn(a)
+        return
+    name = _command_name(a)
+    args = {k: v for k, v in vars(a).items() if k not in ("fn", "dir", "command", "code_cmd", "q_cmd")}
+    real, tee, t0, ok, err, status, run_id, decisions = sys.stdout, None, time.perf_counter(), True, None, 0, None, None
+    tn = _trace_name(a)
+    try:
+        tee = sys.stdout = _Tee(real)
+        with devlog.tracing(d, tn) if tn else contextlib.nullcontext() as tpath, \
+                (contextlib.nullcontext() if tn else devlog.collecting()) as got:
+            run_id = tpath.stem if tpath else None
+            decisions = got
+            a.fn(a)
+    except BaseException as exc:
+        ok = False
+        err = {"type": type(exc).__name__, "message": str(exc)}
+        status = exc.code if isinstance(exc, SystemExit) and isinstance(exc.code, int) else \
+            0 if isinstance(exc, SystemExit) and not exc.code else 2 if isinstance(exc, (AmbiguousTable, UnknownTable, ValueError)) else 1
+        ok = status == 0
+        if ok:
+            err = None
+        raise
+    finally:
+        sys.stdout = real
+        try:
+            text = "".join(tee.parts) if tee else ""
+            resp = devlog.stdout_fields(name, text, tee.bytes, tee.h.hexdigest(), tee.chars // 4, a.command in _VALUE_FREE, tee.lines) if tee else {}
+            args["exit_status"] = status
+            devlog.Recorder(d, "cli").record("command", name, args,
+                                             (time.perf_counter() - t0) * 1000, ok, err, resp, decisions, trace=run_id)
+        except Exception as exc:  # noqa: BLE001
+            devlog._warn(exc)
 
 
 if __name__ == "__main__":

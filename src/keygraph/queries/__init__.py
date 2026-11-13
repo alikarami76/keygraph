@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .. import devlog
 from ..code.vocab import Vocab
 from ..graph import Graph
 from .fingerprint import fingerprint, normalize
@@ -40,6 +41,13 @@ def import_jsonl(db_path: str | Path, path: str | Path, keep_literals: bool = Fa
     """One JSON object per line with sql, source, ms, rows, context, tags, by, at, error. Bad lines are reported, not
     stored; good lines are stored even when others fail."""
     db_path = Path(db_path)
+    with devlog.phase("queries.import") as ph:
+        res = _import_jsonl(db_path, path, keep_literals, dialect)
+        ph["added"], ph["errors"] = res["added"], len(res["errors"])  # counts only, never SQL
+    return res
+
+
+def _import_jsonl(db_path: Path, path: str | Path, keep_literals: bool, dialect: str | None) -> dict:
     vocab = _vocab(db_path)
     added, errors = 0, []
     with QueryStore(db_path) as st:

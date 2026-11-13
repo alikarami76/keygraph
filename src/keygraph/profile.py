@@ -15,6 +15,7 @@ import time
 from collections import Counter
 from decimal import Decimal
 
+from . import devlog
 from .model import type_family
 
 PII_NAME = re.compile(
@@ -236,16 +237,19 @@ def run_profile(graph, source, ctx=None, tables: list[str] | None = None, top_hu
     for tid in chosen:
         if time.time() - t0 > total_budget_s:
             report["skipped"][tid] = "total time budget used up"
+            devlog.trace("profile.table", table=tid, outcome="skipped", reason="total time budget used up")
             continue
         node = graph.nodes[tid]
         try:
             res = profile_table(source, tid, node, pii_cols=pii_cols.get(tid), codes_by_col=codes.get(tid), **opts)
         except Exception as exc:  # noqa: BLE001
             report["failed"][tid] = str(exc)[:200]
+            devlog.trace("profile.table", table=tid, outcome="failed", error_type=type(exc).__name__)  # never the message
             continue
         meta = res.pop("_meta")
         if "skipped" in meta:
             report["skipped"][tid] = meta["skipped"]
+            devlog.trace("profile.table", table=tid, outcome="skipped", reason="row estimate over the limit" if "exceeds" in str(meta["skipped"]) else "skipped")
             continue
         for col, p in res.items():
             store[f"{tid}.{col}"] = p
@@ -254,10 +258,15 @@ def run_profile(graph, source, ctx=None, tables: list[str] | None = None, top_hu
             if rec.get("undocumented_codes"):
                 report["findings"].append(f"{tid}.{col}: values in data but undocumented: {', '.join(rec['undocumented_codes'][:6])}")
         report["profiled"] += 1
+        devlog.trace("profile.table", table=tid, outcome="profiled", columns=len(res), rows=meta.get("rows"),
+                     ms=round(float(meta.get("elapsed_s") or 0) * 1000, 1), over_budget=bool(meta.get("over_budget")))
         if meta.get("over_budget"):
             report.setdefault("over_budget", []).append(tid)
         log(f"  profiled {tid}: {meta['rows']} rows, {meta['elapsed_s']}s")
     report["seconds"] = round(time.time() - t0, 1)
+    devlog.trace("profile.summary", requested=report["requested"], profiled=report["profiled"], columns=report["columns"],
+                 skipped=len(report["skipped"]), failed=len(report["failed"]), findings=len(report["findings"]))
     if ctx is not None:
-        ctx.save_profiles(store)
+        with devlog.phase("profile.save"):
+            ctx.save_profiles(store)
     return report

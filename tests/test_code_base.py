@@ -67,6 +67,23 @@ def test_snippets_mask_secrets_and_trim():
     assert len(snippet("    " + "x" * 400)) == 160 and snippet("  a  ") == "a"
 
 
+def test_auth_schemes_and_dotted_secret_keys_are_masked():
+    assert mask_secrets("Authorization: Bearer abc123") == "Authorization: Bearer ***"
+    assert mask_secrets("curl -H 'Authorization: Basic dXNlcjpw' x") == "curl -H 'Authorization: Basic ***' x"
+    assert mask_secrets("Authorization: Token abcd") == "Authorization: Token ***"
+    assert mask_secrets("Authorization: Digest username1") == "Authorization: Digest ***"
+    assert mask_secrets("headers = {'x': 'Bearer abc123'}") == "headers = {'x': 'Bearer ***'}"
+    assert mask_secrets("Basic usage of the tool") == "Basic usage of the tool"
+    assert mask_secrets("conn.password=x") == "conn.password=***"
+    assert mask_secrets("cfg.api_key: y") == "cfg.api_key: ***"
+    assert mask_secrets("a.token = b.token") == "a.token = b.token"  # a dotted value is a column ref
+    assert mask_secrets("x.y.secret = other.col") == "x.y.secret = other.col"
+    import time
+    t0 = time.perf_counter()
+    mask_secrets("Bearer " + "a" * 50000 + " " + "a." * 20000)
+    assert time.perf_counter() - t0 < 0.5
+
+
 def test_store_round_trip_and_readonly_on_missing_file(tmp_path):
     db = tmp_path / "keygraph.db"
     with CodeStore(db, readonly=True) as st:

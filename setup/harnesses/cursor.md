@@ -17,6 +17,8 @@ Create or merge into `.cursor/mcp.json` in the project, or `~/.cursor/mcp.json` 
 }
 ```
 
+Optional, dev mode (SETUP.md step 9): add `"env": { "KEYGRAPH_DEV": "1" }` next to `args`, or run `keygraph dev on --dir "$OUT"` and restart the server.
+
 Cursor does not see your shell PATH, so `command` must be the absolute path. `doctor` already prints it.
 
 ## 2. Skill and standing instructions
@@ -27,5 +29,5 @@ Cursor does not see your shell PATH, so `command` must be the absolute path. `do
 
 ## 3. Verify
 
-- Cursor Settings → MCP (or Tools & Integrations): `keygraph` shows a green dot and 15 tools. If it is red, click it to see the error. The usual cause is a non-absolute `command`.
+- Cursor Settings → MCP (or Tools & Integrations): `keygraph` shows a green dot and 15 tools (16 if dev mode is on). If it is red, click it to see the error. The usual cause is a non-absolute `command`.
 - Open a new Agent chat and do step 7.3 of SETUP.md.

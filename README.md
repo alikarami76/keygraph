@@ -7,7 +7,7 @@
 
 keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input. It can also link your source code to the same tables and columns (where each column is declared, written, read and used) and keep a log of the queries people and agents ran, with their timing and the business question behind them.
 
-**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Fifteen MCP tools: fourteen read-only and one that logs a query. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
+**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Fifteen MCP tools (plus `dev_note` only in dev mode): fourteen read-only and one that logs a query. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
 
 [![PyPI](https://img.shields.io/pypi/v/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
 
@@ -57,7 +57,7 @@ Build the map once with `keygraph scan`, then let your agent look up tables, joi
 5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile. Before you write it, if code or past queries were indexed, `code_where` shows how a column is used in code and `query_for` shows queries that already touched the table, with their business question and timing.
 6. Check the result against what the map said: aggregate before a fan-out join, treat relations below 0.6 confidence as unverified, and verify them with a small `SELECT`. Then log the query you ran with `query_submit` (or `keygraph queries add`), so the next agent can reuse a proven query shape. `query_submit` only records; keygraph still runs nothing.
 
-Register the MCP server once and the fifteen tools appear in your agent (the configs for other clients are in [MCP](#mcp)):
+Register the MCP server once and the fifteen tools (sixteen with dev mode on) appear in your agent (the configs for other clients are in [MCP](#mcp)):
 
     claude mcp add keygraph -- uvx --from 'keygraph[mcp]' keygraph mcp --dir /abs/path/to/out
 
@@ -97,6 +97,7 @@ pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
 keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
 keygraph ui                                                          # opens keygraph-out/keygraph.html (for the demo: keygraph ui --dir keygraph-demo)
 keygraph doctor                                                      # checks the install, the map and the MCP server
+keygraph dev on                                                      # optional: record how agents use keygraph (see Dev mode)
 ```
 
 `scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, and the connection's current schema for PostgreSQL and SQL Server; a scan that finds no tables stops with a message suggesting `--schema` or `--all-schemas`). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
@@ -196,7 +197,7 @@ The Claude Code skill is in [skills/keygraph/SKILL.md](https://github.com/alikar
 directory (`<out>` below, e.g. `keygraph-out`). Tools (`describe` takes `brief=true`, `search` takes `with_paths=false`, the same as the CLI `describe --brief` and `search --no-paths`; `describe` and `neighbors` take `min_confidence`, default 0.6, the same as the CLI `--min-confidence`, and report how many weaker relations they hid): `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
 `areas`, `area`, `profile_summary` (stored, sampled profiles; PII values are withheld), `code_where` and `code_what`
 (the code index), `query_for`, `query_top` and `query_search` (the query log), and `query_submit`, the one tool that
-writes: it logs a query the agent ran into the query log tables and nothing else. Each returns the same JSON as
+writes: it logs a query the agent ran into the query log tables and nothing else. In dev mode (below) there is also `dev_note`. Each returns the same JSON as
 the CLI's `--json`, except that `areas` wraps the list of areas as `{"areas": [...]}` because MCP tool results must be objects. `path`, `areas` and `area` take `include_mirrors`. Resources: `keygraph://areas/index` and
 `keygraph://tables/{schema.table}`. The server never runs SQL against your database.
 
@@ -242,6 +243,14 @@ Codex (`~/.codex/config.toml`):
 
 (Use one `[mcp_servers.keygraph]` block, not both.)
 
+Optional, for dev mode: pass `KEYGRAPH_DEV=1` to the server. Claude Code: add `-e KEYGRAPH_DEV=1` before the `--` (`claude mcp add keygraph -e KEYGRAPH_DEV=1 -- uvx ...`). JSON clients: add `"env": {"KEYGRAPH_DEV": "1"}` next to `args`. Codex: add a `[mcp_servers.keygraph.env]` table with `KEYGRAPH_DEV = "1"`. Or run `keygraph dev on --dir /abs/path/to/out` and restart the server.
+
+### Dev mode
+
+Dev mode is off by default. Turn it on (`keygraph dev on`, or `KEYGRAPH_DEV=1`) to record how agents use keygraph: every MCP call and CLI command with its arguments, timing and answer size, the decisions behind an answer (which rule resolved a table name, why one join path won), and a trace of each build with every inference candidate kept or rejected. `keygraph dev report` turns the log into a report: most-used tools, slow and failing calls, empty and ambiguous answers, repeated calls, and what the latest build decided. In dev mode the MCP server also lists `dev_note`, which lets the agent attach the user's question, because keygraph sees tool calls and never the conversation.
+
+Database row values, profile values, SQL literals, secrets and connection URLs are never recorded. Table and column names and the text agents write (search queries, notes) are, with secrets masked. The log stays on your machine in `<out>/dev/`, `keygraph doctor` shows a `dev_mode` line, and existing JSON output does not change. Details, the event format and overhead are in [docs/dev-mode.md](https://github.com/alikarami76/keygraph/blob/main/docs/dev-mode.md).
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/section-relations-inferred-dark.svg">
   <img alt="How relations are inferred" src="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/section-relations-inferred-light.svg">
@@ -249,7 +258,7 @@ Codex (`~/.codex/config.toml`):
 
 ## How relations are inferred
 
-Declared foreign keys score 1.0. For every other column, keygraph matches names and key shapes: a column such as `customer_id` or `customerId` is matched to a table named `customer(s)` whose primary or unique key is a single column. Plurals, common prefixes, role prefixes (`buyer_user_id` to `users`), `*_by_id` columns (mapped to a users-like table), `parent_id` self-references and columns named like another table's primary key are handled. `<x>_type` plus `<x>_id` pairs are marked polymorphic, with no single target.
+Declared foreign keys score 1.0. For every other column, keygraph matches names and key shapes: a column such as `customer_id` or `customerId` is matched to a table named `customer(s)` whose primary or unique key is a single column. Plurals, common prefixes, role prefixes (`buyer_user_id` to `users`), `*_by_id` columns (mapped to a users-like table), `parent_id` self-references and columns named like another table's primary key are handled. `<x>_type` plus `<x>_id` pairs are marked polymorphic, with no single target. For databases that declare no foreign keys, five more naming rules apply: a column of any name that equals the single-column primary or unique key of exactly one other table (`school_code`, `uuid`); reference prefixes `link_to_`, `ref_`, `fk_` and `id_`; numbered role columns such as `home_player_1`; `<table>_<column>` names such as `setCode` for `sets.code`; and a bare `id` column in a table with no key of its own. They start from a lower base score than the `_id` rule (name-only edges are capped at 0.75 unless types match exactly and the column is indexed; `link_to_` and `fk_` edges are not capped), and every edge names its rule in its evidence.
 
 Each inferred relation carries a confidence between 0 and 1 and the evidence lines that produced it. A compatible type, an index on the column, a primary-key target and a business relation in the context file raise it. A type mismatch, a cross-schema match and more than one possible target lower it. The optional `keygraph probe` samples values (SELECT only) to measure the real match rate. Read the number like this: 0.8 and above, use it; 0.6 to 0.8, read the evidence first; below 0.6, check it with a small SELECT. The explorer hides edges below 0.6 until you switch on "Show weak relations" (floor 0.4).
 
@@ -372,6 +381,8 @@ Run `keygraph path A B`. It returns ranked routes with the join columns, each ho
 ### How do I infer missing foreign keys?
 Build the graph with `keygraph scan` or `keygraph load`. Every column that looks like a reference gets an inferred relation with a confidence and the reasons. Names such as `customer_id` are matched to a table with a single-column key, and an index or a primary-key target raises the score. `keygraph probe` can then sample values to check the match rate.
 
+On the BIRD mini-dev databases with their foreign keys stripped, keygraph recovers 65.4% of the declared keys at confidence 0.6 or higher (52.9% in 0.3.3) with precision of at least 93%, a lower bound. Method, datasets and caveats: [bench/README.md](bench/README.md#fk-recovery).
+
 ### How do I get an ER diagram from an existing database?
 Build the graph and open `keygraph.html`, or read `areas/<area>.md`, which contains a Mermaid ER diagram for each business area. Large databases are split into areas. The Mermaid diagram draws at most an area's 25 most connected tables and says so on the page when it leaves tables out; the explorer's canvas never draws more than 40 boxes. In the explorer, declared foreign keys are solid lines and inferred ones are dashed.
 
@@ -384,7 +395,7 @@ Have the agent ask keygraph for the path before it writes a join. `keygraph path
 ### Can an LLM agent query my database through keygraph?
 No. keygraph has no tool that runs SQL, and the MCP server never runs SQL against your database. The agent reads the map, writes SQL, and runs it with whatever read-only database access you give it separately. The `query_submit` tool only logs a query the agent already ran.
 
-The server exposes fifteen tools, fourteen read-only and `query_submit`, which only writes the query log, and it never runs SQL against your database.
+The server exposes fifteen tools, fourteen read-only and `query_submit`, which only writes the query log, plus `dev_note` when dev mode is on, and it never runs SQL against your database.
 
 ### How do I find where a column is used in code?
 Index your repos with `keygraph code index ./repo --name repo`, then run `keygraph code where schema.table.column`. It lists the ORM declarations first, then the SQL that writes and reads the column, then uses of its property, each with file, line, rule and confidence. `keygraph code what path/to/file.py:42` goes the other way.
@@ -417,7 +428,7 @@ No. It makes no network requests of its own beyond the connection to the databas
 It is built for them. The overview shows areas, not tables. An area over 25 tables first shows its 25 most connected tables (in the explorer and in the Mermaid diagram of `areas/<area>.md`), and no explorer canvas draws more than 40 boxes. Profiling samples with one bounded SELECT per table and can skip tables above a row limit (`--skip-over-rows`). No benchmarks are published here.
 
 ### How do I set up the MCP server?
-Install `keygraph[mcp]`, build an output directory, then register `keygraph mcp --dir /abs/path/to/out` with your client. Copy-paste configs for Claude Code, Claude Desktop, Cursor and Codex are in the [MCP section](#mcp) above. The server exposes fifteen tools (fourteen read-only, plus `query_submit`, which only logs a query) and never runs SQL against your database.
+Install `keygraph[mcp]`, build an output directory, then register `keygraph mcp --dir /abs/path/to/out` with your client. Copy-paste configs for Claude Code, Claude Desktop, Cursor and Codex are in the [MCP section](#mcp) above. The server exposes fifteen tools (fourteen read-only, plus `query_submit`, which only logs a query; a sixteenth, `dev_note`, appears only in dev mode) and never runs SQL against your database.
 
 ### How does confidence work?
 Confidence is a score from 0 to 1 for an inferred relation. Declared foreign keys are 1.0; inferred ones are raised or lowered by name match, types, indexes, key targets, ambiguity and cross-schema matches, and every reason is listed as evidence. Use 0.8 and above freely, read the evidence between 0.6 and 0.8, and verify anything lower.

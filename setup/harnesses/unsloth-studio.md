@@ -15,6 +15,8 @@ In Unsloth Studio's MCP settings, add a custom server:
 | Command | `COMMAND` (absolute path) |
 | Arguments | `ARGS` |
 
+Optional, dev mode (SETUP.md step 9): if the form has an environment variables field, add `KEYGRAPH_DEV` = `1`; otherwise run `keygraph dev on --dir "$OUT"`. Restart the server afterwards.
+
 If you cannot change the settings yourself, give the user this table with the real values and wait for them to confirm.
 
 ## 2. Model and instructions

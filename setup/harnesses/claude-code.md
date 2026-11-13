@@ -13,6 +13,8 @@ claude mcp add keygraph --scope local -- COMMAND ARGS...
 claude mcp add keygraph --scope user -- COMMAND ARGS...
 ```
 
+Optional, dev mode (SETUP.md step 9): add `-e KEYGRAPH_DEV=1` before the `--`, for example `claude mcp add keygraph --scope local -e KEYGRAPH_DEV=1 -- COMMAND ARGS...`. Or skip it and run `keygraph dev on --dir "$OUT"`.
+
 Example: `claude mcp add keygraph --scope local -- /Users/me/.local/share/uv/tools/keygraph/bin/python -m keygraph mcp --dir /Users/me/app/keygraph-out`
 
 Do not use `--scope project` (which writes `.mcp.json`, usually committed) unless the user wants teammates to share it. The absolute paths are personal, so for a team commit a version that uses `uvx --from 'keygraph[mcp]' keygraph mcp --dir ./keygraph-out` instead.
