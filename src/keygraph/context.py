@@ -8,6 +8,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from typing import ClassVar
 
 _DIGITS = {**{0x0660 + i: 0x30 + i for i in range(10)}, **{0x06F0 + i: 0x30 + i for i in range(10)}}
 _MAP = {0x064A: 0x06CC, 0x0649: 0x06CC, 0x0643: 0x06A9, 0x200C: 0x20, 0x0640: None, 0x06C0: 0x0647, 0x0629: 0x0647}
@@ -243,7 +244,7 @@ class ContextDB:
         return out
 
     # per kind: (table, how to find the key columns from the input dict, {input field: stored column}, JSON-decoded fields)
-    _MERGE = {
+    _MERGE: ClassVar[dict] = {
         "concept": ("concepts", lambda s, d: {"name": str(d["name"]).strip()},
                     {"definition": "definition", "domain": "domain", "owner": "owner", "synonyms": "synonyms"}, ("synonyms",)),
         "link": ("concept_links", lambda s, d: {"concept": d["concept"], "table_id": s._tid(d["table"]), "col": d.get("column") or "",
