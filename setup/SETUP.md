@@ -192,6 +192,15 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
    - how to rebuild after schema changes: one command, from the record;
    - one thing they can do to improve it: review `keygraph-context.yaml`, or confirm or reject the relations below 0.8 in `RELATIONS_REPORT.md`.
 
+## Step 9. Optional: dev mode (default off)
+
+Skip this step unless the user says they want to help improve keygraph or are developing it. Ask them once, in your report (step 8), not as a seventh question. Dev mode records how agents use keygraph, locally, and never records database rows or secrets (details: `docs/dev-mode.md`).
+
+1. Turn it on, by one of two ways: run `keygraph dev on --dir "$OUT"`, or add `KEYGRAPH_DEV=1` to the MCP server's environment (the optional line in your harness file).
+2. Verify: `keygraph dev status --dir "$OUT" --json` must show `"enabled": true`. If not, repeat 1 and read `source` in the output.
+3. Restart the MCP server (the harness file says how), because the `dev_note` tool appears only if dev mode was on when the server started. Then check that `dev_note` is in the tool list. `keygraph doctor --dir "$OUT"` has a `dev_mode` line that says on or off.
+4. Tell the user how to read it later: `keygraph dev report --dir "$OUT"`, and how to turn it off: `keygraph dev off --dir "$OUT"`.
+
 ## Keeping it current
 
 - Rebuild after migrations: rerun the build command from `OUT/SETUP.md`, then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like the demo's build.sh, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.

@@ -18,7 +18,9 @@ All query commands take `--json`. Table names resolve leniently: a bare name wor
 
 5. Code and past queries: `keygraph code where T.col` lists ORM declarations, SQL writes and reads and property uses with file, line and confidence; `keygraph code what path:line` (or `--symbol getStatus`) goes from code to tables. `keygraph queries for T`, `queries top --table T`, `queries slow` and `queries search "<question>"` show earlier queries with their business question and timing. After running a query, log it with `keygraph queries add --sql f.sql --source <db> --ms <ms> --context "<question>"`. Index code with `keygraph code index REPO --name NAME [--patterns code-patterns.yaml]`.
 
-MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`, `code_where`, `code_what`, `query_for`, `query_top`, `query_search`, `query_submit`) instead of the CLI; they return the same JSON as `--json`. All are read-only except `query_submit`, which only logs a query you ran.
+MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`, `code_where`, `code_what`, `query_for`, `query_top`, `query_search`, `query_submit`) instead of the CLI; they return the same JSON as `--json`. All are read-only except `query_submit`, which only logs a query you ran. In dev mode the server also lists `dev_note`.
+
+Dev mode (optional): if a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data. If it is not listed, do nothing. Without MCP, run `keygraph dev note "<question>" --json`, then `export KEYGRAPH_DEV_SESSION=<session>` (from its output) so later commands join that question; if it says dev mode is off, do nothing more. `keygraph dev on|off|status|report|export|clear` are for the person running keygraph; see docs/dev-mode.md. Dev mode never records database rows or secrets.
 
 ## Read confidence honestly
 
@@ -54,7 +56,7 @@ Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-
 
 ## Check and report
 
-`keygraph doctor --dir <out>` checks the install, the map and the MCP server, and prints the exact MCP launch command with absolute paths. Run it after a setup or when a tool misbehaves. If keygraph itself is at fault (a crash, a missing declared key, a JOIN on columns that do not exist), follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md: `keygraph doctor --report env.md` gives a redacted environment block. Never open an issue without the user's yes. Setting keygraph up for someone? Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md.
+`keygraph doctor --dir <out>` checks the install, the map and the MCP server (it lists 15 tools, or 16 with dev mode on), and prints the exact MCP launch command with absolute paths. Run it after a setup or when a tool misbehaves. If keygraph itself is at fault (a crash, a missing declared key, a JOIN on columns that do not exist), follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md: `keygraph doctor --report env.md` gives a redacted environment block. Never open an issue without the user's yes. Setting keygraph up for someone? Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md.
 
 ## Explorer
 

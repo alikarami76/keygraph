@@ -14,6 +14,8 @@ Claude Desktop (`claude_desktop_config.json`), Windsurf (`~/.codeium/windsurf/mc
 { "mcpServers": { "keygraph": { "command": "/abs/path/to/python", "args": ["-m", "keygraph", "mcp", "--dir", "/abs/path/to/keygraph-out"] } } }
 ```
 
+Optional, for dev mode (see SETUP.md step 9): add `"env": { "KEYGRAPH_DEV": "1" }` to the server entry, or run `keygraph dev on --dir OUT` and restart the server.
+
 ## Zed
 
 In Zed's `settings.json`:
@@ -42,6 +44,7 @@ Any agent that can run shell commands can use keygraph. Every query command take
 | `code_where` / `code_what` | `keygraph code where <t[.c]> --json`, `keygraph code what <path[:line]> --json` |
 | `query_for` / `query_top` / `query_search` | `keygraph queries for <t>`, `queries top --table <t>`, `queries search "<q>"` (all with `--json`) |
 | `query_submit` | `keygraph queries add --sql <file> --source <db> --ms <ms> --context "<question>"` |
+| `dev_note` (dev mode only) | `keygraph dev note --json --dir OUT "<question>"`, then `export KEYGRAPH_DEV_SESSION=<session>` |
 
 Set `KEYGRAPH_DIR=OUT` in the agent's environment so you can leave out `--dir`. For step 7.3 of SETUP.md, the CLI version of `search` and `path` counts as the check.
 

@@ -16,6 +16,10 @@ Commands below assume a built output directory (default `keygraph-out`, set with
 6. See how the data is used and queried. If code was indexed, `keygraph code where <table[.column]> --json` lists where it is declared, written, read and used, and `keygraph code what <path[:line]> --json` goes from code to tables. If queries were logged, `keygraph queries for <table[.column]> --json` and `keygraph queries top --table <table> --json` show earlier queries with their business question and timing; reuse a proven query shape instead of inventing one.
 7. After you run a query, log it: `keygraph queries add --sql <file> --source <db> --ms <ms> --rows <n> --context "<the question>"`, or the MCP `query_submit` tool. Literals are masked before storing.
 
+## Dev mode (optional)
+
+If a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data. If it is not listed, do nothing. Without MCP, run `keygraph dev note "<question>" --json` and then `export KEYGRAPH_DEV_SESSION=<session from the output>`; if it says dev mode is off, do nothing more. Details: [docs/dev-mode.md](docs/dev-mode.md).
+
 ## How to read confidence
 
 Declared foreign keys have confidence 1.0. Inferred relations are guesses from names, types, indexes and key shapes.
@@ -46,6 +50,10 @@ When you confirm what a table, column or status code means, save it so the next 
 ## Files you can read directly
 
 `areas/index.md` (every area), `areas/<area>.md` (tables, joins, a Mermaid ER diagram), `tables/<schema.table>.md` (grain, keys, columns, relations in both directions), `RELATIONS_REPORT.md` (all relations with evidence) and `graph.json` (everything, machine readable). `build.json` records when the map was built, by which keygraph version, from which source (kind and database name only) and which schemas it covers; an unknown-table error names those schemas, so retry with `--schema` or `--all-schemas` when the table lives elsewhere.
+
+## Dev mode commands
+
+`keygraph dev on|off|status|clear|note`, `dev report [--json] [--since D] [--session ID]` and `dev export FILE[.gz]` record and read how agents use keygraph. They are for the people running keygraph; use them only when asked.
 
 ## Build the graph
 
