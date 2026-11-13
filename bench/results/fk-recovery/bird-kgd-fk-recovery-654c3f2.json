@@ -1,0 +1,403 @@
+{
+ "databases": [
+  {
+   "db": "california_schools",
+   "scores": {
+    "0.6": {
+     "declared": 2,
+     "extras": [],
+     "hits": 0,
+     "inferred": 0,
+     "misses": [
+      "frpm.cdscode <-> schools.cdscode",
+      "satscores.cds <-> schools.cdscode"
+     ]
+    },
+    "0.8": {
+     "declared": 2,
+     "extras": [],
+     "hits": 0,
+     "inferred": 0,
+     "misses": [
+      "frpm.cdscode <-> schools.cdscode",
+      "satscores.cds <-> schools.cdscode"
+     ]
+    }
+   },
+   "sha256": "c0903eec662e63068fd1d14403d3d6c1d473287fc10c4356333ea58f878db983",
+   "tables": 3
+  },
+  {
+   "db": "card_games",
+   "scores": {
+    "0.6": {
+     "declared": 4,
+     "extras": [],
+     "hits": 0,
+     "inferred": 0,
+     "misses": [
+      "cards.uuid <-> foreign_data.uuid",
+      "cards.uuid <-> legalities.uuid",
+      "cards.uuid <-> rulings.uuid",
+      "set_translations.setcode <-> sets.code"
+     ]
+    },
+    "0.8": {
+     "declared": 4,
+     "extras": [],
+     "hits": 0,
+     "inferred": 0,
+     "misses": [
+      "cards.uuid <-> foreign_data.uuid",
+      "cards.uuid <-> legalities.uuid",
+      "cards.uuid <-> rulings.uuid",
+      "set_translations.setcode <-> sets.code"
+     ]
+    }
+   },
+   "sha256": "c98bdb57fe7474da798b407785544b9af0daaad5d61fd21e2a73309493bc1227",
+   "tables": 6
+  },
+  {
+   "db": "codebase_community",
+   "scores": {
+    "0.6": {
+     "declared": 13,
+     "extras": [
+      {
+       "confidence": 0.73,
+       "evidence": "role prefix 'wiki' stripped, 'post' matches table name",
+       "pair": "posts.id <-> tags.wikipostid"
+      }
+     ],
+     "hits": 13,
+     "inferred": 14,
+     "misses": []
+    },
+    "0.8": {
+     "declared": 13,
+     "extras": [],
+     "hits": 11,
+     "inferred": 11,
+     "misses": [
+      "posts.id <-> tags.excerptpostid",
+      "posts.lasteditoruserid <-> users.id"
+     ]
+    }
+   },
+   "sha256": "92101be6d2a9f6adceea59d38f6d1c556087f9eea1432432a21268cb1348036d",
+   "tables": 8
+  },
+  {
+   "db": "debit_card_specializing",
+   "scores": {
+    "0.6": {
+     "declared": 1,
+     "extras": [
+      {
+       "confidence": 0.95,
+       "evidence": "column name 'CustomerID' matches table name",
+       "pair": "customers.customerid <-> transactions_1k.customerid"
+      },
+      {
+       "confidence": 0.93,
+       "evidence": "column name 'GasStationID' equals the primary key name of main.gasstations",
+       "pair": "gasstations.gasstationid <-> transactions_1k.gasstationid"
+      },
+      {
+       "confidence": 0.95,
+       "evidence": "column name 'ProductID' matches table name",
+       "pair": "products.productid <-> transactions_1k.productid"
+      }
+     ],
+     "hits": 1,
+     "inferred": 4,
+     "misses": []
+    },
+    "0.8": {
+     "declared": 1,
+     "extras": [
+      {
+       "confidence": 0.95,
+       "evidence": "column name 'CustomerID' matches table name",
+       "pair": "customers.customerid <-> transactions_1k.customerid"
+      },
+      {
+       "confidence": 0.93,
+       "evidence": "column name 'GasStationID' equals the primary key name of main.gasstations",
+       "pair": "gasstations.gasstationid <-> transactions_1k.gasstationid"
+      },
+      {
+       "confidence": 0.95,
+       "evidence": "column name 'ProductID' matches table name",
+       "pair": "products.productid <-> transactions_1k.productid"
+      }
+     ],
+     "hits": 1,
+     "inferred": 4,
+     "misses": []
+    }
+   },
+   "sha256": "b3d149ad05746dbbe5116e229e17e18f09c39db43cf117d9ef3441753608b691",
+   "tables": 5
+  },
+  {
+   "db": "european_football_2",
+   "scores": {
+    "0.6": {
+     "declared": 31,
+     "extras": [],
+     "hits": 6,
+     "inferred": 6,
+     "misses": [
+      "match.away_player_1 <-> player.player_api_id",
+      "match.away_player_10 <-> player.player_api_id",
+      "match.away_player_11 <-> player.player_api_id",
+      "match.away_player_2 <-> player.player_api_id",
+      "match.away_player_3 <-> player.player_api_id",
+      "match.away_player_4 <-> player.player_api_id",
+      "match.away_player_5 <-> player.player_api_id",
+      "match.away_player_6 <-> player.player_api_id",
+      "match.away_player_7 <-> player.player_api_id",
+      "match.away_player_8 <-> player.player_api_id",
+      "match.away_player_9 <-> player.player_api_id",
+      "match.away_team_api_id <-> team.team_api_id",
+      "match.home_player_1 <-> player.player_api_id",
+      "match.home_player_10 <-> player.player_api_id",
+      "match.home_player_11 <-> player.player_api_id",
+      "match.home_player_2 <-> player.player_api_id",
+      "match.home_player_3 <-> player.player_api_id",
+      "match.home_player_4 <-> player.player_api_id",
+      "match.home_player_5 <-> player.player_api_id",
+      "match.home_player_6 <-> player.player_api_id",
+      "match.home_player_7 <-> player.player_api_id",
+      "match.home_player_8 <-> player.player_api_id",
+      "match.home_player_9 <-> player.player_api_id",
+      "match.home_team_api_id <-> team.team_api_id",
+      "team.team_fifa_api_id <-> team_attributes.team_fifa_api_id"
+     ]
+    },
+    "0.8": {
+     "declared": 31,
+     "extras": [],
+     "hits": 3,
+     "inferred": 3,
+     "misses": [
+      "match.away_player_1 <-> player.player_api_id",
+      "match.away_player_10 <-> player.player_api_id",
+      "match.away_player_11 <-> player.player_api_id",
+      "match.away_player_2 <-> player.player_api_id",
+      "match.away_player_3 <-> player.player_api_id",
+      "match.away_player_4 <-> player.player_api_id",
+      "match.away_player_5 <-> player.player_api_id",
+      "match.away_player_6 <-> player.player_api_id",
+      "match.away_player_7 <-> player.player_api_id",
+      "match.away_player_8 <-> player.player_api_id",
+      "match.away_player_9 <-> player.player_api_id",
+      "match.away_team_api_id <-> team.team_api_id",
+      "match.home_player_1 <-> player.player_api_id",
+      "match.home_player_10 <-> player.player_api_id",
+      "match.home_player_11 <-> player.player_api_id",
+      "match.home_player_2 <-> player.player_api_id",
+      "match.home_player_3 <-> player.player_api_id",
+      "match.home_player_4 <-> player.player_api_id",
+      "match.home_player_5 <-> player.player_api_id",
+      "match.home_player_6 <-> player.player_api_id",
+      "match.home_player_7 <-> player.player_api_id",
+      "match.home_player_8 <-> player.player_api_id",
+      "match.home_player_9 <-> player.player_api_id",
+      "match.home_team_api_id <-> team.team_api_id",
+      "player.player_api_id <-> player_attributes.player_api_id",
+      "player.player_fifa_api_id <-> player_attributes.player_fifa_api_id",
+      "team.team_api_id <-> team_attributes.team_api_id",
+      "team.team_fifa_api_id <-> team_attributes.team_fifa_api_id"
+     ]
+    }
+   },
+   "sha256": "f72f5c9b990371417288a67b27a02e601ef904d45525c2c9f7931fb01001c536",
+   "tables": 7
+  },
+  {
+   "db": "financial",
+   "scores": {
+    "0.6": {
+     "declared": 8,
+     "extras": [],
+     "hits": 8,
+     "inferred": 8,
+     "misses": []
+    },
+    "0.8": {
+     "declared": 8,
+     "extras": [],
+     "hits": 8,
+     "inferred": 8,
+     "misses": []
+    }
+   },
+   "sha256": "d15d89cdb068a202b6f2b99342af44dffc1d52545b39ceaf62efdc0ba570101e",
+   "tables": 8
+  },
+  {
+   "db": "formula_1",
+   "scores": {
+    "0.6": {
+     "declared": 19,
+     "extras": [
+      {
+       "confidence": 0.8,
+       "evidence": "role prefix 'constructor' stripped, 'results' matches table name",
+       "pair": "constructorresults.constructorresultsid <-> results.resultid"
+      }
+     ],
+     "hits": 19,
+     "inferred": 20,
+     "misses": []
+    },
+    "0.8": {
+     "declared": 19,
+     "extras": [
+      {
+       "confidence": 0.8,
+       "evidence": "role prefix 'constructor' stripped, 'results' matches table name",
+       "pair": "constructorresults.constructorresultsid <-> results.resultid"
+      }
+     ],
+     "hits": 18,
+     "inferred": 19,
+     "misses": [
+      "races.year <-> seasons.year"
+     ]
+    }
+   },
+   "sha256": "79770caf966707e35516fa566e24b40ae515c74ec1ec4631235245645b87b24d",
+   "tables": 13
+  },
+  {
+   "db": "student_club",
+   "scores": {
+    "0.6": {
+     "declared": 8,
+     "extras": [],
+     "hits": 7,
+     "inferred": 7,
+     "misses": [
+      "member.zip <-> zip_code.zip_code"
+     ]
+    },
+    "0.8": {
+     "declared": 8,
+     "extras": [],
+     "hits": 7,
+     "inferred": 7,
+     "misses": [
+      "member.zip <-> zip_code.zip_code"
+     ]
+    }
+   },
+   "sha256": "eb89bcfe97eefa386a27904ec5aa15159811a7eac894ec659a36e48fa9f76b77",
+   "tables": 8
+  },
+  {
+   "db": "superhero",
+   "scores": {
+    "0.6": {
+     "declared": 11,
+     "extras": [],
+     "hits": 8,
+     "inferred": 8,
+     "misses": [
+      "hero_attribute.hero_id <-> superhero.id",
+      "hero_power.hero_id <-> superhero.id",
+      "hero_power.power_id <-> superpower.id"
+     ]
+    },
+    "0.8": {
+     "declared": 11,
+     "extras": [],
+     "hits": 5,
+     "inferred": 5,
+     "misses": [
+      "colour.id <-> superhero.eye_colour_id",
+      "colour.id <-> superhero.hair_colour_id",
+      "colour.id <-> superhero.skin_colour_id",
+      "hero_attribute.hero_id <-> superhero.id",
+      "hero_power.hero_id <-> superhero.id",
+      "hero_power.power_id <-> superpower.id"
+     ]
+    }
+   },
+   "sha256": "75e94a2c3236ee3bb2c01fb97a1c4b4c1c269bcefd4eab1d04be323d2d0825b1",
+   "tables": 10
+  },
+  {
+   "db": "thrombosis_prediction",
+   "scores": {
+    "0.6": {
+     "declared": 2,
+     "extras": [],
+     "hits": 1,
+     "inferred": 1,
+     "misses": [
+      "laboratory.id <-> patient.id"
+     ]
+    },
+    "0.8": {
+     "declared": 2,
+     "extras": [],
+     "hits": 0,
+     "inferred": 0,
+     "misses": [
+      "examination.id <-> patient.id",
+      "laboratory.id <-> patient.id"
+     ]
+    }
+   },
+   "sha256": "87583183c3dc472fba04de702965560a9d7c0a548836613f242317e0eeb83f00",
+   "tables": 3
+  },
+  {
+   "db": "toxicology",
+   "scores": {
+    "0.6": {
+     "declared": 5,
+     "extras": [],
+     "hits": 5,
+     "inferred": 5,
+     "misses": []
+    },
+    "0.8": {
+     "declared": 5,
+     "extras": [],
+     "hits": 4,
+     "inferred": 4,
+     "misses": [
+      "atom.atom_id <-> connected.atom_id2"
+     ]
+    }
+   },
+   "sha256": "35ef27ae6bdfda530e125ed369666ac0abb8bc8c0bcc0ad09407f547ecb61a93",
+   "tables": 4
+  }
+ ],
+ "date": "2026-11-12",
+ "git_sha": null,
+ "keygraph_version": "0.3.3",
+ "label": "bird mini-dev (kgd-fk-recovery-654c3f2)",
+ "total": {
+  "0.6": {
+   "declared": 104,
+   "hits": 68,
+   "inferred": 73,
+   "precision_lower_bound": 0.9315,
+   "recall": 0.6538
+  },
+  "0.8": {
+   "declared": 104,
+   "hits": 57,
+   "inferred": 61,
+   "precision_lower_bound": 0.9344,
+   "recall": 0.5481
+  }
+ }
+}

@@ -368,6 +368,8 @@ Run `keygraph path A B`. It returns ranked routes with the join columns, each ho
 ### How do I infer missing foreign keys?
 Build the graph with `keygraph scan` or `keygraph load`. Every column that looks like a reference gets an inferred relation with a confidence and the reasons. Names such as `customer_id` are matched to a table with a single-column key, and an index or a primary-key target raises the score. `keygraph probe` can then sample values to check the match rate.
 
+On the BIRD mini-dev databases with their foreign keys stripped, keygraph recovers 65.4% of the declared keys at confidence 0.6 or higher (52.9% in 0.3.3) with precision of at least 93%, a lower bound. Method, datasets and caveats: [bench/README.md](bench/README.md#fk-recovery).
+
 ### How do I get an ER diagram from an existing database?
 Build the graph and open `keygraph.html`, or read `areas/<area>.md`, which contains a Mermaid ER diagram for each business area. Large databases are split into areas. The Mermaid diagram draws at most an area's 25 most connected tables and says so on the page when it leaves tables out; the explorer's canvas never draws more than 40 boxes. In the explorer, declared foreign keys are solid lines and inferred ones are dashed.
 
