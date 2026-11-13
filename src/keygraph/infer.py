@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import devlog
 from .model import Schema, Table, is_copy_schema, type_family, type_length
 
 DEFAULT_ROLE_WORDS = {
@@ -510,6 +511,7 @@ class Inferer:
         edges: list[dict] = []
         poly_cols: dict[str, list[dict]] = {}
         unresolved: dict[str, list[str]] = {}
+        tr = devlog.active()  # dev mode: record each column's candidates and why each was kept or dropped
         for t in self.s.tables.values():
             declared_from = {c for fk in t.foreign_keys for c in fk.columns}
             colnames = {c.name.lower() for c in t.columns}
@@ -532,18 +534,39 @@ class Inferer:
                     poly_cols.setdefault(t.id, []).append(
                         {"id_column": col.name, "type_column": next(c.name for c in t.columns if c.name.lower() == pol[0]),
                          "note": "polymorphic: the type column decides the target table; no single target"})
+                    if tr:
+                        devlog.trace("infer.column", table=t.id, column=col.name, outcome="polymorphic", type_column=pol[0])
                     continue
                 scored = []
-                for tid, cand in (cand_map if cand_map is not None else self.candidates(t, col.name, stem, refpref)).items():
+                cands = cand_map if cand_map is not None else self.candidates(t, col.name, stem, refpref)
+                info: dict[str, dict] = {}
+                if tr:
+                    info = {tid: {"to": tid, "base": cand["base"], "reasons": list(cand["reasons"])} for tid, cand in cands.items()}
+                for tid, cand in cands.items():
+                    hit = False
                     for k in cand.get("multi") or [None]:
                         r = self.score(t, col.name, stem, tid, dict(cand, key=(k, "unique key", 0.03)) if k else cand)
                         if r:
                             scored.append(r)
+                            hit = True
+                            if tr:
+                                info[tid]["scored"] = max(info[tid].get("scored", 0.0), round(r["confidence"], 3))
+                    if tr and not hit:
+                        info[tid].update(outcome="rejected", reason="no target key")
+                before = {r["to"] for r in scored} if tr else ()
                 if scored and any(r["to"].split(".")[0] == t.schema for r in scored):
                     scored = [r for r in scored if r["to"].split(".")[0] == t.schema] or scored
+                    drop = "same-schema candidate preferred over cross-schema ones"
                 else:
                     scored = self._cross_schema(t, scored)
+                    drop = "cross-schema filter: a candidate in a related schema won"
+                if tr:
+                    for tid in before - {r["to"] for r in scored}:
+                        info[tid].update(outcome="rejected", reason=drop)
                 scored.sort(key=lambda r: (-r["confidence"], r["to"]))
+                if tr:
+                    for r in scored[self.o.top_k:]:
+                        info[r["to"]].update(outcome="rejected", reason=f"cut by top_k ({self.o.top_k})")
                 scored = scored[: self.o.top_k]
                 rivals = [r for r in scored if not r.get("_copy")] if any(r.get("_copy") for r in scored) else scored
                 amb = len(rivals) >= 2 and rivals[0]["confidence"] - rivals[1]["confidence"] < 0.12
@@ -553,10 +576,18 @@ class Inferer:
                     if amb and r in rivals:
                         r["confidence"] -= 0.10
                         r["evidence"].append(f"ambiguous: {len(scored)} candidate targets within a close score")
+                        if tr:
+                            info[r["to"]]["ambiguity_penalty"] = -0.10
                     r["confidence"] = round(max(0.05, min(0.95, r["confidence"])), 2)
+                    if tr:
+                        info[r["to"]]["confidence"] = r["confidence"]
                     if r["confidence"] < self.o.min_confidence:
+                        if tr:
+                            info[r["to"]].update(outcome="rejected", reason=f"below min_confidence ({self.o.min_confidence})")
                         continue
                     kept += 1
+                    if tr:
+                        info[r["to"]]["outcome"] = "kept"
                     edges.append({
                         "kind": "inferred", "status": "inferred", "from": t.id, "from_columns": [col.name],
                         "to": r["to"], "to_columns": r["to_columns"], "confidence": r["confidence"],
@@ -565,7 +596,14 @@ class Inferer:
                     })
                 if not kept and cand_map is None:
                     unresolved.setdefault(t.id, []).append(col.name)
+                if tr:
+                    devlog.trace("infer.column", table=t.id, column=col.name, stem=stem, ambiguous=amb,
+                                 outcome="kept" if kept else "unresolved",
+                                 candidates=sorted(info.values(), key=lambda c: (-c.get("scored", c["base"]), c["to"])))
         self.polymorphic, self.unresolved = poly_cols, unresolved
+        if tr:
+            devlog.trace("infer.summary", inferred=len(edges), unresolved=sum(map(len, unresolved.values())),
+                         polymorphic=sum(map(len, poly_cols.values())), min_confidence=self.o.min_confidence, top_k=self.o.top_k)
         return edges
 
 

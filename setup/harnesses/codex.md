@@ -16,6 +16,8 @@ command = "/abs/path/to/python"
 args = ["-m", "keygraph", "mcp", "--dir", "/abs/path/to/keygraph-out"]
 ```
 
+Optional, dev mode (SETUP.md step 9): add `[mcp_servers.keygraph.env]` with `KEYGRAPH_DEV = "1"` under that block, or run `keygraph dev on --dir "$OUT"` and restart Codex.
+
 This config is user-level (`~/.codex/config.toml`), shared by every project. Say so in step 2 of the setup, and when the user chose project-only, ask before you write it. To keep the map per project, point `--dir` at that project's output folder, and register a second server with a different name (for example `keygraph-billing`) for another database.
 
 ## 2. Skill and standing instructions
@@ -26,4 +28,4 @@ This config is user-level (`~/.codex/config.toml`), shared by every project. Say
 ## 3. Verify
 
 - `codex mcp list` shows `keygraph`.
-- Start a new Codex session (servers load at start) and run `/mcp`: keygraph should list 15 tools. Then do step 7.3 of SETUP.md.
+- Start a new Codex session (servers load at start) and run `/mcp`: keygraph should list 15 tools (16 if dev mode is on). Then do step 7.3 of SETUP.md.

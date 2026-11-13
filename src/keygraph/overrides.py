@@ -6,6 +6,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import devlog
+
 
 @dataclass
 class Overrides:
@@ -36,6 +38,9 @@ class Overrides:
                    copy_schemas=[str(x) for x in ([raw["copies"]] if isinstance(raw.get("copies"), str) else raw.get("copies") or [])])
 
     def configure(self, opts) -> None:
+        devlog.trace("override.config", aliases=len(self.aliases), role_aliases=len(self.role_aliases),
+                     prefixes=len(self.prefixes), copy_schemas=len(self.copy_schemas), confirm=len(self.confirm),
+                     reject=len(self.reject), add=len(self.add))
         opts.aliases.update(self.aliases)
         opts.role_aliases.update(self.role_aliases)
         opts.prefixes.extend(p for p in self.prefixes if p not in opts.prefixes)
@@ -77,6 +82,9 @@ def apply_overrides(data: dict, ov: Overrides) -> None:
             e["kind"] == "inferred" and e["from"] == ft and e["from_columns"] == fc
             and (tt is None or (e["to"] == tt and (not tc or e["to_columns"] == tc))))]
         applied["rejected"] += before - len(data["edges"])
+        if devlog.active():
+            devlog.trace("override.reject", frm=item["from"], to=item.get("to"), removed=before - len(data["edges"]),
+                         effect="removed inferred edges" if before != len(data["edges"]) else "matched no inferred edge")
         if ft is None:
             notes.append(f"override reject: unknown table in {item['from']}")
     for kind, items, conf in (("confirmed", ov.confirm, 0.98), ("added", ov.add, 0.9)):
@@ -84,14 +92,22 @@ def apply_overrides(data: dict, ov: Overrides) -> None:
             ft, fc, tt, tc = locate(item)
             if not (ft and tt):
                 notes.append(f"override {kind}: unknown table in {item}")
+                devlog.trace(f"override.{kind}", frm=item.get("from"), to=item.get("to"), effect="ignored: unknown table")
                 continue
             have = {c["name"] for c in nodes[ft]["columns"]}, {c["name"] for c in nodes[tt]["columns"]}
             if not (set(fc) <= have[0] and set(tc) <= have[1]) or not tc:
                 notes.append(f"override {kind}: unknown column in {item}")
+                devlog.trace(f"override.{kind}", frm=item.get("from"), to=item.get("to"), effect="ignored: unknown column")
                 continue
             note = item.get("note", "")
             match = [e for e in data["edges"] if e["from"] == ft and e["from_columns"] == fc and e["kind"] == "inferred"]
             hit = [e for e in match if e["to"] == tt and e["to_columns"] == tc]
+            if devlog.active():
+                dropped = len(match) - 1 if hit else len(match) if kind == "confirmed" else 0
+                devlog.trace(f"override.{kind}", frm=ft, to=tt, effect=(
+                    "raised an inferred edge to confirmed" if kind == "confirmed" and hit else
+                    "replaced the inferred edges of that column" if kind == "confirmed" and match else
+                    f"{'confirmed' if kind == 'confirmed' else 'added'} a new edge"), replaced_inferred=dropped)
             if kind == "confirmed" and hit:
                 data["edges"] = [e for e in data["edges"] if e not in match or e is hit[0]]
                 e = hit[0]

@@ -6,6 +6,7 @@ import re
 from decimal import Decimal
 from typing import Callable
 
+from . import devlog
 from .graph import Graph
 
 _BAD = re.compile(r"\b(insert|update|delete|replace|drop|alter|create|truncate|grant|revoke|rename|call|handler|load|"
@@ -109,6 +110,7 @@ def probe_graph(graph: Graph, runner: SelectOnlyRunner, sample: int = 500, quote
             e["confidence"] = round(e["confidence"] * 0.3, 2)
             e["status"] = "probed"
             res["probed"] += 1
+            devlog.trace("probe.edge", edge=e["id"], outcome="profile ranges do not overlap", confidence=e["confidence"])
             continue
         try:
             vals = [r[0] for r in runner.run(
@@ -120,6 +122,7 @@ def probe_graph(graph: Graph, runner: SelectOnlyRunner, sample: int = 500, quote
             found = runner.run(f"SELECT {q(tc)} FROM {qt(e['to'])} WHERE {q(tc)} IN ({','.join(lits)}) LIMIT {len(lits)}")
         except Exception as exc:  # noqa: BLE001
             res["errors"].append(f"{e['id']}: {exc}")
+            devlog.trace("probe.edge", edge=e["id"], outcome="error", error_type=type(exc).__name__)  # never the message
             continue
         rate = len({r[0] for r in found}) / len(lits)
         e["match_rate"] = round(rate, 3)
@@ -130,5 +133,8 @@ def probe_graph(graph: Graph, runner: SelectOnlyRunner, sample: int = 500, quote
         e["confidence"] = round(c, 2)
         e["status"] = "probed"
         res["probed"] += 1
+        devlog.trace("probe.edge", edge=e["id"], outcome="probed", sampled_distinct=len(lits), match_rate=e["match_rate"],
+                     confidence=e["confidence"])
+    devlog.trace("probe.summary", probed=res["probed"], skipped=res["skipped"], errors=len(res["errors"]))
     graph.refresh_stats()
     return res

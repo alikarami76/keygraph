@@ -17,6 +17,8 @@ In ZCode: **Settings → MCP servers → Add**:
 | Arguments | `ARGS`, one per line or space-separated as the form asks |
 | Timeout | `30000` ms |
 
+Optional, dev mode (SETUP.md step 9): if the form has an environment variables field, add `KEYGRAPH_DEV` = `1`; otherwise run `keygraph dev on --dir "$OUT"`. Restart the server afterwards.
+
 If the screen offers a JSON editor instead, use the common `mcpServers` shape:
 
 ```json
@@ -33,5 +35,5 @@ You may not be able to edit ZCode's settings yourself. In that case, give the us
 
 ## 3. Verify
 
-- The MCP list in settings shows `keygraph` as connected with 15 tools.
+- The MCP list in settings shows `keygraph` as connected with 15 tools (16 if dev mode is on).
 - In a new task, do step 7.3 of SETUP.md.

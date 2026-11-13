@@ -4,6 +4,7 @@ them and keeps them out of areas, hubs and path search unless asked for."""
 
 from __future__ import annotations
 
+from keygraph import devlog
 from keygraph.graph import Graph
 
 MIRROR_SHARE = 0.8
@@ -66,6 +67,9 @@ def detect_mirrors(graph: Graph, share: float = MIRROR_SHARE, min_tables: int = 
             continue
         cands = [(len(common(s, o)), o) for o in by if o != s]
         hits, o = max(cands, default=(0, None))
+        if o is not None and devlog.active():
+            devlog.trace("mirror.pair", schema=s, best_match=o, shared_tables=hits, tables=len(by[s]), share=round(hits / len(by[s]), 3),
+                         threshold=share, verdict="candidate" if hits / len(by[s]) >= share else "not a mirror: share below threshold")
         if o is None or hits / len(by[s]) < share or frozenset((s, o)) in seen:
             continue
         seen.add(frozenset((s, o)))
@@ -75,8 +79,11 @@ def detect_mirrors(graph: Graph, share: float = MIRROR_SHARE, min_tables: int = 
         if len(common(copy, orig)) / len(by[copy]) < share:
             warn(f"mirror guess: {orig} and {copy} share {len(shared)} tables and {orig} looks like the source "
                  f"({reason}), but {copy} is not mostly copies, so neither is marked a mirror; confirm with mirrors.yaml")
+            devlog.trace("mirror.decision", pair=[s, o], original=orig, copy=copy, verdict="neither marked: copy is not mostly copies")
             continue
         guess[copy], why[copy] = orig, reason
+        devlog.trace("mirror.decision", pair=[s, o], original=orig, copy=copy, verdict="mirror", reason=reason, close_call=close,
+                     shared_tables=len(shared))
         if close:
             warn(f"mirror guess: {copy} copies {orig} (decided by {reason}) — confirm with mirrors.yaml")
     out = {m: o for m, o in guess.items() if m not in never}
@@ -94,7 +101,10 @@ def detect_mirrors(graph: Graph, share: float = MIRROR_SHARE, min_tables: int = 
         while root in out and hops < len(out):
             root, hops = out[root], hops + 1
         out[m] = root
-    return dict(sorted((m, o) for m, o in out.items() if m != o))
+    res = dict(sorted((m, o) for m, o in out.items() if m != o))
+    if devlog.active():
+        devlog.trace("mirror.result", mirrors=res, forced=dict(sorted((force or {}).items())), never=sorted(never))
+    return res
 
 
 def mark_mirrors(graph: Graph, mirrors: dict[str, str]) -> None:
@@ -141,6 +151,7 @@ def transfer_mirror_edges(graph: Graph) -> int:
                   "source": "mirror"}
             ne["id"] = edge_id(ne)
             added.append(ne)
+    devlog.trace("mirror.transfer", edges=len(added), mirror_schemas=sorted({s for s, _ in copy_of}))
     if added:
         graph.edges.extend(added)
         graph.edges.sort(key=lambda x: x["id"])
