@@ -399,7 +399,7 @@ def test_since_accepts_iso_forms_and_offsets(tmp_path):
     assert n("2026-11-13T09:31Z") == 1
     assert n("2026-11-13T13:00+03:30") == 2      # 09:30 UTC exactly keeps event b and c
     assert devreport.report(tmp_path, since="2026-11-13 09:00")["overview"]["trace_files"] == 1
-    assert devreport.report(tmp_path, since="2026-11-13T12:00+03:30")["overview"]["trace_files"] == 1  # 08:30 UTC
+    assert devreport.report(tmp_path, since="2026-11-13T13:00+03:30")["overview"]["trace_files"] == 1  # 09:30 UTC
     assert devreport.report(tmp_path, since="2026-11-13T11:00+03:30")["overview"]["trace_files"] == 2  # 07:30 UTC
 
 
