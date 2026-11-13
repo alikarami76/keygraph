@@ -41,7 +41,7 @@ Send all questions in one message. Put your detected answer next to each questio
    - (b) `information_schema` dump files;
    - (c) a read-only command that already works on this machine (for example a CLI that prints JSON rows);
    - (d) just try the bundled demo database first.
-2. **Scope.** "Which schemas or databases should it map?" Default: every schema that holds the application's tables; leave out copies and mirrors (the build warns about them). Also ask: "Are any schemas copies or replicas of another one (for example `ods_*`, `replica`, `reporting`)?"
+2. **Scope.** "Which schemas or databases should it map?" Default: every schema that holds the application's tables; leave out copies and mirrors (the build does not warn about them: it marks a schema that mirrors another as `mirror_of` in `graph.json`, and path, areas and neighbors skip those tables unless asked; it only prints a warning when a mirror declaration cannot be applied). Also ask: "Are any schemas copies or replicas of another one (for example `ods_*`, `replica`, `reporting`)?"
 3. **Where.** "Keep the map in this project (`./keygraph-out`, git-ignored) and connect it to me for this project only?" Default yes. The other option is a shared folder (for example `~/.keygraph/<name>`) connected for all projects, which needs a user-level config change.
 4. **Extras.** "Turn on these? Each makes my SQL more accurate." Give the defaults you chose:
    - value profiles: one bounded, sampled, read-only SELECT per table; personal-data values are never stored (default yes for a live connection);
@@ -101,7 +101,7 @@ keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the d
 
 # (d) demo: clone the repo, then, with keygraph on PATH (for a venv: export PATH="$VENV/bin:$PATH");
 # build.sh finds the demo files next to itself, so it works from any folder (or a copy of examples/shop);
-# it already imports the demo's context, code index, query log and profiles, so skip the extras below except render.
+# it already imports the demo's context, code index, query log and profiles: after it run only the starter-context import (below) and `keygraph render`, nothing else below.
 # Without an argument it writes examples/shop/out next to the script.
 OUT="$(pwd)/keygraph-out" && sh path/to/examples/shop/build.sh "$OUT"
 ```
@@ -116,14 +116,13 @@ keygraph context import-notes docs/data --dir "$OUT"              # markdown not
 keygraph code index . --name <repo-name> --dir "$OUT"
 # query log (literals are masked before storing)
 keygraph queries import queries.jsonl --dir "$OUT"
-# value profiles: bounded sampled reads, PII values never stored. Start with the most connected tables
+# value profiles (an EXAMPLE for a real Postgres database; use your engine for --source). Bounded sampled reads, PII values never stored. Start with the most connected tables
 ( set -a; . ./.env; set +a; keygraph profile --source postgres --url "${DATABASE_URL}" --top-hubs 20 --with-context --dir "$OUT" )
-# (the demo's build.sh already profiles its tables; for another engine, change --source)
 # refresh the report, the explorer and the agent pages
 keygraph render --dir "$OUT"
 ```
 
-**Starter business context (question 5).** Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. Leave `verified: false`. Before you import it, run `keygraph context export --dir "$OUT"` and look up each table, column, concept, metric and relation in your file: since keygraph 0.3.4 an import from another source never replaces a verified entry (it keeps the verified one and prints a warning), but an older keygraph does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`). Then import it as above. Tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
+**Starter business context (question 5).** Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. Leave `verified: false`. Before you import it, run `keygraph context export --dir "$OUT"` and look up each table, column, concept, metric and relation in your file: since keygraph 0.4.0 an import from another source never replaces a verified entry (it keeps the verified one and prints a warning), but an older keygraph does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`). Then import it as above. Tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
 
 **Copies and replicas.** If the scan prints a warning about ambiguous relations across schemas, or the user named copy schemas, rebuild with `--copy-schema GLOB` for each one.
 
@@ -163,8 +162,11 @@ Each harness file says where these go. Do both:
 If you cannot call MCP tools until the harness restarts, run the same two calls in-process as a stand-in (below), and give the user the paste check from 7.2:
 
 ```bash
-# use the Python that keygraph is installed in (mcp_launch.command from doctor --json)
+# PYTHON is the interpreter keygraph is installed in: the "command" under mcp_launch in `keygraph doctor --json --dir "$OUT"`
+PYTHON="<that command>"
 "$PYTHON" -c 'import asyncio, sys; from keygraph.mcp_server import build_server; s = build_server(sys.argv[1]); print(asyncio.run(s.call_tool("search", {"query": "order"})).content[0].text)' "$OUT"
+# the path call takes from_table and to_table
+"$PYTHON" -c 'import asyncio, sys; from keygraph.mcp_server import build_server; s = build_server(sys.argv[1]); print(asyncio.run(s.call_tool("path", {"from_table": sys.argv[2], "to_table": sys.argv[3]})).content[0].text)' "$OUT" "<table A>" "<table B>"
 ```
 
 The setup is done when step 7.3 works through MCP. If the harness cannot reload MCP servers without a restart, it is done when the in-process stand-in above returns results and the user has the paste check to run in the new session; say in your report which of the two you reached. (For a harness with no MCP, see `other.md`: the CLI with `--json` counts.)
@@ -172,7 +174,7 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
 ## Step 8. Record the setup and report
 
 1. Write `OUT/SETUP.md` from `setup/templates/setup-record.md`: the answers, the exact build commands (with `$KEYGRAPH_DB_URL`, never the value), the harness and scope, and the rebuild command.
-2. If `git -C "$(dirname "$OUT")" rev-parse --is-inside-work-tree` succeeds and `git check-ignore -q "$OUT"` fails, add `OUT` to `.gitignore` unless the user wants the map committed. `keygraph.db` and the profiles describe their data.
+2. If `git -C "$(dirname "$OUT")" rev-parse --is-inside-work-tree` fails, skip this step and tell the user the folder is not a git repository, so nothing was added to `.gitignore`. If it succeeds and `git check-ignore -q "$OUT"` fails, add `OUT` to `.gitignore` unless the user wants the map committed. `keygraph.db` and the profiles describe their data.
 3. Tell the user, in five lines or fewer:
    - what was built, with the table and relation counts from `doctor`;
    - which extras are on;
@@ -183,6 +185,6 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
 ## Keeping it current
 
 - Rebuild after migrations: rerun the build command from `OUT/SETUP.md`, then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like the demo's build.sh, drops notes saved with `context add`; put confirmed facts in the context file so they survive), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
-- When you confirm what a table, column or status code means while working, save it with `keygraph context add --author "$AGENT_NAME" ... verified=true`, as the skill describes (`keygraph context history` shows what a later write replaced or refused).
+- When you confirm what a table, column or status code means while working, save it with `keygraph context add --author "<your agent name, e.g. codex>" ... verified=true`, as the skill describes (or set `KEYGRAPH_AUTHOR` once for the session; without either the source label is `context-add`) (`keygraph context history` shows what a later write replaced or refused).
 - After you run a query that answered a business question, log it with `query_submit`. The next agent can then reuse a proven query.
 - If keygraph is wrong or breaks, follow `setup/BUG_REPORTS.md`.
