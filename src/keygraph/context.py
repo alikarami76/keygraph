@@ -242,12 +242,49 @@ class ContextDB:
             out.append(d)
         return out
 
+    # per kind: (table, how to find the key columns from the input dict, {input field: stored column}, JSON-decoded fields)
+    _MERGE = {
+        "concept": ("concepts", lambda s, d: {"name": str(d["name"]).strip()},
+                    {"definition": "definition", "domain": "domain", "owner": "owner", "synonyms": "synonyms"}, ("synonyms",)),
+        "link": ("concept_links", lambda s, d: {"concept": d["concept"], "table_id": s._tid(d["table"]), "col": d.get("column") or "",
+                                                "role": d.get("role") or ("primary-record" if not d.get("column") else "attribute")},
+                 {"note": "note"}, ()),
+        "relation": ("concept_relations", lambda s, d: {"from_concept": d["from"], "rel": d.get("rel", "related-to"), "to_concept": d["to"]},
+                     {"note": "note", "edge": "edge_id"}, ()),
+        "column": ("column_semantics", lambda s, d: {"table_id": s._tid(d["table"]), "col": d["column"]},
+                   {"meaning": "meaning", "unit": "unit", "codes": "codes", "null_meaning": "null_meaning", "pii": "pii",
+                    "typical_filters": "typical_filters", "index_hint": "index_hint"}, ("codes", "typical_filters")),
+        "metric": ("metrics", lambda s, d: {"name": d["name"]},
+                   {"definition": "definition", "expression": "expression", "grain": "grain", "tables": "tables", "filters": "filters",
+                    "caveats": "caveats"}, ("tables",)),
+        "table": ("table_notes", lambda s, d: {"table_id": s._tid(d["table"])},
+                  {"grain": "grain", "freshness": "freshness", "soft_delete": "soft_delete", "date_column": "date_column",
+                   "recommended_indexes": "recommended_indexes", "pitfalls": "pitfalls", "summary": "summary"}, ("recommended_indexes",)),
+    }
+
+    def _merged(self, kind: str, d: dict) -> dict:
+        """d with every field it does not give filled from the stored row (a field given as empty clears it)."""
+        table, keyf, fields, decoded = self._MERGE[kind]
+        keys = keyf(self, d)
+        row = self.db.execute(f"SELECT * FROM {table} WHERE " + " AND ".join(f"{k}=?" for k in keys), tuple(keys.values())).fetchone()
+        if not row:
+            return d
+        out = dict(d)
+        for field, col in fields.items():
+            if field not in d:
+                v = row[col]
+                out[field] = json.loads(v) if field in decoded and v else ({} if field == "codes" else v)
+        return out
+
     def upsert(self, kind: str, d: dict, source: str = "", verified=False,
-               allow_same_source: bool = False) -> bool:
+               allow_same_source: bool = False, merge: bool = False) -> bool:
         """Write one context item; False when a verified row was kept instead. allow_same_source (file imports only)
-        lets an unverified write update a verified row that came from the same source."""
+        lets an unverified write update a verified row that came from the same source. merge (the CLI add path): fields
+        not given keep their stored values; a field given as empty clears it. Imports write whole rows."""
         if kind not in KINDS:
             raise ValueError(f"unknown kind '{kind}'; use one of {sorted(KINDS)}")
+        if merge:
+            d = self._merged(kind, d)
         src = self._meta(d, source, verified)
         x = self.db
         if kind == "concept":

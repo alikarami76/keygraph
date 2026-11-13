@@ -427,7 +427,7 @@ def cmd_context(a):
     elif a.action == "add":
         d = _kv(a.fields)
         who = d.get("source") or a.author or os.environ.get("KEYGRAPH_AUTHOR") or "context-add"
-        ok = ctx.upsert(a.kind, d, who, a.verified or d.get("verified") in ("true", "yes", "1"))
+        ok = ctx.upsert(a.kind, d, who, a.verified or d.get("verified") in ("true", "yes", "1"), merge=True)
         ctx.reindex()
         counts = {a.kind: 1 if ok else 0}
     elif a.action == "export":

@@ -502,3 +502,57 @@ def test_detail_is_a_valid_link_role(graph, tmp_path):
     ctx = ContextDB(tmp_path / "k.db", graph)
     ctx.upsert("link", {"concept": "order", "table": "shop.order_items", "role": "detail"}, "a")
     assert ctx.warnings == []
+
+
+def _add(out, kind, *fields):
+    assert main(["context", "add", "--dir", str(out), "--kind", kind, *fields]) == 0
+
+
+def _stored(out, table, where):
+    with ContextDB(out / "keygraph.db", readonly=True) as c:
+        return next(r for r in c.rows(table) if all(r[k] == v for k, v in where.items()))
+
+
+def test_context_add_merges_column_fields(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    _add(out, "column", "table=shop.orders", "column=status", "codes=1:new,2:paid", "null_meaning=never null", "meaning=old")
+    _add(out, "column", "table=shop.orders", "column=status", "meaning=order state", "verified=true")
+    r = _stored(out, "column_semantics", {"col": "status"})
+    assert r["meaning"] == "order state" and json.loads(r["codes"]) == {"1": "new", "2": "paid"} and r["null_meaning"] == "never null"
+    assert r["verified"] == 1
+    h = ContextDB(out / "keygraph.db", readonly=True).history(ref="shop.orders.status")[0]
+    assert h["action"] == "replaced" and h["old"]["meaning"] == "old" and h["new"]["meaning"] == "order state"
+    assert json.loads(h["new"]["codes"]) == {"1": "new", "2": "paid"}
+    _add(out, "column", "table=shop.orders", "column=status", "codes=", "verified=true")  # an explicit empty value clears the field
+    r = _stored(out, "column_semantics", {"col": "status"})
+    assert json.loads(r["codes"] or "{}") == {} and r["meaning"] == "order state"
+
+
+def test_context_add_merges_table_metric_concept_relation_link(tmp_path):
+    out = _load_shop(tmp_path)
+    _add(out, "table", "table=shop.orders", "pitfalls=soft deletes", "grain=old")
+    _add(out, "table", "table=shop.orders", "grain=one row per order")
+    r = _stored(out, "table_notes", {"table_id": "shop.orders"})
+    assert r["grain"] == "one row per order" and r["pitfalls"] == "soft deletes"
+    _add(out, "metric", "name=revenue", "definition=d", "expression=sum(x)", "tables=shop.orders")
+    _add(out, "metric", "name=revenue", "caveats=gross")
+    r = _stored(out, "metrics", {"name": "revenue"})
+    assert r["expression"] == "sum(x)" and r["caveats"] == "gross" and json.loads(r["tables"]) == ["shop.orders"]
+    _add(out, "concept", "name=buyer", "definition=d", "synonyms=client,shopper", "domain=sales")
+    _add(out, "concept", "name=buyer", "owner=growth")
+    r = _stored(out, "concepts", {"name": "buyer"})
+    assert r["definition"] == "d" and r["domain"] == "sales" and r["owner"] == "growth" and json.loads(r["synonyms"]) == ["client", "shopper"]
+    _add(out, "relation", "from=buyer", "to=order", "rel=places", "note=n1", "edge=e1")
+    _add(out, "relation", "from=buyer", "to=order", "rel=places", "edge=e2")
+    r = _stored(out, "concept_relations", {"from_concept": "buyer"})
+    assert r["note"] == "n1" and r["edge_id"] == "e2"
+    _add(out, "link", "concept=buyer", "table=shop.orders", "column=customer_id", "note=n1")
+    _add(out, "link", "concept=buyer", "table=shop.orders", "column=customer_id", "verified=true")
+    assert _stored(out, "concept_links", {"concept": "buyer"})["note"] == "n1"
+
+
+def test_file_import_keeps_whole_row_semantics(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "m", "codes": {"1": "a"}}, "f.yaml")
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "m2"}, "f.yaml")
+    assert json.loads(_col(ctx)["codes"] or "{}") == {}
