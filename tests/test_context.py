@@ -496,3 +496,9 @@ def test_context_history_is_readonly_and_needs_no_graph(tmp_path, capsys):
     out.mkdir()
     assert main(["context", "history", "--dir", str(out), "--json"]) == 0
     assert json.loads(capsys.readouterr().out) == [] and not (out / "keygraph.db").exists()
+
+
+def test_detail_is_a_valid_link_role(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("link", {"concept": "order", "table": "shop.order_items", "role": "detail"}, "a")
+    assert ctx.warnings == []

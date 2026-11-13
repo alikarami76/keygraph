@@ -55,7 +55,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body,
 """
 
 KINDS = {"concept", "relation", "link", "column", "metric", "table"}
-ROLES = ("primary-record", "attribute", "foreign-reference", "measure", "filter")
+ROLES = ("primary-record", "attribute", "foreign-reference", "measure", "filter", "detail")
 
 
 def _j(v) -> str:
