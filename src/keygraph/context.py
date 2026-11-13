@@ -210,7 +210,12 @@ class ContextDB:
         if old_d and old_d.get("source"):
             old_d["source"] = safe_source(old_d["source"])
         if self._keeps_verified(kind, table, keys, label, src, same_ok):
-            self._history(kind, label, "kept", old_d, new, src[0])
+            skip = ("source", "verified", "updated_at")
+            last = self.db.execute("SELECT new FROM context_history WHERE kind=? AND ref=? AND action='kept' ORDER BY rowid DESC LIMIT 1",
+                                   (kind, label)).fetchone()
+            body = {k: v for k, v in new.items() if k not in skip}
+            if not (last and {k: v for k, v in json.loads(last[0]).items() if k not in skip} == body):
+                self._history(kind, label, "kept", old_d, new, src[0])
             return False
         self.db.execute(f"INSERT OR REPLACE INTO {table} VALUES({','.join('?' * len(values))})", values)
         if old_d and any(old_d[c] != new[c] for c in cols if c != "updated_at"):

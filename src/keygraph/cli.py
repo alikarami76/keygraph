@@ -394,6 +394,17 @@ def _kv(pairs: list[str]) -> dict:
 
 
 def cmd_context(a):
+    if a.action == "history":  # read-only: no graph needed, the database is never created or changed
+        with ContextDB(Path(a.dir) / "keygraph.db", readonly=True) as ctx:
+            rows = ctx.history(a.limit, a.ref, a.kind)
+        if a.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=1, sort_keys=True))
+        else:
+            for r in rows:
+                print(f"{r['at']}  {r['action']:<8} {r['kind']} {r['ref']}  by {r['source']}")
+            if not rows:
+                print("no history")
+        return
     g = _load(a)
     ctx = _ctx(a, g)
     if a.action == "import":
@@ -419,17 +430,6 @@ def cmd_context(a):
         ok = ctx.upsert(a.kind, d, who, a.verified or d.get("verified") in ("true", "yes", "1"))
         ctx.reindex()
         counts = {a.kind: 1 if ok else 0}
-    elif a.action == "history":
-        rows = ctx.history(a.limit, a.ref, a.kind)
-        ctx.close()
-        if a.json:
-            print(json.dumps(rows, ensure_ascii=False, indent=1, sort_keys=True))
-        else:
-            for r in rows:
-                print(f"{r['at']}  {r['action']:<8} {r['kind']} {r['ref']}  by {r['source']}")
-            if not rows:
-                print("no history")
-        return
     elif a.action == "export":
         data = ctx.dump()
         text = json.dumps(data, ensure_ascii=False, indent=1)

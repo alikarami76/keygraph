@@ -102,6 +102,8 @@ keygraph doctor                                                      # checks th
 
 ```bash
 keygraph describe orders --brief         # keys, filter columns, notes and columns as name/type/key/codes only
+keygraph describe orders --min-confidence 0   # also the weak inferred relations (hidden below 0.6 by default)
+keygraph neighbors orders --depth 2 --min-confidence 0.4   # neighbors hide relations below 0.6 unless you lower the floor
 keygraph search "monthly revenue" --no-paths   # skip the suggested join paths
 keygraph path customers shipments        # ranked join paths with a JOIN snippet
 keygraph search "monthly revenue"        # which tables hold this
@@ -282,7 +284,7 @@ keygraph context export --out context.yaml
 keygraph context history --ref shop.orders.status --json   # overwritten or refused writes, newest first
 ```
 
-`context add` records who wrote it: `--author NAME` (or the `KEYGRAPH_AUTHOR` environment variable) sets the source label unless you pass `source=...`; with none of them the label is `context-add`. When a write replaces a row with different content, or an unverified write is refused because a verified row exists, keygraph keeps the old and new rows in `context_history`; `keygraph context history [--ref R] [--kind K] [--limit N] [--json]` lists them. Re-importing an unchanged file adds nothing. Unknown tables or columns produce warnings, not failures. Concept relations that match a graph edge add evidence to it.
+`context add` records who wrote it: `--author NAME` (or the `KEYGRAPH_AUTHOR` environment variable) sets the source label unless you pass `source=...`; with none of them the label is `context-add`. When a write replaces a row with different content, or an unverified write is refused because a verified row exists, keygraph keeps the old and new rows in `context_history`; `keygraph context history [--ref R] [--kind K] [--limit N] [--json]` lists them. Re-importing an unchanged file adds nothing. History and notes added with `context add` live only in `keygraph.db`: deleting the output folder or rebuilding it from scratch loses them, so run `keygraph context export` first. Unknown tables or columns produce warnings, not failures. Concept relations that match a graph edge add evidence to it.
 
 `keygraph profile --source mysql --url ... [--tables a,b] [--top-hubs 30] [--with-context] [--sample 10000]` samples each table with one bounded SELECT (never a full scan) and stores, per column: null rate, distinct values in the sample, min and max, percentiles, length statistics, date range and recency, top values with counts, and pattern hints (json, email, phone, url, uuid, Persian text, monetary). Each profile records `profiled_at`, the sample size and the method, so readers know how fresh and approximate it is. Codes seen in data but undocumented, and documented codes never seen, are flagged. Treat profiles as samples.
 

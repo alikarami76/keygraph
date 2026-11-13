@@ -183,6 +183,6 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
 ## Keeping it current
 
 - Rebuild after migrations: rerun the build command from `OUT/SETUP.md`, then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like the demo's build.sh, drops notes saved with `context add`; put confirmed facts in the context file so they survive), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
-- When you confirm what a table, column or status code means while working, save it with `keygraph context add --author <agent> ... verified=true`, as the skill describes (`keygraph context history` shows what a later write replaced or refused).
+- When you confirm what a table, column or status code means while working, save it with `keygraph context add --author "$AGENT_NAME" ... verified=true`, as the skill describes (`keygraph context history` shows what a later write replaced or refused).
 - After you run a query that answered a business question, log it with `query_submit`. The next agent can then reuse a proven query.
 - If keygraph is wrong or breaks, follow `setup/BUG_REPORTS.md`.

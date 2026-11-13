@@ -466,3 +466,33 @@ def test_context_history_cli_json(tmp_path, capsys):
     assert json.loads(capsys.readouterr().out) == []
     assert main(["context", "history", "--dir", str(out)]) == 0
     assert "kept" in capsys.readouterr().out
+
+
+def test_repeated_refused_write_adds_one_history_row(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    d = {"table": "shop.orders", "column": "status", "meaning": "checked"}
+    ctx.upsert("column", {**d, "source": "human"}, "", True)
+    for _ in range(3):
+        ctx.upsert("column", {**d, "meaning": "guess"}, "bot", False)
+    assert len(ctx.history()) == 1
+    ctx.upsert("column", {**d, "meaning": "other guess"}, "bot", False)
+    assert len(ctx.history()) == 2
+
+
+def test_nested_concept_links_write_history(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    c = {"name": "buyer", "definition": "d", "links": [{"table": "shop.orders", "column": "customer_id", "note": "v1"}]}
+    ctx.upsert("concept", c, "a.yaml")
+    ctx.upsert("concept", {**c, "links": [{**c["links"][0], "note": "v2"}]}, "a.yaml")
+    (h,) = ctx.history()
+    assert h["kind"] == "link" and h["action"] == "replaced" and h["old"]["note"] == "v1" and h["new"]["note"] == "v2"
+    ctx.upsert("concept", {"name": "payer", "links": [{"table": "shop.orders", "column": "customer_id", "note": "ok", "verified": True}]}, "h")
+    ctx.upsert("concept", {"name": "payer", "links": [{"table": "shop.orders", "column": "customer_id", "note": "bad"}]}, "bot")
+    assert ctx.history(kind="link")[0]["action"] == "kept"
+
+
+def test_context_history_is_readonly_and_needs_no_graph(tmp_path, capsys):
+    out = tmp_path / "out"
+    out.mkdir()
+    assert main(["context", "history", "--dir", str(out), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == [] and not (out / "keygraph.db").exists()

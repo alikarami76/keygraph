@@ -273,3 +273,14 @@ def test_describe_hides_weak_relations_but_brief_is_unchanged(graph, monkeypatch
         assert full["hidden_relations"] == 0 and "shop.users" in {x["to"] for x in full["relations"]}
         b = S.describe(graph, ctx, "orders", brief=True)
         assert "hidden_relations" not in b and "relations" not in b
+
+
+def test_neighbors_hidden_counts_each_weak_edge_once_at_depth_two(graph, monkeypatch):
+    """A weak edge between two reached tables is seen from both ends but is one hidden relation."""
+    es = [e for e in graph.edges if e["from"] == "shop.orders" or e["to"] == "shop.orders"]
+    far = next(e for e in graph.edges if e not in es and e["from"] != e["to"]
+               and {e["from"], e["to"]} <= {x for o in es for x in (o["from"], o["to"])})
+    monkeypatch.setitem(far, "confidence", 0.3)
+    monkeypatch.setattr(graph, "_adj", None)
+    assert Q.neighbors(graph, "orders", 2)["hidden"] == 1
+    assert Q.neighbors(graph, "orders", 1)["hidden"] == 0

@@ -50,7 +50,7 @@ When a run confirms what a table, column, status code or metric means, save it s
     keygraph context add --kind relation from=customer rel=places to=order
     keygraph context add --kind metric name=revenue definition="..." expression="SUM(...)" tables=schema.a,schema.b
 
-Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything. Pass `--author <name>` to `context add` to label the source (default `context-add`; env `KEYGRAPH_AUTHOR`). Replaced and refused writes are logged: `keygraph context history [--ref R] [--kind K] [--limit N] --json`.
+Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything. Pass `--author <name>` to `context add` to label the source (default `context-add`; env `KEYGRAPH_AUTHOR`). Replaced and refused writes are logged (in `keygraph.db`, so `context export` before deleting or rebuilding the output folder from scratch): `keygraph context history [--ref R] [--kind K] [--limit N] --json`.
 
 ## Check and report
 
