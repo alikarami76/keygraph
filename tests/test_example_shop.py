@@ -252,3 +252,64 @@ def test_readme_quickstart_brief_and_no_paths_work_without_mcp(built, capsys):
     assert json.loads(capsys.readouterr().out)["brief"] is True
     assert main(["search", "orders", "--no-paths", "--json", "--dir", str(built)]) == 0
     assert json.loads(capsys.readouterr().out)["join_paths"] == []
+
+
+# Every `keygraph` command in a README bash block either runs on the demo here or is listed with the reason it cannot.
+README_RUNS = {"describe", "neighbors", "search", "path", "keys", "explain", "areas", "area",
+               "code where", "code stats", "queries top", "queries slow", "queries search"}
+README_SKIPS = {
+    "scan": "needs a live database URL",
+    "load": "needs the user's own information_schema dumps",
+    "ui": "opens a browser",
+    "doctor": "covered by test_doctor.py and kgd's doctor step",
+    "dev on": "changes the user's dev-mode setting",
+    "context import": "writes context from the user's own files",
+    "context import-notes": "writes context from the user's own files",
+    "context add": "writes context",
+    "context export": "writes a file",
+    "context history": "reads a history the demo does not have",
+    "code index": "indexes the user's own repositories",
+    "code what": "points at a file in the user's repository",
+    "queries add": "writes the query log from the user's own SQL file",
+    "queries import": "writes the query log from the user's own file",
+}
+
+
+def _readme_commands() -> list[list[str]]:
+    import re
+    import shlex
+    text = (SHOP.parents[1] / "README.md").read_text(encoding="utf-8")
+    cmds = []
+    for block in re.findall(r"```(?:bash|sh)\n(.*?)```", text, re.S):
+        for line in block.splitlines():
+            for part in line.split("&&"):
+                tokens = shlex.split(part, comments=True)
+                if tokens[:2] == ["uv", "run"]:
+                    tokens = tokens[2:]
+                if tokens and tokens[0] == "keygraph":
+                    cmds.append(tokens[1:])
+    return cmds
+
+
+def _subcommand(args: list[str]) -> str:
+    two = " ".join(args[:2])
+    return two if two in README_RUNS or two in README_SKIPS else args[0]
+
+
+def test_readme_commands_are_all_run_or_skipped_for_a_reason():
+    cmds = _readme_commands()
+    assert ["path", "customers", "order_items", "--dir", "examples/shop/out"] in cmds  # the demo quickstart
+    unknown = [c for c in cmds if _subcommand(c) not in README_RUNS and _subcommand(c) not in README_SKIPS]
+    assert not unknown, f"README commands not covered by the guard test, add them to README_RUNS or README_SKIPS: {unknown}"
+
+
+def test_readme_query_commands_run_on_the_demo(demo, capsys):
+    ran = []
+    for args in _readme_commands():
+        if _subcommand(args) not in README_RUNS:
+            continue
+        args = [a for i, a in enumerate(args) if a != "--dir" and (i == 0 or args[i - 1] != "--dir")]
+        capsys.readouterr()
+        assert main([*args, "--dir", str(demo)]) == 0, f"README command failed on the demo: keygraph {' '.join(args)}"
+        ran.append(args[0])
+    assert {"path", "describe", "search", "keys", "neighbors"} <= set(ran)

@@ -2,7 +2,7 @@
 
 > **Asked to set up or install keygraph for a user?** Follow [setup/SETUP.md](setup/SETUP.md). It detects their database and your harness, asks them up to six questions, builds the map, connects the MCP server, and verifies the result with `keygraph doctor`. To report a keygraph bug, follow [setup/BUG_REPORTS.md](setup/BUG_REPORTS.md).
 
-keygraph maps how the tables in a database connect (keys, indexes, declared and inferred foreign keys, business context, sampled value profiles). Use it to find tables and join paths before you write SQL. It is read-only and deterministic. It never runs SQL for you and makes no LLM calls.
+keygraph maps how the tables in a database connect (keys, indexes, declared and inferred foreign keys, business context, sampled value profiles). Use it to find tables and join paths before you write SQL, so a join through a one-to-many table does not double-count. It is read-only and deterministic. It never runs SQL for you and makes no LLM calls.
 
 Commands below assume a built output directory (default `keygraph-out`, set with `--dir` or `KEYGRAPH_DIR`). If the keygraph MCP server is connected, call the tool with the same name instead of the CLI; it returns the same JSON as `--json` (except `areas`, which wraps the list as `{"areas": [...]}`). Table names resolve leniently: a bare name works when it is unique, or unique outside mirror and copy schemas (the original wins over its copies); otherwise write `schema.table`.
 
@@ -42,7 +42,7 @@ When you confirm what a table, column or status code means, save it so the next 
 
 ## Do not
 
-- Do not ask keygraph to run SQL. It has no tool that runs SQL. Run your own read-only query with your own database access; `query_submit` only records a query you already ran.
+- Do not ask keygraph to run SQL. It has no tool that runs SQL. Run your own read-only query with your own database access (for example a database MCP server such as DBHub or MCP Toolbox for Databases); `query_submit` only records a query you already ran.
 - Do not write a multi-table join from column-name guesses when `path` can answer it.
 - Do not present an inferred relation below 0.6 as established.
 - Do not assume a profile represents every row.
