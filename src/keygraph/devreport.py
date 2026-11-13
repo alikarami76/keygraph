@@ -128,8 +128,7 @@ def _canon(e: dict) -> str:
     return json.dumps(_args(e), sort_keys=True, ensure_ascii=False, default=str)
 
 
-def _short(text: str) -> str:
-    text = devlog.mask_text(text)
+def _short(text: str) -> str:  # the log was masked when it was written; masking again would only garble numbers
     return text if len(text) <= SHORT else text[:SHORT - 1] + "…"
 
 

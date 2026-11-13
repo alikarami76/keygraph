@@ -302,10 +302,12 @@ def _tree(out):
 
 
 def _dump(out):
+    """keygraph.db as SQL text; wall-clock stamps (code index and query import write them) are blanked."""
+    import re
     import sqlite3
     con = sqlite3.connect(out / "keygraph.db")
     try:
-        return "\n".join(con.iterdump())
+        return re.sub(r"\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d(\.\d+)?", "<ts>", "\n".join(con.iterdump()))
     finally:
         con.close()
 
