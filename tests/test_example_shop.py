@@ -280,12 +280,16 @@ def _readme_commands() -> list[list[str]]:
     import shlex
     text = (SHOP.parents[1] / "README.md").read_text(encoding="utf-8")
     cmds = []
-    for block in re.findall(r"```(?:bash|sh)\n(.*?)```", text, re.S):
+    for block in re.findall(r"```(?:bash|sh)\n(.*?)```", text, re.DOTALL):
         for line in block.splitlines():
             for part in line.split("&&"):
                 tokens = shlex.split(part, comments=True)
+                while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):  # KEY=value prefixes
+                    tokens = tokens[1:]
                 if tokens[:2] == ["uv", "run"]:
                     tokens = tokens[2:]
+                if tokens[:2] == ["uvx", "--from"]:
+                    tokens = tokens[3:]
                 if tokens and tokens[0] == "keygraph":
                     cmds.append(tokens[1:])
     return cmds
@@ -311,5 +315,6 @@ def test_readme_query_commands_run_on_the_demo(demo, capsys):
         args = [a for i, a in enumerate(args) if a != "--dir" and (i == 0 or args[i - 1] != "--dir")]
         capsys.readouterr()
         assert main([*args, "--dir", str(demo)]) == 0, f"README command failed on the demo: keygraph {' '.join(args)}"
+        assert capsys.readouterr().out.strip(), f"README command printed nothing on the demo: keygraph {' '.join(args)}"
         ran.append(args[0])
     assert {"path", "describe", "search", "keys", "neighbors"} <= set(ran)

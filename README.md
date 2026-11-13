@@ -10,7 +10,7 @@ Join paths, keys, grain and status codes for any agent, over MCP. Deterministic,
 
 **What the animation shows.** In the bundled demo shop, an agent with no map joins `orders` to `order_items` and adds up `orders.total` once per order line, so it names customer #43 as the top customer with €3,436.40. `keygraph path` flags both one-to-many hops as fan-out, and `keygraph describe` shows that status 1 is an unpaid basket, 4 is cancelled and 9 appears in the data without being documented. The corrected query adds up the orders before joining the lines and keeps only paid and shipped orders: the top customer is #56 with €828.20. Across all customers the naive sum is €67,106.60 against €14,660.60 of paid and shipped revenue, 4.6 times too high. The agent's prompt and its rewritten SQL are a replay; the keygraph output and both query results are real (checked with `sqlite3 -readonly examples/shop/shop.db` on 2026-11-13).
 
-**Measured so far.** With the foreign keys stripped from the 11 BIRD mini-dev databases (104 declared keys), keygraph infers 65.4% of them again at confidence 0.6 or higher, with precision of at least 93.2% (measured 2026-11-12 at commit 97ab6cd; method, datasets and caveats in [bench/README.md](https://github.com/alikarami76/keygraph/blob/main/bench/README.md#fk-recovery)).
+**Measured so far.** With the foreign keys stripped from the 11 BIRD mini-dev databases (104 declared keys), keygraph infers 65.4% of them again at confidence 0.6 or higher, with precision of at least 93.2% (measured 2026-11-12 on the code merged in commit 1591589; method, datasets and caveats in [bench/README.md](https://github.com/alikarami76/keygraph/blob/main/bench/README.md#fk-recovery)).
 <!-- AGENT A/B NUMBER GOES HERE (ENG-019): the agent benchmark (same agent with and without keygraph, accuracy and tokens) is still running. Add one sentence with the measured result, the method, the model and the date, linked to bench/README.md. Do not add a number that is not recorded in bench/. -->
 
 keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input. It can also link your source code to the same tables and columns (where each column is declared, written, read and used) and keep a log of the queries people and agents ran, with their timing and the business question behind them.
@@ -37,7 +37,7 @@ uv run keygraph path customers order_items --dir examples/shop/out      # the jo
 Then look at a table's grain, codes and pitfalls, and open the explorer:
 
 ```bash
-uv run keygraph describe orders --brief --dir examples/shop/out         # status codes, keys and filter columns
+uv run keygraph describe orders --dir examples/shop/out                 # grain, pitfalls, status codes (9 is undocumented)
 uv run keygraph ui --dir examples/shop/out                              # opens the offline explorer
 ```
 
@@ -46,6 +46,8 @@ To give the demo map to Claude Code (other clients are in [MCP](#mcp)), run this
 ```bash
 claude mcp add keygraph -- uvx --from 'keygraph[mcp]' keygraph mcp --dir "$PWD/examples/shop/out"
 ```
+
+This runs the latest keygraph release from PyPI against the demo map. `claude mcp list` should show `keygraph` as connected; `uv run keygraph doctor --dir examples/shop/out` checks the map and the server (warnings about the `live`, `yaml` and `code` extras do not matter for the demo).
 
 ## What your agent gets
 
@@ -60,7 +62,7 @@ All of this comes through fifteen MCP tools, the CLI with `--json` (the same JSO
 
 ## Works with DBHub and MCP Toolbox
 
-keygraph never runs SQL against your database. It tells the agent which tables to join, how, and what one row means. Running the query is the job of a database MCP server or other read-only access you already use, such as [DBHub](https://github.com/bytebase/dbhub) or [MCP Toolbox for Databases](https://github.com/googleapis/mcp-toolbox). Register both servers in the same agent: it asks keygraph for the path and the codes, writes the SQL, and runs it through the other server with read-only credentials. keygraph itself needs no database credentials at query time, because it answers from the map it already built.
+keygraph never runs your queries: it reads metadata, plus small bounded SELECT samples when you ask it to profile. It tells the agent which tables to join, how, and what one row means. Running the query is the job of a database MCP server or other read-only access you already use, such as [DBHub](https://github.com/bytebase/dbhub) or [MCP Toolbox for Databases](https://github.com/googleapis/mcp-toolbox). Register both servers in the same agent: it asks keygraph for the path and the codes, writes the SQL, and runs it through the other server with read-only credentials. keygraph itself needs no database credentials at query time, because it answers from the map it already built.
 
 ## Use it on your own database
 
