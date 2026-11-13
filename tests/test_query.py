@@ -239,3 +239,48 @@ def test_many_to_many_hop_is_fan_out_and_penalised():
         assert step["cardinality"] == "many-to-many"
         assert step["fan_out"] is True and "fan_out" in step["warnings"]
         assert p["score"] == round(p["confidence"] * Q.FANOUT_PENALTY, 3)
+
+
+def _weak(graph, monkeypatch, conf=0.55):
+    """Lower one edge of orders to a weak inferred relation (and drop the cached adjacency)."""
+    es = [e for e in graph.edges if e["from"] == "shop.orders" and e["to"] == "shop.users"]
+    for e in es:
+        monkeypatch.setitem(e, "confidence", conf)
+    monkeypatch.setattr(graph, "_adj", None)
+    return len(es)
+
+
+def test_neighbors_hide_weak_relations_by_default(graph, monkeypatch):
+    n = _weak(graph, monkeypatch)
+    r = Q.neighbors(graph, "orders", 1)
+    assert r["min_confidence"] == 0.6 and r["hidden"] == n
+    assert "shop.users" not in {x["to"] for x in r["levels"]["1"]}
+    assert f"{n} weaker relation{'s' if n > 1 else ''} hidden (below 0.6); use --min-confidence 0 to see them" in Q.format_neighbors(r)
+    all_ = Q.neighbors(graph, "orders", 1, 0.0)
+    assert all_["hidden"] == 0 and "shop.users" in {x["to"] for x in all_["levels"]["1"]}
+    assert "hidden" not in Q.format_neighbors(all_)
+
+
+def test_describe_hides_weak_relations_but_brief_is_unchanged(graph, monkeypatch, tmp_path):
+    from keygraph import search as S
+    from keygraph.context import ContextDB
+    n = _weak(graph, monkeypatch)
+    with ContextDB(tmp_path / "k.db", graph) as ctx:
+        d = S.describe(graph, ctx, "orders")
+        assert d["hidden_relations"] == n and "shop.users" not in {x["to"] for x in d["relations"]}
+        assert "weaker relation" in S.format_describe(d) and "hidden (below 0.6)" in S.format_describe(d)
+        full = S.describe(graph, ctx, "orders", min_confidence=0.0)
+        assert full["hidden_relations"] == 0 and "shop.users" in {x["to"] for x in full["relations"]}
+        b = S.describe(graph, ctx, "orders", brief=True)
+        assert "hidden_relations" not in b and "relations" not in b
+
+
+def test_neighbors_hidden_counts_each_weak_edge_once_at_depth_two(graph, monkeypatch):
+    """A weak edge between two reached tables is seen from both ends but is one hidden relation."""
+    es = [e for e in graph.edges if e["from"] == "shop.orders" or e["to"] == "shop.orders"]
+    far = next(e for e in graph.edges if e not in es and e["from"] != e["to"]
+               and {e["from"], e["to"]} <= {x for o in es for x in (o["from"], o["to"])})
+    monkeypatch.setitem(far, "confidence", 0.3)
+    monkeypatch.setattr(graph, "_adj", None)
+    assert Q.neighbors(graph, "orders", 2)["hidden"] == 1
+    assert Q.neighbors(graph, "orders", 1)["hidden"] == 0

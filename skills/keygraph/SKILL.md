@@ -11,7 +11,7 @@ keygraph is a deterministic CLI (no LLM calls). It builds `graph.json`, `RELATIO
 
 0. Orientation: `keygraph areas` lists the business areas (clusters of related tables) and `keygraph area <name>` shows one area's tables, grain, internal relations and neighbouring areas. Use it when you do not know where to start.
 1. Finding data: `keygraph search "<business question or term>"` ranks tables by names, concepts, synonyms, metrics and notes, then shows grain, primary key, efficient filter columns, pitfalls and a join path between the top hits.
-2. Before any join across more than one table: `keygraph path A B` gives ranked join paths with each edge's evidence and a ready `JOIN ... ON ...` snippet. Use `keygraph neighbors T --depth 2` to see what a table connects to.
+2. Before any join across more than one table: `keygraph path A B` gives ranked join paths with each edge's evidence and a ready `JOIN ... ON ...` snippet. Use `keygraph neighbors T --depth 2` to see what a table connects to. `neighbors` and `describe` hide relations below 0.6 confidence and report how many (`hidden`, `hidden_relations`); add `--min-confidence 0` (MCP `min_confidence=0`) to see the weak inferred ones.
 3. Before filtering a big table: `keygraph keys T` lists the primary key, unique keys and indexes in column order. Filter on the leading column of an index. `keygraph describe T` adds the business context; use `keygraph describe T --brief` (MCP `describe` with `brief=true`) for a first look at a wide table, and `keygraph search ... --no-paths` (MCP `with_paths=false`) when you only need the table list.
 4. To understand one column: `keygraph explain T.col`.
 All query commands take `--json`. Table names resolve leniently: a bare name works when it is unique, or unique outside mirror and copy schemas (the original wins over its copies); otherwise write `schema.table`.
@@ -36,7 +36,7 @@ Declared foreign keys have confidence 1.0. Inferred edges are guesses from names
 `describe`, `explain` and `keys` show full column types, defaults, enum members, comments and table engine, size and partitioning.
 `keygraph profile --source <mysql|postgres|sqlite|sqlserver|clickhouse|mongodb> (--url U | --cmd '... {sql}') [--tables a,b] [--top-hubs N] [--with-context] [--sample 10000]`
 samples values with one bounded read-only SELECT per table and stores null rate, distinct count, ranges, top values, recency and pattern hints, each with `profiled_at`, sample size and method.
-Treat profiles as sampled and possibly stale. Codes seen in data but undocumented, or documented but never seen, are flagged: write them back with `context add`.
+Treat profiles as sampled and possibly stale. Codes seen in data but undocumented, or documented but never seen, are flagged: write them back with `context add` (`codes=5:refunded` adds or updates code 5 and keeps the others; `codes=` clears them all).
 PII rule: for PII columns (by name, by value pattern such as email or phone, or a `pii` context flag) no raw value is ever stored, only counts, length and pattern.
 Sources are pluggable (mysql, postgres, sqlite, sqlserver, clickhouse, metabase, mongodb, dumps, external commands); every one is read-only: single SELECTs only, Metabase GET plus native SELECT, Mongo find/list only.
 
@@ -50,7 +50,7 @@ When a run confirms what a table, column, status code or metric means, save it s
     keygraph context add --kind relation from=customer rel=places to=order
     keygraph context add --kind metric name=revenue definition="..." expression="SUM(...)" tables=schema.a,schema.b
 
-Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything.
+Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-notes <dir-of-markdown>`. Mark `verified=true` only when it was checked against data or code. Unknown tables or columns only warn. An unverified note never replaces a verified one (it is skipped with a warning); only re-importing the same context file can update its own rows. `keygraph context export` dumps everything. `context add` merges into an existing row (fields not given keep their values; `field=` empty clears one), so you can add `meaning=` without losing `codes=`. Pass `--author <name>` to `context add` to label the source (default `context-add`; env `KEYGRAPH_AUTHOR`). Replaced and refused writes are logged (in `keygraph.db`; deleting or rebuilding the output folder from scratch loses them, and `context export` saves the notes but not the history): `keygraph context history [--ref R] [--kind K] [--limit N] --json`.
 
 ## Check and report
 

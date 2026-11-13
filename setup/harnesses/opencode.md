@@ -23,8 +23,8 @@ Merge this into `opencode.json` at the project root, or into `~/.config/opencode
 ## 2. Skill and standing instructions
 
 - Instructions: add the block from `setup/templates/agent-instructions.md` to `AGENTS.md` at the project root. OpenCode reads it.
-- Skill: if your OpenCode version loads skills (a `skills` folder holding `<name>/SKILL.md`, at project or user level), copy `skills/keygraph/SKILL.md` there. The AGENTS.md block is enough without it.
-- Local models through OpenCode (Ollama, llama.cpp, LM Studio, Unsloth GGUF builds): pick a model that is good at tool calling. If OpenCode lets you limit the tools per agent, keep `keygraph_search`, `keygraph_describe`, `keygraph_path`, `keygraph_keys` and `keygraph_explain` on at least.
+- Skill: if your OpenCode version loads skills (check OpenCode's documentation for the skills folder; if you are unsure, skip this, the AGENTS.md block is enough), copy `skills/keygraph/SKILL.md` there. The AGENTS.md block is enough without it.
+- Local models through OpenCode (Ollama, llama.cpp, LM Studio, Unsloth GGUF builds): pick a model that is good at tool calling. If OpenCode lets you limit the tools per agent, keep (OpenCode may prefix tool names with the server name; the server's own names are `search`, `describe`, `path`, `keys`, `explain`) `keygraph_search`, `keygraph_describe`, `keygraph_path`, `keygraph_keys` and `keygraph_explain` on at least.
 
 ## 3. Verify
 

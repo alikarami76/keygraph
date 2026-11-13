@@ -316,12 +316,12 @@ def path_result(g: Graph, a: str, b: str, max_hops=4, min_confidence=0.6, k=3, i
     return {"from": g.resolve(a), "to": g.resolve(b), "paths": ps}
 
 
-def describe_result(dir, g: Graph, table: str, readonly: bool = False, brief: bool = False) -> dict:
+def describe_result(dir, g: Graph, table: str, readonly: bool = False, brief: bool = False, min_confidence: float = 0.6) -> dict:
     with ContextDB(Path(dir) / "keygraph.db", g, readonly) as ctx:
-        r = S.describe(g, ctx, table, brief)
+        r = S.describe(g, ctx, table, brief, min_confidence)
     if brief:
         return r
-    r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []))
+    r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []), min_confidence)
     return r
 
 
@@ -364,7 +364,7 @@ def cmd_search(a):
 
 def cmd_describe(a):
     g = _load(a)
-    r = describe_result(a.dir, g, a.table, brief=a.brief)
+    r = describe_result(a.dir, g, a.table, brief=a.brief, min_confidence=a.min_confidence)
     _emit(a, r, S.format_describe(r) + ("" if a.brief else "\n" + Q.format_relation_summary(r["relation_summary"])))
 
 
@@ -394,6 +394,17 @@ def _kv(pairs: list[str]) -> dict:
 
 
 def cmd_context(a):
+    if a.action == "history":  # read-only: no graph needed, the database is never created or changed
+        with ContextDB(Path(a.dir) / "keygraph.db", readonly=True) as ctx:
+            rows = ctx.history(a.limit, a.ref, a.kind)
+        if a.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=1, sort_keys=True))
+        else:
+            for r in rows:
+                print(f"{r['at']}  {r['action']:<8} {r['kind']} {r['ref']}  by {r['source']}")
+            if not rows:
+                print("no history")
+        return
     g = _load(a)
     ctx = _ctx(a, g)
     if a.action == "import":
@@ -415,7 +426,8 @@ def cmd_context(a):
         ctx.reindex()
     elif a.action == "add":
         d = _kv(a.fields)
-        ok = ctx.upsert(a.kind, d, d.get("source") or "agent", a.verified or d.get("verified") in ("true", "yes", "1"))
+        who = d.get("source") or a.author or os.environ.get("KEYGRAPH_AUTHOR") or "context-add"
+        ok = ctx.upsert(a.kind, d, who, a.verified or d.get("verified") in ("true", "yes", "1"), merge=True)
         ctx.reindex()
         counts = {a.kind: 1 if ok else 0}
     elif a.action == "export":
@@ -622,7 +634,7 @@ def main(argv=None) -> int:
     p = add("neighbors", cmd_neighbors, "tables related to a table")
     p.add_argument("table")
     p.add_argument("--depth", type=int, default=1)
-    p.add_argument("--min-confidence", type=float, default=0.0)
+    p.add_argument("--min-confidence", type=float, default=0.6, help="hide weaker relations and count them (0 shows all)")
     p.add_argument("--json", action="store_true")
     p = add("explain", cmd_explain, "what a column references / is referenced by, and why")
     p.add_argument("ref")
@@ -638,6 +650,7 @@ def main(argv=None) -> int:
     p = add("describe", cmd_describe, "keys plus business context for a table")
     p.add_argument("table")
     p.add_argument("--brief", action="store_true", help="keys, filter columns, notes and columns as name/type/key/codes only")
+    p.add_argument("--min-confidence", type=float, default=0.6, help="hide weaker relations and count them (0 shows all)")
     p.add_argument("--json", action="store_true")
     p = add("areas", cmd_areas, "list the business areas (clusters of related tables)")
     p.add_argument("--json", action="store_true")
@@ -647,13 +660,17 @@ def main(argv=None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--include-mirrors", action="store_true", help="also use tables in mirror schemas (copies of another schema)")
     p = add("context", cmd_context, "import / add / export business context")
-    p.add_argument("action", choices=["import", "import-notes", "add", "export", "stats"])
+    p.add_argument("action", choices=["import", "import-notes", "add", "export", "stats", "history"])
     p.add_argument("path", nargs="?")
     p.add_argument("--verified", action="store_true")
     p.add_argument("--schema-key", default="schema", help="front-matter key holding the schema name (import-notes)")
     p.add_argument("--default-schema", default="main")
     p.add_argument("--out")
     p.add_argument("--kind", choices=sorted(["concept", "relation", "link", "column", "metric", "table"]))
+    p.add_argument("--author", help="for add: who is writing (the source label unless source=... is given; env KEYGRAPH_AUTHOR)")
+    p.add_argument("--ref", help="for history: only this item (table, table.column, concept or metric name)")
+    p.add_argument("--limit", type=int, default=50, help="for history: newest N entries")
+    p.add_argument("--json", action="store_true", help="for history: JSON output")
     p.add_argument("fields", nargs="*", help="for add: key=value pairs (codes=1:new,2:paid; link=table:col:role)")
     p = add("fetch", cmd_fetch, "fetch STATISTICS / KEY_COLUMN_USAGE through an external read-only command")
     p.add_argument("--cmd", required=True, help="command template with {sql}, printing JSON rows")
