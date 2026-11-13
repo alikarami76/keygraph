@@ -22,7 +22,7 @@ Read confidence honestly. Declared keys are 1.0. Use inferred relations at 0.8 a
 After the work:
 
 - Log a query that answered a business question with `query_submit`.
-- Save a fact you confirmed with `keygraph context add ... verified=true --dir {OUT}`.
+- Save a fact you confirmed with `keygraph context add --kind column --author "<your agent name>" table=<schema.table> column=<column> meaning="..." verified=true --dir {OUT}` (`verified=true` only for what you checked).
 - If keygraph errors or is wrong, follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md. Never send a report without the user's yes.
 
 keygraph never runs SQL and never writes to the database.
