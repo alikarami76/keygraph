@@ -1,7 +1,6 @@
 """Dev mode, internal decision traces: build traces, inference/mirror/hub/resolve/search/path decisions, the row-tool
 response policy, and invariant 7 (dev on or off, the same bytes)."""
 
-import asyncio
 import json
 import shutil
 
@@ -402,8 +401,6 @@ def test_devlog_decide_goes_to_collector_and_trace(tmp_path):
     with devlog.tracing(tmp_path, "t") as path, devlog.collecting() as dec:
         devlog.decide("x", a=1)
     assert dec == [{"kind": "x", "a": 1}] and read(path) == [{"a": 1, "kind": "x"}]
-    with devlog.tracing(tmp_path, "outer") as outer:
-        with devlog.tracing(tmp_path, "inner") as inner:
-            assert inner == outer
+    with devlog.tracing(tmp_path, "outer") as outer, devlog.tracing(tmp_path, "inner") as inner:
+        assert inner == outer
     assert len(traces(tmp_path)) == 2
-    assert asyncio  # keep the import used when mcp is absent

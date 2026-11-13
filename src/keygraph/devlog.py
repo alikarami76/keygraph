@@ -407,7 +407,7 @@ def decide(kind: str, **fields) -> None:
 
 class _Phase:
     """`with devlog.phase("render.docs") as p: ...; p["files"] = n` writes {"kind": "phase", "name", "ms", **p} on exit."""
-    __slots__ = ("name", "info", "t0")
+    __slots__ = ("info", "name", "t0")
 
     def __init__(self, name: str, info: dict):
         self.name, self.info = name, info
