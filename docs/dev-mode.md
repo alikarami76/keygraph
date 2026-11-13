@@ -39,11 +39,13 @@ An event looks like this (a CLI note, then a `path` command, shortened; real eve
  "decisions": [{"kind": "resolve", "name": "customers", "rule": "original_over_mirror_or_copy", "table": "shop.customers"}, "..."]}
 ```
 
-Fields: `v` (schema version), `ts`, `session`, `seq`, `surface` (`mcp` or `cli`), `client` (name and version, when the MCP client sends them), `kind` (`call`, `resource`, `command`, `note`), `tool`, `args`, `ms`, `ok`, `error` (`type`, `message`), `response` or `response_ref`, `decisions`, `trace`.
+Fields: `v` (schema version), `ts`, `session`, `session_source`, `seq`, `surface` (`mcp` or `cli`), `client` (name and version, when the MCP client sends them), `kind` (`call`, `resource`, `command`, `note`), `tool`, `args`, `ms`, `ok`, `error` (`type`, `message`), `response` or `response_ref`, `decisions`, `trace`.
 
 Responses are stored inline up to 16 KB. A larger response is stored as a hash, its size in bytes, its approximate tokens and its shape (counts of lists and keys). Approximate tokens are the character count divided by 4. Some CLI commands that print text are stored as a reference only, even when small.
 
-Sessions: one MCP server process is one session. CLI commands share a session when `KEYGRAPH_DEV_SESSION` is set; otherwise the session id comes from the parent process id and the output directory, so commands run from one shell share a session and commands from separate shells (for example one agent tool call each) do not. Set `KEYGRAPH_DEV_SESSION` to group them.
+Sessions: one MCP server process is one session. For CLI commands the log records the id and where it came from, in `session_source`: `env` (`KEYGRAPH_DEV_SESSION` is set), `ppid` (a hash of the parent process id and the output directory) or `mcp`. Agents usually run each tool call in a new shell, so `ppid` ids split one agent run into many. The report therefore regroups CLI events whose source is `ppid` (and older events with no `session_source`) into report sessions: consecutive events in the dev dir belong together until 10 minutes pass with no command, then a new session starts. Report session ids look like `cli-<hash>` and are the same for the same logs. A `dev note` from the CLI joins the regrouped session. Sections 1, 7 and 9 and `dev report --session` use report sessions; the raw log keeps the original id. Sessions with a `KEYGRAPH_DEV_SESSION` are never regrouped, so setting it is still the precise option (put it in front of each command, or `export` it if your shell keeps state).
+
+File modes: `<out>/dev/` and `traces/` are created with mode 0700 and `events.jsonl` and trace files with 0600 (POSIX; best effort on Windows).
 
 Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events.1.jsonl` to `events.5.jsonl`). A trace stops at 50 MB or 200,000 events and ends with a `truncated` event. Only the newest 20 traces are kept.
 
@@ -51,7 +53,7 @@ Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events
 
 - Database row values. Profile values (top values, ranges, examples) are replaced by `"<masked>"` in logged responses, including `describe` and `search` answers.
 - SQL literals. SQL in arguments goes through the same masking as the query log.
-- Secrets: `password=`, `token=`, `api_key=` style values, AWS and GitHub token formats, JWTs, emails and phone-like numbers are masked in every logged string. Very long unbroken strings are replaced by a length marker.
+- Secrets: `password=`, `token=`, `api_key=` style values, AWS and GitHub token formats, JWTs, emails and phone-like numbers (also after `Bearer`, `Basic`, `Token` and `Digest` auth schemes in headers, and with dotted keys such as `conn.password=`) are masked in every logged string. Very long unbroken strings are replaced by a length marker.
 - Connection URLs: any `scheme://...` value is stored as `scheme://***`.
 - `--cmd` templates: stored as `<program> <redacted-cmd>`.
 - Tools that return database rows log only the shape of the result, never the rows.
@@ -66,7 +68,7 @@ Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events
 keygraph sees only tool calls. It does not see what the user asked or what the agent said. To attach the user's question, the agent calls `dev_note`:
 
 - With MCP, when the `dev_note` tool is listed, the agent calls it once per user question, before its first keygraph call for that question, with the question in the user's words and no personal data. When dev mode is off the tool is not listed and the agent does nothing.
-- Without MCP, the agent runs `keygraph dev note --dir <out> "<question>"` (add `--json` for JSON; use `--` before text that starts with `-`). With `--json` it prints the session id; the agent then runs `export KEYGRAPH_DEV_SESSION=<session>` so its later commands join that question. When dev mode is off, `dev note` records nothing and says so.
+- Without MCP, the agent runs `keygraph dev note --dir <out> "<question>"` (add `--json` for JSON; use `--` before text that starts with `-`). With `--json` it prints the session id; the report joins the later commands to that question by time (10-minute idle gap), and the agent may put `KEYGRAPH_DEV_SESSION=<session>` in front of its later commands for exact grouping. When dev mode is off, `dev note` records nothing and says so.
 
 Both return `{"noted", "session", "question", "hint"}`, plus a `reason` when `noted` is false (`dev mode is off` or `write failed`). Nothing was written then. Do not retry.
 

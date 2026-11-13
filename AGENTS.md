@@ -18,7 +18,7 @@ Commands below assume a built output directory (default `keygraph-out`, set with
 
 ## Dev mode (optional)
 
-If a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data. If it is not listed, do nothing. Without MCP, run `keygraph dev note "<question>" --json` and then `export KEYGRAPH_DEV_SESSION=<session from the output>`; if it says dev mode is off, do nothing more. Details: [docs/dev-mode.md](docs/dev-mode.md).
+If a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data. If it is not listed, do nothing. Without MCP, run `keygraph dev note --dir <out> "<question>" --json`. Commands from separate shells are grouped by time in the report; for exact grouping, put `KEYGRAPH_DEV_SESSION=<session from the output>` in front of each later command, or `export` it if your shell keeps state; if it says dev mode is off, do nothing more. Details: [docs/dev-mode.md](docs/dev-mode.md).
 
 ## How to read confidence
 

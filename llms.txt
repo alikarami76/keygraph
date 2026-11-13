@@ -24,7 +24,7 @@
 - `describe` and `neighbors` hide relations below 0.6 confidence and report the hidden count; `--min-confidence 0` (MCP `min_confidence=0`) shows them.
 - `describe T --brief` and `search Q --no-paths` (MCP `brief=true`, `with_paths=false`) give smaller answers; `scan --url` keeps comments, enums, row counts and partitions on MySQL, PostgreSQL, SQL Server and ClickHouse.
 
-- [Dev mode](https://github.com/alikarami76/keygraph/blob/main/docs/dev-mode.md): `keygraph dev on|off|status|report|export|clear|note`. Off by default; records how agents use keygraph (tool calls, decisions, build traces), never database rows or secrets. If a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data; if it is not listed, do nothing.
+- [Dev mode](https://github.com/alikarami76/keygraph/blob/main/docs/dev-mode.md): `keygraph dev on|off|status|report|export|clear|note`. Off by default; records how agents use keygraph (tool calls, decisions, build traces), never database rows or secrets. If a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data; if it is not listed, do nothing. Without MCP: `keygraph dev note --dir <out> "<question>" --json`.
 
 ## Concepts
 

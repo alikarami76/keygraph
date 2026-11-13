@@ -2,6 +2,8 @@
 response policy, and invariant 7 (dev on or off, the same bytes)."""
 
 import json
+import os
+import stat
 import shutil
 
 import pytest
@@ -416,3 +418,39 @@ def test_devlog_decide_goes_to_collector_and_trace(tmp_path):
     with devlog.tracing(tmp_path, "outer") as outer, devlog.tracing(tmp_path, "inner") as inner:
         assert inner == outer
     assert len(traces(tmp_path)) == 2
+
+
+def test_explain_on_a_column_ref_logs_only_the_final_resolve(demo_on):
+    g = Graph.load(demo_on / "graph.json")
+    with devlog.collecting() as lst:
+        g.split_column("shop.orders.status")
+    res = [d for d in lst if d["kind"] == "resolve"]
+    assert [(d["name"], d["rule"]) for d in res] == [("shop.orders", "exact")]
+    with devlog.collecting() as lst:
+        g.split_column("shop.orders")
+    assert [(d["name"], d["rule"]) for d in lst if d["kind"] == "resolve"] == [("shop.orders", "exact")]
+    with devlog.collecting() as lst:
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            g.split_column("shop.nothing_like_it.status")
+    assert [d["rule"] for d in lst if d["kind"] == "resolve"] == ["unknown"]
+    with devlog.collecting() as lst:
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            g.split_column("nothing_like_it")
+    assert [d["rule"] for d in lst if d["kind"] == "resolve"] == ["unknown"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_dev_dir_and_files_are_private(tmp_path):
+    out = tmp_path / "o"
+    out.mkdir()
+    dev_marker(out)
+    old = os.umask(0o022)
+    try:
+        assert devlog.Recorder(out).record("note", "dev_note", {"question": "q"})
+        with devlog.tracing(out, "t") as p:
+            devlog.trace("phase", name="x")
+    finally:
+        os.umask(old)
+    mode = lambda p: stat.S_IMODE(p.stat().st_mode)  # noqa: E731
+    assert mode(out / "dev") == 0o700 and mode(out / "dev" / "traces") == 0o700
+    assert mode(out / "dev" / "events.jsonl") == 0o600 and mode(p) == 0o600

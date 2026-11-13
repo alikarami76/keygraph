@@ -142,35 +142,38 @@ class Graph:
 
     # --- name resolution -------------------------------------------------------
     def resolve(self, name: str) -> str:
+        return self._resolve(name, True)
+
+    def _resolve(self, name: str, record: bool) -> str:
         if name in self.nodes:
-            if devlog.active():
+            if record and devlog.active():
                 devlog.decide("resolve", name=name, rule="exact", table=name)
             return name
         low = name.lower()
         for nid in self.nodes:
             if nid.lower() == low:
-                if devlog.active():
+                if record and devlog.active():
                     devlog.decide("resolve", name=name, rule="case_insensitive", table=nid)
                 return nid
         if "." not in name:
             hits = self._by_name.get(low, [])
             if len(hits) == 1:
-                if devlog.active():
+                if record and devlog.active():
                     devlog.decide("resolve", name=name, rule="unique_bare_name", table=hits[0])
                 return hits[0]
             if len(hits) > 1:
                 # A bare name that also exists in mirror or copy schemas means the original table.
                 originals = [h for h in hits if not self._is_mirror_or_copy(self.nodes[h]["schema"])]
                 if len(originals) == 1:
-                    if devlog.active():
+                    if record and devlog.active():
                         devlog.decide("resolve", name=name, rule="original_over_mirror_or_copy", table=originals[0], candidates=sorted(hits))
                     return originals[0]
-                if devlog.active():
+                if record and devlog.active():
                     devlog.decide("resolve", name=name, rule="ambiguous", candidates=sorted(hits), originals=len(originals))
                 raise AmbiguousTable(name, sorted(hits))
         sug = difflib.get_close_matches(name, list(self.nodes), n=4, cutoff=0.6)
         sug += [h for k in difflib.get_close_matches(low, list(self._by_name), n=3, cutoff=0.7) for h in self._by_name[k]]
-        if devlog.active():
+        if record and devlog.active():
             devlog.decide("resolve", name=name, rule="unknown", suggestions=sorted(set(sug)))
         raise UnknownTable(name, sorted(set(sug)), self.coverage())
 
@@ -181,11 +184,12 @@ class Graph:
 
     def split_column(self, ref: str) -> tuple[str, str | None]:
         """Parse 'table', 'table.col' or 'schema.table.col' into (table_id, column or None)."""
+        if "." not in ref:
+            return self.resolve(ref), None
         try:
+            self._resolve(ref, False)  # a trial: dev mode logs only the name that finally resolves or fails
             return self.resolve(ref), None
         except (UnknownTable, AmbiguousTable) as first:
-            if "." not in ref:
-                raise
             head, col = ref.rsplit(".", 1)
             tid = self.resolve(head)
             if col not in {c["name"] for c in self.nodes[tid]["columns"]}:

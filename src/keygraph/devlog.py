@@ -231,6 +231,15 @@ def stdout_fields(tool: str, text: str, nbytes: int, digest: str, tokens: int, i
     return {"response_ref": {"sha256": digest, "bytes": nbytes, "tokens_approx": tokens, "shape": shape}}
 
 
+def _private_dir(d: Path) -> None:
+    """Create the dev dir (and parents below it) with mode 0700; best effort where modes mean little (Windows)."""
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with contextlib.suppress(OSError):
+        if d.name == "traces":
+            d.parent.chmod(0o700)
+        d.chmod(0o700)
+
+
 # ---- sessions and recorder --------------------------------------------------------------------------------
 
 _PROCESS = uuid.uuid4().hex[:12]
@@ -247,6 +256,14 @@ def session_id(surface: str, out=None) -> str:
     if out is None:
         return uuid.uuid4().hex[:12]
     return hashlib.sha1(f"{os.getppid()}:{dev_dir(out).resolve()}".encode()).hexdigest()[:12]
+
+
+def session_source(surface: str) -> str:
+    """Where session_id gets its value: "mcp" (the server process), "env" (KEYGRAPH_DEV_SESSION) or "ppid" (the fallback).
+    The report regroups "ppid" CLI events by idle time, since every agent tool call is usually a new shell."""
+    if surface == "mcp":
+        return "mcp"
+    return "env" if os.environ.get("KEYGRAPH_DEV_SESSION") else "ppid"
 
 
 def now() -> str:
@@ -281,7 +298,7 @@ class Recorder:
         """Append one event; False when it could not be written. Never raises."""
         try:
             self.seq += 1
-            ev: dict = {"v": V, "ts": now(), "session": self.session, "seq": self.seq, "surface": self.surface,
+            ev: dict = {"v": V, "ts": now(), "session": self.session, "session_source": session_source(self.surface), "seq": self.seq, "surface": self.surface,
                         "client": self.client, "kind": kind, "tool": tool, "args": mask_args(args or {}),
                         "ms": round(ms, 2), "ok": ok}
             if error:
@@ -295,10 +312,10 @@ class Recorder:
                 ev["decisions"] = mask_args(ds)
             if trace:
                 ev["trace"] = trace
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            _private_dir(self.path.parent)
             self._rotate()
             data = (json.dumps(ev, ensure_ascii=False, sort_keys=True, default=str) + "\n").encode("utf-8", "replace")
-            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
             try:
                 view = memoryview(data)  # normally one syscall on an O_APPEND fd, so writers do not interleave lines
                 while view:
@@ -322,7 +339,8 @@ class Tracer:
 
     def __init__(self, path: Path):
         self.path, self.n, self.size, self.done = path, 0, 0, False
-        self.f = open(path, "a", encoding="utf-8", errors="replace")  # noqa: SIM115  (held open for the length of a build)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        self.f = open(fd, "a", encoding="utf-8", errors="replace", closefd=True)  # noqa: SIM115  (held open for the length of a build)
 
     def emit(self, kind: str, fields: dict) -> None:
         if self.done:
@@ -378,7 +396,7 @@ def tracing(out, name: str):
     try:
         if enabled(out):
             d = dev_dir(out) / "traces"
-            d.mkdir(parents=True, exist_ok=True)
+            _private_dir(d)
             path = d / f"{dt.datetime.now(dt.UTC):%Y%m%dT%H%M%S%f}-{re.sub(r'[^A-Za-z0-9_.-]', '_', name)}.jsonl"
             t = Tracer(path)
             _prune(d)

@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -22,7 +23,8 @@ CALL_KINDS = {"call", "command", "resource"}
 UNIT = "approx tokens = chars/4"
 SHORT = 120
 _ROTATED = re.compile(r"events\.(\d+)\.jsonl$")
-_QUOTED = re.compile(r"'[^'\s][^']*'")
+_QUOTED = re.compile(r"(?<!\w)'[^'\s][^']*'(?!\w)")  # a quoted name, not the apostrophe in "table's"
+IDLE_GAP = dt.timedelta(minutes=10)  # a CLI session (see _regroup) ends after this long without a command
 _DOTTED = re.compile(r"\b[^\W\d]\w*\.[^\W\d]\w*\b")
 # list keys that mean "the answer had something in it", per tool (CLI names map onto the MCP names)
 _ALIASES = {"code where": "code_where", "code what": "code_what", "queries for": "query_for", "queries top": "query_top",
@@ -87,6 +89,27 @@ def _lines(path: Path):
         yield n, obj if isinstance(obj, dict) else None, raw
 
 
+def _regroup(events: list[dict]) -> None:
+    """Give CLI events whose session came from the parent pid (session_source "ppid", or no field on older logs) a report
+    session: consecutive events of the one dev dir, a new session after IDLE_GAP of quiet. Each agent tool call is usually a new
+    shell, so the pid alone splits one agent run into many. The id is "cli-" plus a hash of the first event's time, seq and
+    logged session, so the same logs always give the same ids. `events` must be in time order; env and mcp sessions stay."""
+    cur: str | None = None
+    last: dt.datetime | None = None
+    for e in events:
+        if e.get("surface") != "cli" or e.get("session_source", "ppid") != "ppid":
+            continue
+        try:
+            t = _utc(_s(e.get("ts")))
+        except ValueError:
+            continue
+        if cur is None or last is None or t - last > IDLE_GAP:
+            key = f"{e.get('ts')}:{_s(e.get('session'))}:{_num(e.get('seq'))}"
+            cur = "cli-" + hashlib.sha1(key.encode("utf-8", "replace")).hexdigest()[:10]
+        last = t
+        e["session"] = cur
+
+
 def _keep(e: dict, since: dt.datetime | None, session: str | None) -> bool:
     if since is not None:
         try:
@@ -105,9 +128,11 @@ def _load(out, since: dt.datetime | None, session: str | None) -> tuple[list[dic
         for _, obj, _raw in _lines(p):
             if obj is None:
                 corrupt += 1
-            elif _keep(obj, since, session):
+            else:
                 events.append(obj)
     events.sort(key=lambda e: (str(e.get("ts", "")), str(e.get("session", "")), _num(e.get("seq"))))
+    _regroup(events)  # before --since and --session, so a session keeps its id whatever the filter
+    events = [e for e in events if _keep(e, since, session)]
     linked = {e.get("trace") for e in events if e.get("trace")}
     stamp = _trace_stamp(since) if since else None
     for p in _trace_files(d):

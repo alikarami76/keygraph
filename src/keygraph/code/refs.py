@@ -61,9 +61,13 @@ _DOMAIN = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 _KEYRUN = re.compile(r"[\w$.\-]+")
 _KV_TAIL = re.compile(r"""(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
 # unquoted `key = value` / `key: value`; the key must name a secret (see _secret_key)
-_PLAIN_KV = re.compile(r"(?<![\w.$])(?P<k>[A-Za-z_]\w{0,60})(?P<sep>\s*[=:]\s*)(?![*?'\"<:$@\s])(?P<v>[^\s'\",;&)]+)")
+_PLAIN_KV = re.compile(r"(?<![\w.$])(?:[A-Za-z_$][\w$]{0,40}\.){0,4}(?P<k>[A-Za-z_]\w{0,60})(?P<sep>\s*[=:]\s*)(?![*?'\"<:$@\s])(?P<v>[^\s'\",;&)]+)")
 # values that are code, not credentials: a collection or call (`( [ {`), a call or attribute (`f(`, `a.b`), or a constant name (`MAX_TOKENS`)
 _CODE_VALUE = re.compile(r"[(\[{]|[A-Za-z_$][\w$]*[(.]|[A-Z]+_[A-Z_]*$")
+# `Bearer abc`, `Authorization: Basic abc`: the credential after an auth scheme word. Outside an Authorization header
+# only Bearer is masked (the other words are common in prose: "Basic usage", "token count").
+_AUTH_SCHEME = re.compile(r"(?P<pre>\b(?:auth\w*\s*[:=]\s*['\"]?)?)(?P<s>\b(?:Bearer|Basic|Token|Digest))(?P<sp>[ \t]+)(?P<v>[A-Za-z0-9._~+/=\-]{4,})", re.I)
+_SCHEMES = frozenset({"bearer", "basic", "token", "digest"})
 _KEY_START = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$")
 _SECRET_SUBSTR = ("password", "passwd", "secret", "token", "api_key", "apikey", "access_key", "accesskey")
 _SECRET_WORDS = {"pass", "pwd", "auth", "authorization"}
@@ -138,11 +142,20 @@ def mask_secrets(text: str) -> str:
     text = _mask_emails(text)
     text = _mask_quoted_kv(text)
 
+    def auth(m: re.Match) -> str:
+        if m.group("pre") or m.group("s").lower() == "bearer":
+            return m.group("pre") + m.group("s") + m.group("sp") + "***"
+        return m.group(0)
+
+    text = _AUTH_SCHEME.sub(auth, text)
+
     def plain(m: re.Match) -> str:  # a dotted value is a column reference (a.token = b.token), not a secret
         v = m.group("v")
+        if v.lower() in _SCHEMES and "auth" in m.group("k").lower():  # `Authorization: Bearer ...`: the credential after the scheme word is masked above
+            return m.group(0)
         if m.group("k").lower() in ("pass", "tokens") or not _secret_key(m.group("k")) or re.match(r"[\w$]+\.[\w$]", v) or _CODE_VALUE.match(v):
             return m.group(0)
-        return m.group("k") + m.group("sep") + "***"
+        return m.group(0)[:m.start("k") - m.start()] + m.group("k") + m.group("sep") + "***"
 
     text = _PLAIN_KV.sub(plain, text)
     return _LONG_TOKEN.sub("***", text)

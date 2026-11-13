@@ -426,7 +426,7 @@ def _old_mask(text):
         if (m.group("k").lower() in ("pass", "tokens") or not refs._secret_key(m.group("k"))
                 or _re.match(r"[\w$]+\.[\w$]", m.group("v")) or refs._CODE_VALUE.match(m.group("v"))):
             return m.group(0)
-        return m.group("k") + m.group("sep") + "***"
+        return m.group(0)[:m.start("k") - m.start()] + m.group("k") + m.group("sep") + "***"
     return refs._LONG_TOKEN.sub("***", refs._PLAIN_KV.sub(plain, text))
 
 
@@ -489,11 +489,11 @@ def test_text_mode_cli_answers_are_declared_unclassified(tmp_path):
 def test_reason_grouping_handles_apostrophes_unicode_and_missing_reasons(tmp_path):
     trace(tmp_path, "20261113T100000000000-load.jsonl", [
         {"kind": "infer.column", "table": "a.t", "column": "c", "outcome": "kept", "candidates": [
-            {"outcome": "kept", "reasons": ["column name 'x' matches table name with this table's 'order_' prefix"], "to": "a.x"},
+            {"outcome": "kept", "reasons": ["column name 'x' matches table name with this table's prefix 'order_'"], "to": "a.x"},
             {"reasons": ["role of فروش.سفارش"], "to": "a.y"}]}])
     write(tmp_path, [ev(1, "search")])
     c = devreport.report(tmp_path)["build"]["candidates"]
-    assert list(c["kept"]) == ["column name '…' matches table name with this table's '…' prefix"] or len(c["kept"]) == 1
+    assert list(c["kept"]) == ["column name '…' matches table name with this table's prefix '…'"]
     assert c["rejected"] == {"(no reason recorded)": 1} and list(c["rejected_heuristics"]) == ["role of <table>"]
 
 
@@ -520,3 +520,62 @@ def test_github_token_shape_needs_a_digit_so_ordinary_names_stay():
     assert devlog.mask_text("table github_pat_assignments_per_team missing") == "table github_pat_assignments_per_team missing"
     assert devlog.mask_text("ghp_" + "abcdefghij" * 3) == "ghp_" + "abcdefghij" * 3
     assert "<token>" in devlog.mask_text("x github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuv y")
+
+
+def cli_ev(seq, ts, session, source="ppid", **kw):
+    kw.setdefault("kind", "command")
+    e = ev(seq, "search", session=session, ts=ts, surface="cli", **kw)
+    if source:
+        e["session_source"] = source
+    return e
+
+
+def test_cli_ppid_sessions_group_by_idle_gap(tmp_path):
+    write(tmp_path, [cli_ev(1, f"2026-11-12T10:0{i}:00.000+00:00", f"ppid{i}", args={"q": i}) for i in range(6)])
+    r = devreport.report(tmp_path)
+    assert r["overview"]["sessions"] == 1
+    sid = next(iter({x["session"] for x in r["latency"]["slowest"]}))
+    assert sid.startswith("cli-")
+    # a note joins the regrouped session
+    write(tmp_path, [cli_ev(1, "2026-11-12T10:06:30.000+00:00", "ppidN", kind="note", args={"question": "q"})])
+    assert devreport.report(tmp_path)["notes"][0]["call_count"] == 0
+    write(tmp_path, [cli_ev(2, "2026-11-12T10:07:00.000+00:00", "ppidM")])
+    n = devreport.report(tmp_path)["notes"][0]
+    assert n["call_count"] == 1 and n["session"] == sid
+
+
+def test_cli_ppid_sessions_split_after_ten_idle_minutes(tmp_path):
+    write(tmp_path, [cli_ev(1, "2026-11-12T10:00:00.000+00:00", "a"), cli_ev(1, "2026-11-12T10:10:00.000+00:00", "b"),
+                     cli_ev(1, "2026-11-12T10:21:01.000+00:00", "c"), cli_ev(1, "2026-11-12T10:30:00.000+00:00", "d")])
+    assert devreport.report(tmp_path)["overview"]["sessions"] == 2  # 10:10 is within the gap, 10:21:01 is 11:01 later
+    assert devreport.IDLE_GAP.total_seconds() == 600
+
+
+def test_cli_regrouping_leaves_env_mcp_and_explicit_sessions_alone(tmp_path):
+    write(tmp_path, [cli_ev(1, "2026-11-12T10:00:00.000+00:00", "mine", source="env"),
+                     cli_ev(1, "2026-11-12T10:01:00.000+00:00", "other", source="env"),
+                     ev(1, "search", session="m1", ts="2026-11-12T10:02:00.000+00:00"),
+                     cli_ev(1, "2026-11-12T10:03:00.000+00:00", "p1"), cli_ev(1, "2026-11-12T10:04:00.000+00:00", "p2")])
+    o = devreport.report(tmp_path)["overview"]
+    assert o["sessions"] == 4  # mine, other, m1, one regrouped CLI session
+    assert devreport.report(tmp_path, session="mine")["overview"]["events"] == 1
+
+
+def test_older_cli_events_without_session_source_are_regrouped_and_ids_are_stable(tmp_path):
+    write(tmp_path, [cli_ev(1, f"2026-11-12T10:0{i}:00.000+00:00", f"x{i}", source=None) for i in range(4)])
+    a = devreport.format_report(devreport.report(tmp_path))
+    b = devreport.format_report(devreport.report(tmp_path))
+    assert a == b and devreport.report(tmp_path)["overview"]["sessions"] == 1
+    sid = next(iter({x["session"] for x in devreport.report(tmp_path)["latency"]["slowest"]}))
+    assert devreport.report(tmp_path, session=sid)["overview"]["events"] == 4
+
+
+def test_real_cli_commands_record_the_session_source(tmp_path, monkeypatch):
+    main(["dev", "on", "--dir", str(tmp_path)])
+    monkeypatch.setenv("KEYGRAPH_DEV_SESSION", "mine")
+    main(["dev", "note", "q", "--dir", str(tmp_path)])
+    monkeypatch.delenv("KEYGRAPH_DEV_SESSION")
+    main(["dev", "note", "q2", "--dir", str(tmp_path)])
+    srcs = [json.loads(x)["session_source"] for x in (tmp_path / "dev" / "events.jsonl").read_text().splitlines()]
+    assert srcs == ["env", "ppid"]
+    assert devlog.session_source("mcp") == "mcp"
