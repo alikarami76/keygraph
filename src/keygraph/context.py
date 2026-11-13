@@ -293,6 +293,9 @@ class ContextDB:
             raise ValueError(f"unknown kind '{kind}'; use one of {sorted(KINDS)}")
         need = self._REQUIRED[kind]
         if missing := [k for k in need if not d.get(k)]:
+            if allow_same_source:  # a file import: say which file and which item
+                raise ValueError(f"context file {source or 'unknown'}: a {kind} entry needs {' and '.join(need)} "
+                                 f"(missing {', '.join(missing)}): {json.dumps(d, ensure_ascii=False, default=str)[:120]}")
             raise ValueError(f"context add --kind {kind} needs {' and '.join(k + '=' for k in need)} (missing {', '.join(missing)})")
         if merge:
             d = self._merged(kind, d)

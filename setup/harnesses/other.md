@@ -2,6 +2,10 @@
 
 `COMMAND` and `ARGS` below are `mcp_launch.command` and `mcp_launch.args` from `keygraph doctor --dir "$OUT" --json`.
 
+## Where the skill and the instructions go
+
+There is no fixed place for a client that is not listed in `setup/harnesses/`. Put `skills/keygraph/SKILL.md` and the block from `setup/templates/agent-instructions.md` (only the lines between the `keygraph:start` and `keygraph:end` markers) where that agent loads project instructions or rules (its documentation says where), and write both paths into `OUT/SETUP.md`. If you cannot find such a place, tell the user and give them the block to paste.
+
 ## Clients that use the common `mcpServers` JSON
 
 Claude Desktop (`claude_desktop_config.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`), Cline, Roo Code, Continue, Goose and most others take this shape. Merge it into the existing file:

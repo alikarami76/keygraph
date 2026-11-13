@@ -3,6 +3,8 @@ import gzip
 import json
 import re
 
+import pytest
+
 from conftest import FIX, edge, needs_yaml
 
 from keygraph import search as S
@@ -595,3 +597,13 @@ def test_unknown_table_warns_once_and_missing_key_is_a_clear_error(tmp_path, cap
     assert len(w) == len(set(w)) == 1
     assert main(["context", "add", "--dir", str(out), "--kind", "column", "table=shop.orders", "meaning=x"]) == 2
     assert "column" in capsys.readouterr().err
+
+
+def test_import_missing_key_names_the_file_and_the_item(graph, tmp_path):
+    f = tmp_path / "ctx.json"
+    f.write_text(json.dumps({"columns": [{"table": "shop.orders", "meaning": "x"}]}))
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    with pytest.raises(ValueError) as exc:
+        ctx.import_path(f)
+    msg = str(exc.value)
+    assert "ctx.json" in msg and "column" in msg and "meaning" in msg and "context add" not in msg
