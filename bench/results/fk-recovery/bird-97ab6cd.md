@@ -1,6 +1,6 @@
-# FK recovery: bird mini-dev (kgd-fk-recovery-654c3f2)
+# FK recovery: bird mini-dev (97ab6cd)
 
-keygraph 0.3.3, git None, 2026-11-12, 11 databases.
+keygraph 0.3.3, git 97ab6cd, 2026-11-13, 11 databases.
 Precision is a lower bound: undeclared but real relations count as extra edges.
 
 ## Confidence >= 0.8

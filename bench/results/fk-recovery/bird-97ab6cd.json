@@ -380,10 +380,10 @@
    "tables": 4
   }
  ],
- "date": "2026-11-12",
- "git_sha": null,
+ "date": "2026-11-13",
+ "git_sha": "97ab6cd",
  "keygraph_version": "0.3.3",
- "label": "bird mini-dev (kgd-fk-recovery-654c3f2)",
+ "label": "bird mini-dev (97ab6cd)",
  "total": {
   "0.6": {
    "declared": 104,

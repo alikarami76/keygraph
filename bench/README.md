@@ -7,9 +7,9 @@ Measurement scripts for keygraph. Not part of the package (the sdist include lis
 Measures how many declared foreign keys keygraph recovers without them. For each SQLite database it reads the declared FKs (`PRAGMA foreign_key_list`; one pair per column for multi-column FKs), writes a schema-only copy (same columns, types, primary keys, UNIQUE constraints and indexes; no FKs, no rows), runs `keygraph scan` on the copy and compares single-column inferred edges with the stripped FKs. A hit is an inferred edge joining the same two table.column pairs, in either direction, case-insensitive.
 
 ```
-python3 -I bench/scripts/fk_recovery.py --db-root ../.bench-data/bird-minidev \
+python3 -I bench/scripts/fk_recovery.py --db-root ../.bench-data/bird-minidev/minidev/MINIDEV/dev_databases \
   --glob '*/*.sqlite' --work /tmp/fkwork --keygraph 'uv run keygraph' \
-  --out bench/results/fk_recovery-0.3.3.json --md bench/results/fk_recovery-0.3.3.md --label 'main 0.3.3'
+  --out bench/results/fk-recovery/bird-LABEL.json --md bench/results/fk-recovery/bird-LABEL.md --label 'bird mini-dev (LABEL)'
 ```
 
 `--keygraph` is a command string (`uv run keygraph`, `.venv/bin/keygraph`). Output records recall and precision at confidence 0.8 and 0.6, the misses, the extra edges with confidence and first evidence line, the keygraph version, the git sha, the SHA-256 of every database file and the date.
@@ -31,26 +31,32 @@ Question: with foreign keys removed, how many declared keys does keygraph infer 
 
 **Precision is a lower bound.** These databases do not declare every real relation, so a correct inferred edge that was never declared counts as wrong.
 
-**Reproduce.**
+**Reproduce.** Run from the repository root; `$DATA` is any folder for the datasets (here `../.bench-data`).
 
 ```
-sh bench/scripts/fetch_bird_minidev.sh ../.bench-data/bird-minidev
-# Spider2-Lite: unzip local_sqlite.zip (checked against the SHA-256 above) into ../.bench-data/spider2-lite
-python3 -I bench/scripts/fk_recovery.py --db-root ../.bench-data/bird-minidev --glob '*/*.sqlite' \
-  --work /tmp/fkwork --keygraph 'uv run keygraph' \
-  --out out.json --md out.md --label 'bird mini-dev'
+DATA=../.bench-data
+sh bench/scripts/fetch_bird_minidev.sh $DATA/bird-minidev   # downloads, checks the SHA-256, unzips
+python3 -I bench/scripts/fk_recovery.py --db-root $DATA/bird-minidev/minidev/MINIDEV/dev_databases \
+  --glob '*/*.sqlite' --work /tmp/fkwork-bird --keygraph 'uv run keygraph' \
+  --out bench/results/fk-recovery/bird-LABEL.json --md bench/results/fk-recovery/bird-LABEL.md \
+  --label 'bird mini-dev (LABEL)'
+# Spider2-Lite: unzip local_sqlite.zip (SHA-256 above) so that the databases are $DATA/spider2-lite/dbs/*.sqlite
+python3 -I bench/scripts/fk_recovery.py --db-root $DATA/spider2-lite/dbs --glob '*.sqlite' \
+  --work /tmp/fkwork-spider2 --keygraph 'uv run keygraph' \
+  --out bench/results/fk-recovery/spider2-LABEL.json --md bench/results/fk-recovery/spider2-LABEL.md \
+  --label 'spider2-lite (LABEL)'
 ```
 
-Flags: `--db-root` (folder with the databases), `--glob` (default `*/*.sqlite`), `--work` (scratch folder for the copies), `--keygraph` (command string), `--out` (JSON), `--md` (optional Markdown), `--label`. For Spider2-Lite pass its own `--db-root` and `--glob`. Raw results are in `bench/results/fk-recovery/`.
+Replace `LABEL` with the measured git sha. Flags: `--db-root` (folder with the databases), `--glob` (default `*/*.sqlite`), `--work` (scratch folder for the copies), `--keygraph` (command string), `--out` (JSON), `--md` (optional Markdown), `--label`, `--sha` (git sha to record; default is HEAD of the current folder). Raw results are in `bench/results/fk-recovery/`.
 
 **Results.**
 
 | Dataset | Version | Recall / precision at >= 0.8 | Recall / precision at >= 0.6 |
 |---|---|---|---|
 | BIRD, 11 DBs, 104 FKs | 0.3.3 (5530560) | 48.1% / 92.6% | 52.9% / 91.7% |
-| BIRD, 11 DBs, 104 FKs | this branch (654c3f2) | 54.8% / 93.4% | 65.4% / 93.2% |
+| BIRD, 11 DBs, 104 FKs | this branch (97ab6cd) | 54.8% / 93.4% | 65.4% / 93.2% |
 | Spider2-Lite, 30 DBs, 178 FKs | before (5530560) | 68.0% / 50.2% | 69.7% / 50.4% |
-| Spider2-Lite, 30 DBs, 178 FKs | after (654c3f2) | 68.0% / 50.2% | 73.0% / 49.1% |
+| Spider2-Lite, 30 DBs, 178 FKs | after (97ab6cd) | 68.0% / 50.2% | 73.0% / 49.1% |
 
 Spider2-Lite is not a clean held-out set: its extra edges were inspected while the rules were tuned. Of the 13 new extra edges after the change, 12 look like real undeclared relations on a hand check, so the precision drop there understates their quality, but that is a judgement, not a measurement.
 

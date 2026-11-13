@@ -1,6 +1,6 @@
-# FK recovery: spider2-lite after (654c3f2)
+# FK recovery: spider2-lite (97ab6cd)
 
-keygraph 0.3.3, git None, 2026-11-12, 30 databases.
+keygraph 0.3.3, git 97ab6cd, 2026-11-13, 30 databases.
 Precision is a lower bound: undeclared but real relations count as extra edges.
 
 ## Confidence >= 0.8
