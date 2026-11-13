@@ -316,12 +316,12 @@ def path_result(g: Graph, a: str, b: str, max_hops=4, min_confidence=0.6, k=3, i
     return {"from": g.resolve(a), "to": g.resolve(b), "paths": ps}
 
 
-def describe_result(dir, g: Graph, table: str, readonly: bool = False, brief: bool = False) -> dict:
+def describe_result(dir, g: Graph, table: str, readonly: bool = False, brief: bool = False, min_confidence: float = 0.6) -> dict:
     with ContextDB(Path(dir) / "keygraph.db", g, readonly) as ctx:
-        r = S.describe(g, ctx, table, brief)
+        r = S.describe(g, ctx, table, brief, min_confidence)
     if brief:
         return r
-    r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []))
+    r["relation_summary"] = relation_summary(g, table, g.data.get("areas", []), min_confidence)
     return r
 
 
@@ -364,7 +364,7 @@ def cmd_search(a):
 
 def cmd_describe(a):
     g = _load(a)
-    r = describe_result(a.dir, g, a.table, brief=a.brief)
+    r = describe_result(a.dir, g, a.table, brief=a.brief, min_confidence=a.min_confidence)
     _emit(a, r, S.format_describe(r) + ("" if a.brief else "\n" + Q.format_relation_summary(r["relation_summary"])))
 
 
@@ -634,7 +634,7 @@ def main(argv=None) -> int:
     p = add("neighbors", cmd_neighbors, "tables related to a table")
     p.add_argument("table")
     p.add_argument("--depth", type=int, default=1)
-    p.add_argument("--min-confidence", type=float, default=0.0)
+    p.add_argument("--min-confidence", type=float, default=0.6, help="hide weaker relations and count them (0 shows all)")
     p.add_argument("--json", action="store_true")
     p = add("explain", cmd_explain, "what a column references / is referenced by, and why")
     p.add_argument("ref")
@@ -650,6 +650,7 @@ def main(argv=None) -> int:
     p = add("describe", cmd_describe, "keys plus business context for a table")
     p.add_argument("table")
     p.add_argument("--brief", action="store_true", help="keys, filter columns, notes and columns as name/type/key/codes only")
+    p.add_argument("--min-confidence", type=float, default=0.6, help="hide weaker relations and count them (0 shows all)")
     p.add_argument("--json", action="store_true")
     p = add("areas", cmd_areas, "list the business areas (clusters of related tables)")
     p.add_argument("--json", action="store_true")

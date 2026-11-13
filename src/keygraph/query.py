@@ -136,17 +136,20 @@ def format_paths(a: str, b: str, paths: list[dict]) -> str:
     return "\n".join(out).rstrip()
 
 
-def neighbors(graph: Graph, t: str, depth: int = 1, min_conf: float = 0.0) -> dict:
+def neighbors(graph: Graph, t: str, depth: int = 1, min_conf: float = 0.6) -> dict:
+    """Tables related to t. Hops below min_conf are skipped and counted in "hidden" (0 shows everything)."""
     t = graph.resolve(t)
     adj = graph.adjacency()
     seen = {t: 0}
     levels: dict[int, list[dict]] = {}
     frontier = [t]
+    hidden = 0
     for d in range(1, depth + 1):
         nxt = []
         for node in frontier:
             for h in adj[node]:
                 if h["edge"]["confidence"] < min_conf:
+                    hidden += 1
                     continue
                 levels.setdefault(d, []).append({
                     "from": h["near"], "from_columns": h["near_cols"], "to": h["far"], "to_columns": h["far_cols"],
@@ -158,7 +161,14 @@ def neighbors(graph: Graph, t: str, depth: int = 1, min_conf: float = 0.0) -> di
         frontier = nxt
     for lv in levels.values():
         lv.sort(key=lambda x: (-x["confidence"], x["to"]))
-    return {"table": t, "depth": depth, "levels": {str(k): v for k, v in sorted(levels.items())}}
+    return {"table": t, "depth": depth, "min_confidence": min_conf, "hidden": hidden,
+            "levels": {str(k): v for k, v in sorted(levels.items())}}
+
+
+def hidden_note(n: int, floor: float) -> str:
+    """The one-line text hint for relations hidden by the confidence floor ("" when none)."""
+    return (f"{n} weaker relation{'s' if n != 1 else ''} hidden (below {floor:g}); use --min-confidence 0 to see them"
+            if n else "")
 
 
 def format_neighbors(r: dict) -> str:
@@ -170,6 +180,8 @@ def format_neighbors(r: dict) -> str:
                        f"[{x['kind']} {x['confidence']:.2f}, {x['cardinality']}]{' [ambiguous]' if x['ambiguous'] else ''}")
     if len(out) == 1:
         out.append("  no relations found")
+    if r.get("hidden"):
+        out.append("  " + hidden_note(r["hidden"], r["min_confidence"]))
     return "\n".join(out)
 
 

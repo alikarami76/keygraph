@@ -190,7 +190,7 @@ The Claude Code skill is in [skills/keygraph/SKILL.md](https://github.com/alikar
 ### MCP
 
 `keygraph mcp` serves keygraph's queries to any MCP client over stdio. It needs the `mcp` extra and a built output
-directory (`<out>` below, e.g. `keygraph-out`). Tools (`describe` takes `brief=true`, `search` takes `with_paths=false`, the same as the CLI `describe --brief` and `search --no-paths`): `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
+directory (`<out>` below, e.g. `keygraph-out`). Tools (`describe` takes `brief=true`, `search` takes `with_paths=false`, the same as the CLI `describe --brief` and `search --no-paths`; `describe` and `neighbors` take `min_confidence`, default 0.6, the same as the CLI `--min-confidence`, and report how many weaker relations they hid): `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
 `areas`, `area`, `profile_summary` (stored, sampled profiles; PII values are withheld), `code_where` and `code_what`
 (the code index), `query_for`, `query_top` and `query_search` (the query log), and `query_submit`, the one tool that
 writes: it logs a query the agent ran into the query log tables and nothing else. Each returns the same JSON as

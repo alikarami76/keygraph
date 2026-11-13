@@ -20,6 +20,7 @@
 - [MCP server setup](https://github.com/alikarami76/keygraph/blob/main/README.md#mcp): fifteen tools (fourteen read-only, one that logs queries) and configs for Claude Code, Claude Desktop, Cursor and Codex.
 - [Use with AI agents](https://github.com/alikarami76/keygraph/blob/main/README.md#use-with-ai-agents): MCP, CLI --json and the generated areas/ and tables/ markdown.
 - `context add --author NAME` labels who wrote a note, and `context history --json` lists replaced or refused writes.
+- `describe` and `neighbors` hide relations below 0.6 confidence and report the hidden count; `--min-confidence 0` (MCP `min_confidence=0`) shows them.
 - `describe T --brief` and `search Q --no-paths` (MCP `brief=true`, `with_paths=false`) give smaller answers; `scan --url` keeps comments, enums, row counts and partitions on MySQL, PostgreSQL, SQL Server and ClickHouse.
 
 ## Concepts

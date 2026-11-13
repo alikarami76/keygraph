@@ -29,11 +29,11 @@ Any agent that can run shell commands can use keygraph. Every query command take
 | MCP tool | CLI |
 |---|---|
 | `search` | `keygraph search "<words>" [--no-paths] --json --dir OUT` |
-| `describe` | `keygraph describe <table> [--brief] --json --dir OUT` |
+| `describe` | `keygraph describe <table> [--brief] [--min-confidence 0.6] --json --dir OUT` |
 | `path` | `keygraph path <A> <B> --json --dir OUT` |
 | `keys` | `keygraph keys <table> --json --dir OUT` |
 | `explain` | `keygraph explain <table.column> --json --dir OUT` |
-| `neighbors` | `keygraph neighbors <table> --depth 2 --json --dir OUT` |
+| `neighbors` | `keygraph neighbors <table> --depth 2 [--min-confidence 0.6] --json --dir OUT` |
 | `areas` / `area` | `keygraph areas --json`, `keygraph area <name> --json` |
 | `code_where` / `code_what` | `keygraph code where <t[.c]> --json`, `keygraph code what <path[:line]> --json` |
 | `query_for` / `query_top` / `query_search` | `keygraph queries for <t>`, `queries top --table <t>`, `queries search "<q>"` (all with `--json`) |
