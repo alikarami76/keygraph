@@ -5,6 +5,7 @@ from __future__ import annotations
 import heapq
 import re
 
+from . import devlog
 from .graph import AmbiguousTable, Graph, UnknownTable
 from .mirrors import mirror_tables
 
@@ -74,6 +75,8 @@ def find_paths(graph: Graph, a: str, b: str, max_hops: int = 4, min_conf: float 
         mirrors = set()
     heap: list = [(-1.0, 0, 0, a, ())]
     seq, found, pops = 0, [], 0
+    dec = devlog.active()
+    skipped = {"below_min_confidence": 0, "already_on_path": 0, "mirror_table": 0, "parallel_edge_cap": 0}
     while heap and len(found) < k and pops < max_pops:
         negp, hops, _, node, path = heapq.heappop(heap)
         pops += 1
@@ -87,9 +90,13 @@ def find_paths(graph: Graph, a: str, b: str, max_hops: int = 4, min_conf: float 
         for h in sorted(adj.get(node, []), key=lambda x: -x["edge"]["confidence"]):
             c = h["edge"]["confidence"]
             if c < min_conf or h["far"] in seen or (h["far"] in mirrors and h["far"] != b):
+                if dec:
+                    skipped["below_min_confidence" if c < min_conf else "already_on_path" if h["far"] in seen else "mirror_table"] += 1
                 continue
             per_far[h["far"]] = per_far.get(h["far"], 0) + 1
             if per_far[h["far"]] > 2:
+                if dec:
+                    skipped["parallel_edge_cap"] += 1
                 continue
             seq += 1
             warns, factor = _hop_warnings(graph, h, b, hubs)
@@ -113,7 +120,38 @@ def find_paths(graph: Graph, a: str, b: str, max_hops: int = 4, min_conf: float 
         })
     # sort on the unrounded score (rounding to 3 places would let near-ties fall back to hop count)
     order = sorted(range(len(res)), key=lambda i: (-raw[i], res[i]["hops"], i))
+    if dec:
+        _trace_paths(res, raw, order, found, hubs, graph, b, pops, max_pops, k, skipped)
     return [res[i] for i in order]
+
+
+def _trace_paths(res, raw, order, found, hubs, graph, end, pops, max_pops, k, skipped) -> None:
+    """Dev mode: the candidate paths with raw score and per-hop penalties, and why the winner won."""
+    cands = []
+    for i, (path, _) in enumerate(found):
+        hops = []
+        for n, h in enumerate(path, 1):
+            w, f = _hop_warnings(graph, h, end, hubs)
+            hops.append({"hop": n, "to": h["far"], "confidence": h["edge"]["confidence"], "cardinality": h["cardinality"],
+                         "penalties": w, "factor": round(f, 3)})
+        cands.append({"tables": res[i]["tables"], "raw_score": round(raw[i], 4), "confidence": res[i]["confidence"],
+                      "hops": res[i]["hops"], "steps": hops})
+    why = "no path found"
+    if order:
+        w = order[0]
+        if len(order) == 1:
+            why = "only path found"
+        else:
+            o = order[1]
+            if raw[w] > raw[o]:
+                why = f"higher score ({raw[w]:.4f} vs {raw[o]:.4f})"
+            elif res[w]["hops"] < res[o]["hops"]:
+                why = f"equal score; fewer hops ({res[w]['hops']} vs {res[o]['hops']})"
+            else:
+                why = "equal score and hops; found first"
+    stop = "enough paths found" if len(found) >= k else "pop limit reached" if pops >= max_pops else "search space exhausted"
+    devlog.decide("path.rank", pops=pops, stopped=stop, skipped=skipped, candidates=cands, winner=order[0] if order else None,
+                  winner_reason=why)
 
 
 def format_paths(a: str, b: str, paths: list[dict]) -> str:

@@ -18,6 +18,7 @@
 - Fixed: unquoted secrets such as `password=x`, `db_password: x`, `client_secret=x`, `auth_token=x` and `DB_PASS=x` are now masked in the query log (also with `--keep-literals`) and in the code index. Column references such as `a.token_id = b.token_id` are left alone.
 
 - Dev mode (in progress): the MCP server logs every tool call and resource read when dev mode is on (`dev_note` tool added only then).
+- Dev mode (in progress): build traces. With dev on, `load`, `scan`, `render`, `profile`, `probe`, `code index` and `queries import` write `dev/traces/<run>.jsonl` with phase timings, per-column inference candidates (kept or rejected, with the reason), override, mirror and hub decisions; call events carry `decisions` (resolve rule, search score contributions, path candidates and penalties). Tools that return database rows are logged as shape only.
 
 ## 0.3.3 - 2026-11-12
 

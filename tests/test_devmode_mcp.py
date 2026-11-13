@@ -130,7 +130,8 @@ def test_decisions_are_collected_per_call(out, monkeypatch):
     call(srv, "search", query="orders")
     call(srv, "keys", table="shop.orders")
     first, second = events(out)
-    assert first["decisions"] == [{"kind": "fake", "why": "because"}] and "decisions" not in second
+    assert [d for d in first["decisions"] if d["kind"] == "fake"] == [{"kind": "fake", "why": "because"}]
+    assert not [d for d in second.get("decisions", []) if d["kind"] == "fake"]  # decisions are per call
 
 
 def test_masking_in_args_and_responses(out):
@@ -254,4 +255,4 @@ def test_concurrent_calls_keep_their_own_decisions(out, monkeypatch):
         await asyncio.gather(srv.call_tool("search", {"query": "orders"}), srv.call_tool("search", {"query": "customers"}))
     asyncio.run(both())
     for e in events(out):
-        assert e["decisions"] == [{"kind": "fake", "q": e["args"]["query"]}]
+        assert [d for d in e["decisions"] if d["kind"] == "fake"] == [{"kind": "fake", "q": e["args"]["query"]}]

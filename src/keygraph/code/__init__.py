@@ -14,7 +14,7 @@ import json
 import time
 from pathlib import Path
 
-from .. import __version__
+from .. import __version__, devlog
 from ..graph import Graph
 from .patterns import PatternError, builtin_rules, load_patterns, run_rules
 from .refs import KINDS, CodeRef
@@ -56,7 +56,10 @@ def index_repo(db_path: str | Path, root: str | Path, name: str | None = None, p
         if full or st.repo_fingerprint(name) != fp:
             st.drop_repo(name)
         known = st.file_hashes(name)
-        files = walk(root, tuple(exclude), max_file_kb)
+        with devlog.phase("code.walk") as ph:
+            files = walk(root, tuple(exclude), max_file_kb)
+            ph["files"] = len(files)
+        t_files = time.perf_counter()
         seen: dict[str, str] = {}
         for f in files:
             got = read(f)
@@ -77,6 +80,9 @@ def index_repo(db_path: str | Path, root: str | Path, name: str | None = None, p
         for path in sorted(set(known) - set(seen)):
             st.delete_file(name, path)
             deleted += 1
+        devlog.trace("phase", name="code.declarations_and_sql", ms=round((time.perf_counter() - t_files) * 1000, 2),
+                     read=len(seen), changed=changed, deleted=deleted)
+        t_uses = time.perf_counter()
         # second pass: uses over every file, against all declarations of the repo
         st.delete_uses(name)
         idx = build_index(st.declarations(name))
@@ -92,7 +98,9 @@ def index_repo(db_path: str | Path, root: str | Path, name: str | None = None, p
                     capped[f"{r.table_id}.{r.column}"] = per_col[k]
                     continue
                 uses.append(r)
-        st.add_refs(uses)
+        devlog.trace("phase", name="code.uses", ms=round((time.perf_counter() - t_uses) * 1000, 2), uses=len(uses), capped=len(capped))
+        with devlog.phase("code.store", uses=len(uses)):
+            st.add_refs(uses)
         counts = st.finish_repo(name, root.resolve().name, now or time.strftime("%Y-%m-%dT%H:%M:%S"), fp)
         unresolved = len(st.unresolved(name))
     return {"repo": name, "files": counts["files"], "changed": changed, "deleted": deleted, "refs": counts["refs"],

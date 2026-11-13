@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -120,6 +121,55 @@ def mask_response(tool: str, obj):
 
 # ---- response policy --------------------------------------------------------------------------------------
 
+# Tools that return database rows. Their events keep the shape of the answer, never the rows, whatever the size.
+# "run_query" is the MCP tool and "run" the CLI command planned for ENG-084 (neither exists yet); the registry is
+# here so the first row-returning tool cannot ship without this policy.
+ROW_TOOLS: set[str] = {"run_query", "run"}
+_ROW_SCALARS = (bool, int, float)
+
+
+def register_row_tool(name: str) -> None:
+    ROW_TOOLS.add(name)
+
+
+def is_row_tool(name: str) -> bool:
+    return name in ROW_TOOLS
+
+
+def _scalar(v):
+    return v if v is None or isinstance(v, _ROW_SCALARS) else mask_text(str(v))[:200]
+
+
+def rows_shape(obj) -> dict:
+    """The only thing logged for a row-returning tool: row_count, column names and types, truncated, warnings, checks.
+    Built from an allow-list, so a key it does not know (rows, data, sample, ...) is never copied."""
+    if not isinstance(obj, dict):
+        return {"row_count": len(obj) if isinstance(obj, list) else None}
+    rows = obj.get("rows") if isinstance(obj.get("rows"), list) else []
+    cols = obj.get("columns")
+    types = obj.get("types") or obj.get("column_types")
+    out_cols: list = []
+    if isinstance(cols, list):
+        for i, c in enumerate(cols):
+            if isinstance(c, dict):
+                out_cols.append({"name": _scalar(c.get("name")), "type": _scalar(c.get("type"))})
+            else:
+                ty = types[i] if isinstance(types, list) and i < len(types) else types.get(c) if isinstance(types, dict) else None
+                out_cols.append({"name": _scalar(c), "type": _scalar(ty)})
+    elif rows and isinstance(rows[0], dict):
+        out_cols = [{"name": _scalar(k), "type": None} for k in rows[0]]
+    n = obj.get("row_count")
+    shape: dict = {"row_count": n if isinstance(n, int) and not isinstance(n, bool) else len(rows), "columns": out_cols,
+                   "truncated": bool(obj.get("truncated", False))}
+    for k in ("warnings", "checks"):
+        v = obj.get(k)
+        if isinstance(v, list):
+            shape[k] = [_scalar(x) for x in v][:50]
+        elif isinstance(v, dict):
+            shape[k] = {str(a): _scalar(b) for a, b in list(v.items())[:50]}
+    return shape
+
+
 def _shape(tool: str, obj) -> dict:
     if not isinstance(obj, dict):
         return {"type": type(obj).__name__, "len": len(obj)} if isinstance(obj, (list, str)) else {"type": type(obj).__name__}
@@ -144,6 +194,8 @@ def _ref(text: str, shape: dict) -> dict:
 
 def response_fields(tool: str, obj) -> dict:
     """{"response": obj} when its JSON is <= 16 KB, else {"response_ref": {sha256, bytes, tokens_approx, shape}}."""
+    if tool in ROW_TOOLS:
+        return {"response": rows_shape(obj)}
     obj = mask_response(tool, obj)
     text = json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str)
     if len(text.encode("utf-8", "replace")) <= INLINE_MAX:
@@ -152,7 +204,13 @@ def response_fields(tool: str, obj) -> dict:
 
 
 def stdout_fields(tool: str, text: str, nbytes: int, digest: str, tokens: int, inline: bool = True, lines: int = 0) -> dict:
-    """Same policy for a command's captured stdout. JSON stdout goes through mask_response; text stays text."""
+    """Same policy for a command's captured stdout. JSON stdout goes through mask_response; text stays text.
+    A row-returning command keeps its shape only (never text, whatever the size)."""
+    if tool in ROW_TOOLS:
+        with contextlib.suppress(ValueError, RecursionError):
+            if text.lstrip()[:1] == "{" and nbytes <= INLINE_MAX:
+                return {"response": rows_shape(json.loads(text))}
+        return {"response_ref": {"sha256": digest, "bytes": nbytes, "tokens_approx": tokens, "shape": {"lines": lines or text.count("\n")}}}
     if nbytes <= INLINE_MAX and inline:
         with contextlib.suppress(ValueError, RecursionError):
             if text.lstrip()[:1] in "{[":
@@ -279,7 +337,8 @@ class Tracer:
 
 
 def active() -> bool:
-    return _TRACER.get() is not None
+    """True when a build tracer or a decisions collector is listening. Guard loops with this so dev off costs ~nothing."""
+    return _TRACER.get() is not None or _DECISIONS.get() is not None
 
 
 def trace(kind: str, **fields) -> None:
@@ -297,7 +356,12 @@ def _prune(d: Path) -> None:
 
 @contextlib.contextmanager
 def tracing(out, name: str):
-    """Open <out>/dev/traces/<run-id>.jsonl for the block when dev mode is on; otherwise a no-op. Yields the path or None."""
+    """Open <out>/dev/traces/<run-id>.jsonl for the block when dev mode is on; otherwise a no-op. Yields the path or None.
+    Nested in an open trace (probe calling render) it joins that trace and yields its path."""
+    cur = _TRACER.get()
+    if cur is not None:
+        yield cur.path
+        return
     t = None
     try:
         if enabled(out):
@@ -332,9 +396,35 @@ def collecting():
 
 
 def decide(kind: str, **fields) -> None:
+    """A decision: goes on the call's `decisions` when a collector is active, and into the build trace when one is."""
     lst = _DECISIONS.get()
     if lst is not None and len(lst) < DECISIONS_MAX:
         lst.append({"kind": kind, **fields})
+    t = _TRACER.get()
+    if t is not None:
+        t.emit(kind, fields)
+
+
+class _Phase:
+    """`with devlog.phase("render.docs") as p: ...; p["files"] = n` writes {"kind": "phase", "name", "ms", **p} on exit."""
+    __slots__ = ("name", "info", "t0")
+
+    def __init__(self, name: str, info: dict):
+        self.name, self.info = name, info
+
+    def __enter__(self) -> dict:
+        self.t0 = time.perf_counter()
+        return self.info
+
+    def __exit__(self, *exc) -> None:
+        t = _TRACER.get()
+        if t is not None:
+            t.emit("phase", {"name": self.name, "ms": round((time.perf_counter() - self.t0) * 1000, 2), **self.info})
+
+
+def phase(name: str, **fields) -> _Phase:
+    """Time a block as a phase event in the active build trace (a bare timer and nothing written when none is active)."""
+    return _Phase(name, dict(fields))
 
 
 def note(out, text: str, surface: str = "cli", session: str | None = None, client: dict | None = None,

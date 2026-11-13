@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from . import devlog
 from .context import ContextDB, safe_source
 from .graph import Graph
 from .query import column_detail, filter_columns, find_paths, table_info_line
@@ -44,8 +45,14 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
     why: dict[str, list[str]] = {}
     concepts, metrics = [], []
 
+    dec = devlog.active()  # dev mode: keep each table's score contributions (kind, ref, weight)
+    contrib: dict[str, list[dict]] = {}
+    src: list = ["", ""]
+
     def add(tid, s, reason):
         if tid in graph.nodes:
+            if dec:
+                contrib.setdefault(tid, []).append({"kind": src[0], "ref": src[1], "weight": round(s, 3)})
             score[tid] = score.get(tid, 0) + s
             if reason not in why.setdefault(tid, []):
                 why[tid].append(reason)
@@ -57,6 +64,7 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
     rels = ctx.rows("concept_relations")
     for kind, ref, s in hits:
         w = WEIGHT.get(kind, 0.5) * s
+        src[0], src[1] = kind, ref
         if kind == "table":
             add(ref, w, "table name matches")
         elif kind == "column":
@@ -82,7 +90,13 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
             metrics.append(ref)
             for t in json.loads(m["tables"] or "[]"):
                 add(t, w, f"metric '{ref}'")
-    top = sorted(score, key=lambda t: (-score[t], t))[:limit]
+    ranked = sorted(score, key=lambda t: (-score[t], t))
+    top = ranked[:limit]
+    if dec:
+        devlog.decide("search.score", hits=len(hits), candidates=len(ranked),
+                      tables=[{"table": t, "score": round(score[t], 3), "contributions": contrib[t][:12]} for t in top],
+                      cutoff={"limit": limit, "kept": len(top), "last_kept_score": round(score[top[-1]], 3) if top else None,
+                              "first_cut_score": round(score[ranked[limit]], 3) if len(ranked) > limit else None})
     out_tables = []
     for t in top:
         c = ctx.table_context(t)

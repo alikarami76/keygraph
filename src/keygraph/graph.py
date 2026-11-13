@@ -6,6 +6,7 @@ import difflib
 import json
 from pathlib import Path
 
+from . import devlog
 from .infer import Inferer, Options, declared_edges, redundant_indexes
 from .model import Schema, is_copy_schema, type_family
 from .overrides import Overrides, apply_overrides
@@ -39,6 +40,7 @@ def build_graph(schema: Schema, overrides: Overrides | None = None, options: Opt
     inf = Inferer(schema, opts)
     declared = declared_edges(schema, warnings)
     inferred = inf.run()
+    devlog.trace("infer.declared", edges=len(declared))
     taken = {(e["from"], tuple(e["from_columns"]), e["to"]) for e in declared}
     edges = declared + [e for e in inferred if (e["from"], tuple(e["from_columns"]), e["to"]) not in taken]
     nodes = []
@@ -141,23 +143,35 @@ class Graph:
     # --- name resolution -------------------------------------------------------
     def resolve(self, name: str) -> str:
         if name in self.nodes:
+            if devlog.active():
+                devlog.decide("resolve", name=name, rule="exact", table=name)
             return name
         low = name.lower()
         for nid in self.nodes:
             if nid.lower() == low:
+                if devlog.active():
+                    devlog.decide("resolve", name=name, rule="case_insensitive", table=nid)
                 return nid
         if "." not in name:
             hits = self._by_name.get(low, [])
             if len(hits) == 1:
+                if devlog.active():
+                    devlog.decide("resolve", name=name, rule="unique_bare_name", table=hits[0])
                 return hits[0]
             if len(hits) > 1:
                 # A bare name that also exists in mirror or copy schemas means the original table.
                 originals = [h for h in hits if not self._is_mirror_or_copy(self.nodes[h]["schema"])]
                 if len(originals) == 1:
+                    if devlog.active():
+                        devlog.decide("resolve", name=name, rule="original_over_mirror_or_copy", table=originals[0], candidates=sorted(hits))
                     return originals[0]
+                if devlog.active():
+                    devlog.decide("resolve", name=name, rule="ambiguous", candidates=sorted(hits), originals=len(originals))
                 raise AmbiguousTable(name, sorted(hits))
         sug = difflib.get_close_matches(name, list(self.nodes), n=4, cutoff=0.6)
         sug += [h for k in difflib.get_close_matches(low, list(self._by_name), n=3, cutoff=0.7) for h in self._by_name[k]]
+        if devlog.active():
+            devlog.decide("resolve", name=name, rule="unknown", suggestions=sorted(set(sug)))
         raise UnknownTable(name, sorted(set(sug)), self.coverage())
 
     def _is_mirror_or_copy(self, schema: str) -> bool:
