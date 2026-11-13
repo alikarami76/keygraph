@@ -2,7 +2,7 @@
 
 Runs the normal pipeline in this process: load from the packaged information_schema dumps and context, profile the
 packaged SQLite sample with the standard library, index the packaged app sample, import the query log, render. No
-extra, no database, no network. A step that would need an extra is skipped with a note that names it.
+extra, no database, no network. Where an extra would improve a step, a simpler built-in reader runs and a note names the extra.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def run(directory: str, open_browser: bool = True, as_json: bool = False) -> dic
         print(f"keygraph demo: {result['tables']} tables, {result['relations']} relations -> {out}/")
         for s in skipped:
             print(f"  note: {s}")
-        print(f"explorer: {explorer}\n\ntry next (add `uvx` before keygraph if it is not installed; mcp needs keygraph[mcp]):")
+        print(f"explorer: {explorer}\n\ntry next (if keygraph is not installed, prefix the first two with `uvx`; the mcp line needs keygraph[mcp]):")
         for c in result["next"]:
             print(f"  {c}")
     if open_browser and should_open():

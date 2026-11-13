@@ -64,9 +64,9 @@ uv tool install 'keygraph[live,mcp,yaml,code]' [--with <driver>]   # --with only
 pipx install 'keygraph[live,mcp,yaml,code]'    # then, only if a driver is needed: pipx inject keygraph <driver>
 # plain pip (inside a virtual environment)
 python3 -m pip install 'keygraph[live,mcp,yaml,code]' [<driver>]
-# an unreleased version from a clone (this may update the clone's uv.lock)
-python3 -m pip install -e '/path/to/keygraph[live,mcp,yaml,code]'
-# in zsh, set CLONE to the clone's path and quote the whole thing so the brackets are not a glob: pip install -e "${CLONE}[live,mcp,yaml,code]"
+# an unreleased version from a clone (this may update the clone's uv.lock); quote the whole spec so zsh does not treat the brackets as a glob
+CLONE=/path/to/clone
+python3 -m pip install -e "${CLONE}[live,mcp,yaml,code]"
 ```
 
 Database drivers for a live connection:
@@ -100,7 +100,8 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 # (c) a read-only command template that prints JSON rows for {sql}
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
-# (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no extras, no clone). keygraph must be on PATH:
+# (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no extras, no clone). It needs a keygraph whose
+# `keygraph --help` lists `demo` (0.4.0 or later, or an install from this clone); otherwise use option (a), (b) or (c). keygraph must be on PATH:
 # for a virtual environment run `export PATH="<path to that venv>/bin:$PATH"` first (or call <venv>/bin/keygraph).
 # It loads the demo's context, code index, query log and profiles, and renders. OUT must be new or empty. After it run only
 # the starter-context import (question 5, below) and a final `keygraph render`; skip the whole extras block that follows
@@ -124,7 +125,7 @@ keygraph queries import queries.jsonl --dir "$OUT"
 keygraph render --dir "$OUT"
 ```
 
-**Starter business context (question 5).** Do these in order. (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`; start from a real demo table such as `shop.orders`.)
+**Starter business context (question 5).** Do these in order. (For the demo every fact is already stored and verified: import an empty starter file (delete all the example entries) and tell the user so, or add one fact you can point to in the demo's `app/` code, for example about `shop.orders`.)
 
 1. Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table.
 2. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. A short file is fine, and when every fact is already stored and verified you may add nothing.
@@ -159,7 +160,7 @@ Use `mcp_launch.command` and `mcp_launch.args` from that output exactly. Both ar
 
 Each harness file says where these go. Do both:
 
-1. **Usage skill:** copy `skills/keygraph/SKILL.md` into your harness's skills folder (Cursor has no skills folder: save it as a `.cursor/rules/keygraph-guide.mdc` rule, see `harnesses/cursor.md`). It tells an agent when to use each tool and how to read confidence.
+1. **Usage skill:** copy `skills/keygraph/SKILL.md` into your harness's skills folder, only if it has one (each harness file says: `harnesses/claude-code.md`, `codex.md`, `opencode.md`, `unsloth-studio.md`, `zcode.md` section 2, `other.md`; Cursor has no skills folder: save it as a `.cursor/rules/keygraph-guide.mdc` rule, see `harnesses/cursor.md`). It tells an agent when to use each tool and how to read confidence.
 2. **Standing instructions:** add the block in `setup/templates/agent-instructions.md` to the instruction file of the project the map serves (if that is the keygraph repository itself, ask the user first) (`AGENTS.md`, `CLAUDE.md`, or a Cursor rule). Replace `{OUT}` with the output folder, and copy only the lines from `<!-- keygraph:start` to `<!-- keygraph:end -->` (the comment above the start marker is a note for maintainers, not part of the block). Keep the `<!-- keygraph:start -->` and `<!-- keygraph:end -->` markers so a later setup can replace the block in place. Small and local models follow standing instructions far better than a skill they have to choose, so never skip this.
 
 ## Step 7. Verify, end to end
