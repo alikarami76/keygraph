@@ -140,6 +140,10 @@ def _scalar(v):
     return v if v is None or isinstance(v, _ROW_SCALARS) else mask_text(str(v))[:200]
 
 
+def _msg(v):
+    """A warning or check text: secrets, URLs and SQL string/number literals masked, cut to 300 characters."""
+    return v if v is None or isinstance(v, _ROW_SCALARS) else mask_message(str(v))
+
 def rows_shape(obj) -> dict:
     """The only thing logged for a row-returning tool: row_count, column names and types, truncated, warnings, checks.
     Built from an allow-list, so a key it does not know (rows, data, sample, ...) is never copied."""
@@ -164,9 +168,9 @@ def rows_shape(obj) -> dict:
     for k in ("warnings", "checks"):
         v = obj.get(k)
         if isinstance(v, list):
-            shape[k] = [_scalar(x) for x in v][:50]
+            shape[k] = [_msg(x) for x in v][:50]
         elif isinstance(v, dict):
-            shape[k] = {str(a): _scalar(b) for a, b in list(v.items())[:50]}
+            shape[k] = {str(a): _msg(b) for a, b in list(v.items())[:50]}
     return shape
 
 
@@ -280,7 +284,11 @@ class Recorder:
                 ev["error"] = {"type": error.get("type", ""), "message": mask_message(str(error.get("message", "")))}
             ev.update(response or {})
             if decisions:
-                ev["decisions"] = decisions[:DECISIONS_MAX]
+                ds = list(decisions)
+                marked = len(ds) == DECISIONS_MAX + 1 and isinstance(ds[-1], dict) and ds[-1].get("kind") == "truncated"
+                if len(ds) > DECISIONS_MAX and not marked:
+                    ds = ds[:DECISIONS_MAX] + [{"kind": "truncated", "dropped": len(ds) - DECISIONS_MAX}]
+                ev["decisions"] = mask_args(ds)
             if trace:
                 ev["trace"] = trace
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -395,11 +403,26 @@ def collecting():
         _DECISIONS.reset(tok)
 
 
+_IDENT = re.compile(r"[\w.\-]{1,128}")
+
+
+def _typed_name(name: str) -> str:
+    """A table name the user typed: kept when it looks like an identifier, else replaced (it may be a pasted secret)."""
+    return mask_text(name) if _IDENT.fullmatch(name) else "<odd-name>"
+
+
 def decide(kind: str, **fields) -> None:
     """A decision: goes on the call's `decisions` when a collector is active, and into the build trace when one is."""
+    if kind == "resolve" and isinstance(fields.get("name"), str):
+        fields["name"] = _typed_name(fields["name"])
     lst = _DECISIONS.get()
-    if lst is not None and len(lst) < DECISIONS_MAX:
-        lst.append({"kind": kind, **fields})
+    if lst is not None:
+        if len(lst) < DECISIONS_MAX:
+            lst.append({"kind": kind, **fields})
+        elif lst[-1].get("kind") == "truncated":
+            lst[-1]["dropped"] += 1
+        else:
+            lst.append({"kind": "truncated", "dropped": 1})
     t = _TRACER.get()
     if t is not None:
         t.emit(kind, fields)
@@ -442,8 +465,12 @@ def note(out, text: str, surface: str = "cli", session: str | None = None, clien
             r["reason"] = "write failed"
     else:
         r["reason"] = "dev mode is off"
-    r["hint"] = ("export KEYGRAPH_DEV_SESSION=" + sess + " to group the following commands with this note"
-                 if surface == "cli" else "this session is the MCP server's: its calls are grouped with this note automatically")
+    if surface == "cli":
+        r["hint"] = "export KEYGRAPH_DEV_SESSION=" + sess + " to group the following commands with this note"
+    elif r["noted"]:
+        r["hint"] = "this session is the MCP server's: its calls are grouped with this note automatically"
+    else:
+        r["hint"] = "nothing was recorded, so there is nothing to group; do not retry"
     return r
 
 

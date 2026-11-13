@@ -301,6 +301,15 @@ def _tree(out):
     return {str(p.relative_to(out)): p.read_bytes() for p in files}
 
 
+def _dump(out):
+    import sqlite3
+    con = sqlite3.connect(out / "keygraph.db")
+    try:
+        return "\n".join(con.iterdump())
+    finally:
+        con.close()
+
+
 def test_dev_on_and_off_builds_are_byte_identical(tmp_path, monkeypatch):
     import datetime
     import types
@@ -313,16 +322,17 @@ def test_dev_on_and_off_builds_are_byte_identical(tmp_path, monkeypatch):
             return cls(2026, 11, 12, 10, 0, 0)
     monkeypatch.setattr(profile, "dt", types.SimpleNamespace(**{**vars(datetime), "datetime": Frozen}))
     off, on = tmp_path / "off", tmp_path / "on"
-    _build(off, profile=True)
+    _build(off, profile=True, app=True)
     dev_marker(on)
-    _build(on, profile=True)
+    _build(on, profile=True, app=True)
     assert traces(on) and not (off / "dev").exists()
+    assert _dump(off) == _dump(on) and "profiled_at" in _dump(on)
     a, b = _tree(off), _tree(on)
     assert a.keys() == b.keys() and len(a) > 40
     assert [k for k in a if a[k] != b[k]] == []
     # build.json is the one file allowed to differ between identical builds; with SOURCE_DATE_EPOCH fixed it does not
     again = tmp_path / "again"
-    _build(again, profile=True)
+    _build(again, profile=True, app=True)
     assert _tree(again)["build.json"] == a["build.json"]
 
 

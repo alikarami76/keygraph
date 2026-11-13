@@ -93,10 +93,13 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
     ranked = sorted(score, key=lambda t: (-score[t], t))
     top = ranked[:limit]
     if dec:
-        devlog.decide("search.score", hits=len(hits), candidates=len(ranked),
-                      tables=[{"table": t, "score": round(score[t], 3), "contributions": contrib[t][:12]} for t in top],
-                      cutoff={"limit": limit, "kept": len(top), "last_kept_score": round(score[top[-1]], 3) if top else None,
-                              "first_cut_score": round(score[ranked[limit]], 3) if len(ranked) > limit else None})
+        try:
+            devlog.decide("search.score", hits=len(hits), candidates=len(ranked),
+                          tables=[{"table": t, "score": round(score[t], 3), "contributions": contrib[t][:12]} for t in top],
+                          cutoff={"limit": limit, "kept": len(top), "last_kept_score": round(score[top[-1]], 3) if top else None,
+                                  "first_cut_score": round(score[ranked[limit]], 3) if len(ranked) > limit else None})
+        except Exception as exc:  # noqa: BLE001  (a trace point never changes a result)
+            devlog._warn(exc)
     out_tables = []
     for t in top:
         c = ctx.table_context(t)

@@ -127,7 +127,7 @@ def test_decisions_are_capped_and_scoped():
     with devlog.collecting() as d:
         for i in range(300):
             devlog.decide("rule", i=i)
-    assert len(d) == devlog.DECISIONS_MAX
+    assert len(d) == devlog.DECISIONS_MAX + 1 and d[-1] == {"kind": "truncated", "dropped": 100}
 
 
 def test_a_failing_recorder_does_not_change_output_or_exit_code(tmp_path, capsys, monkeypatch):

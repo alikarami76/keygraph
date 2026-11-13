@@ -121,7 +121,10 @@ def find_paths(graph: Graph, a: str, b: str, max_hops: int = 4, min_conf: float 
     # sort on the unrounded score (rounding to 3 places would let near-ties fall back to hop count)
     order = sorted(range(len(res)), key=lambda i: (-raw[i], res[i]["hops"], i))
     if dec:
-        _trace_paths(res, raw, order, found, hubs, graph, b, pops, max_pops, k, skipped)
+        try:
+            _trace_paths(res, raw, order, found, hubs, graph, b, pops, max_pops, k, skipped)
+        except Exception as exc:  # noqa: BLE001  (a trace point never changes a result)
+            devlog._warn(exc)
     return [res[i] for i in order]
 
 
@@ -134,7 +137,7 @@ def _trace_paths(res, raw, order, found, hubs, graph, end, pops, max_pops, k, sk
             w, f = _hop_warnings(graph, h, end, hubs)
             hops.append({"hop": n, "to": h["far"], "confidence": h["edge"]["confidence"], "cardinality": h["cardinality"],
                          "penalties": w, "factor": round(f, 3)})
-        cands.append({"tables": res[i]["tables"], "raw_score": round(raw[i], 4), "confidence": res[i]["confidence"],
+        cands.append({"tables": list(res[i]["tables"]), "raw_score": round(raw[i], 4), "confidence": res[i]["confidence"],
                       "hops": res[i]["hops"], "steps": hops})
     why = "no path found"
     if order:
@@ -144,7 +147,10 @@ def _trace_paths(res, raw, order, found, hubs, graph, end, pops, max_pops, k, sk
         else:
             o = order[1]
             if raw[w] > raw[o]:
-                why = f"higher score ({raw[w]:.4f} vs {raw[o]:.4f})"
+                a, b2 = f"{raw[w]:.4f}", f"{raw[o]:.4f}"
+                if a == b2:  # a tie at four places: show the digits that differ
+                    a, b2 = f"{raw[w]:.10f}", f"{raw[o]:.10f}"
+                why = f"higher score ({a} vs {b2})"
             elif res[w]["hops"] < res[o]["hops"]:
                 why = f"equal score; fewer hops ({res[w]['hops']} vs {res[o]['hops']})"
             else:

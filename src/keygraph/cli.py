@@ -511,7 +511,7 @@ def cmd_doctor(a):
 
 
 def cmd_dev(a):
-    """keygraph dev on|off|status|clear|note. None of these needs a graph; only `note` writes an event."""
+    """keygraph dev on|off|status|report|export|clear|note. None of these needs a graph; only `note` writes an event."""
     from . import devlog
     out, d = Path(a.dir), devlog.dev_dir(a.dir)
     if a.dev_cmd == "on":
@@ -532,6 +532,18 @@ def cmd_dev(a):
         devlog.clear(out, a.all)
         _emit(a, {"cleared": True, "dev_mode_off": bool(a.all)},
               "cleared the dev log" + (" and switched dev mode off" if a.all else " (dev mode setting kept)"))
+    elif a.dev_cmd == "report":
+        from . import devreport
+        r = devreport.report(out, a.since, a.session)
+        _emit(a, r, devreport.format_report(r).rstrip("\n"))
+    elif a.dev_cmd == "export":
+        from . import devreport
+        r = devreport.export(out, a.file, a.since)
+        if not r["lines"]:
+            print("no events: nothing exported")
+        else:
+            print(devreport.WARNING)
+            print(f"wrote {r['path']}: {r['lines']} lines from {len(r['files'])} files")
     else:
         r = devlog.note(out, " ".join(a.text), "cli")
         _emit(a, r, (f"noted: {r['question']}\n{r['hint']}" if r["noted"] else
@@ -743,7 +755,7 @@ def main(argv=None) -> int:
     p = add("doctor", cmd_doctor, "check the install and a built directory; print the MCP launch command")
     p.add_argument("--json", action="store_true")
     p.add_argument("--report", metavar="FILE", help="also write a redacted environment block for a bug report")
-    p = sub.add_parser("dev", help="dev mode: log how agents use keygraph, locally (on, off, status, clear, note)")
+    p = sub.add_parser("dev", help="dev mode: log how agents use keygraph, locally (on, off, status, report, export, clear, note)")
     p.set_defaults(fn=cmd_dev)
     ds = p.add_subparsers(dest="dev_cmd", required=True)
 
@@ -758,6 +770,13 @@ def main(argv=None) -> int:
     q = dev_cmd("clear", "delete the logged events and traces (the on marker stays unless --all)")
     q.add_argument("--all", action="store_true", help="also remove the on marker")
     q.add_argument("--json", action="store_true")
+    q = dev_cmd("report", "what agents did with keygraph: usage, latency, errors, empty and ambiguous answers, notes, the latest build")
+    q.add_argument("--json", action="store_true")
+    q.add_argument("--since", metavar="ISO_DATE", help="only events from this date or time on (for example 2026-11-12)")
+    q.add_argument("--session", metavar="ID", help="only one session's events")
+    q = dev_cmd("export", "write every event and trace line to one file (FILE ending .gz is gzipped); it holds table names and agent-written text")
+    q.add_argument("file", metavar="FILE")
+    q.add_argument("--since", metavar="ISO_DATE", help="only events from this date or time on")
     q = dev_cmd("note", "record the question you are about to answer (only when dev mode is on; no personal data; put -- before "
                         "text that starts with -; run `export KEYGRAPH_DEV_SESSION=<session>` from the output so later commands join this question)")
     q.add_argument("text", nargs="+")

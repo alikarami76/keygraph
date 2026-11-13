@@ -55,9 +55,9 @@ class Unresolved:
         return (self.repo, self.path, self.line, self.kind, self.name, self.rule)
 
 
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 _URL_CRED = re.compile(r"(://)[^/\s:@]+:[^/\s@]+@")
-_KV = re.compile(r"""(?P<k>[A-Za-z_$][\w$.\-]*)(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
+_KV = re.compile(r"""(?P<k>[A-Za-z_$][\w$.\-]{0,100})(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
 # unquoted `key = value` / `key: value`; the key must name a secret (see _secret_key)
 _PLAIN_KV = re.compile(r"(?<![\w.$])(?P<k>[A-Za-z_]\w{0,60})(?P<sep>\s*[=:]\s*)(?![*?'\"<:$@\s])(?P<v>[^\s'\",;&)]+)")
 _SECRET_SUBSTR = ("password", "passwd", "secret", "token", "api_key", "apikey", "access_key", "accesskey")
