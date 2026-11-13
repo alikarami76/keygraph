@@ -53,7 +53,7 @@ Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events
 
 - Database row values. Profile values (top values, ranges, examples) are replaced by `"<masked>"` in logged responses, including `describe` and `search` answers.
 - SQL literals. SQL in arguments goes through the same masking as the query log.
-- Secrets: `password=`, `token=`, `api_key=` style values, AWS and GitHub token formats, JWTs, emails and phone-like numbers (also after `Bearer`, `Basic`, `Token` and `Digest` auth schemes in headers, and with dotted keys such as `conn.password=`) are masked in every logged string. Very long unbroken strings are replaced by a length marker.
+- Secrets: `password=`, `token=`, `api_key=` style values, AWS and GitHub token formats, JWTs, emails and phone-like numbers (also after `Bearer`, and after `Basic`, `Token` or `Digest` in an `Authorization:` header, and with dotted keys such as `conn.password=`) are masked in every logged string. Very long unbroken strings are replaced by a length marker.
 - Connection URLs: any `scheme://...` value is stored as `scheme://***`.
 - `--cmd` templates: stored as `<program> <redacted-cmd>`.
 - Tools that return database rows log only the shape of the result, never the rows.
