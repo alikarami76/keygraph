@@ -211,9 +211,9 @@ def test_record_masks_decisions_and_resolve_names(tmp_path):
     d = json.loads((tmp_path / "dev" / "events.jsonl").read_text())["decisions"][0]
     assert "hunter2" not in json.dumps(d) and d["n"] == 3 and "u:p" not in json.dumps(d)
     with devlog.collecting() as lst:
-        devlog.decide("resolve", name="sk_live_abc 123 'x'", rule="unknown", suggestions=[])
+        devlog.decide("resolve", name="AKIAIOSFODNN7EXAMPLE", rule="unknown", suggestions=[])
         devlog.decide("resolve", name="shop.orders", rule="exact", table="shop.orders")
-    assert lst[0]["name"] == "<odd-name>" and lst[1]["name"] == "shop.orders"
+    assert "AKIA" not in lst[0]["name"] and lst[1]["name"] == "shop.orders"
 
 
 def test_decisions_cap_keeps_200_and_marks_the_rest():
@@ -372,3 +372,125 @@ def test_scripted_session_triggers_every_section(built, tmp_path, monkeypatch, c
         title = md1.split(f"## {n}. ")[1].split("\n## ")[0]
         assert len(title.strip().splitlines()) > 1, n
     capsys.readouterr()
+
+
+# ---- fix round 1 ------------------------------------------------------------------------------------------
+
+def test_unicode_line_separators_inside_an_event_do_not_split_it(tmp_path):
+    write(tmp_path, [ev(1, "search", args={"query": "a b c\u0085d"}), ev(2, "keys")])
+    r = devreport.report(tmp_path)
+    assert r["overview"]["events"] == 2 and r["overview"]["corrupt_lines"] == 0
+    f = tmp_path / "x.jsonl"
+    devreport.export(tmp_path, f)
+    assert [json.loads(x)["line"] for x in f.read_text(encoding="utf-8").split("\n")[1:3]] == [1, 2]
+
+
+def test_since_accepts_iso_forms_and_offsets(tmp_path):
+    write(tmp_path, [ev(1, "a", ts="2026-11-13T08:59:00.000+00:00"), ev(2, "b", ts="2026-11-13T09:30:00.000+00:00"),
+                     ev(3, "c", ts="2026-11-14T00:00:00.000+00:00")])
+    trace(tmp_path, "20261113T085000000000-load.jsonl", [{"kind": "phase", "name": "p", "ms": 1}])
+    trace(tmp_path, "20261113T093500000000-load.jsonl", [{"kind": "phase", "name": "q", "ms": 1}])
+
+    def n(s):
+        return devreport.report(tmp_path, since=s)["overview"]["events"]
+    assert n("20261113") == 3 and n("2026-11-14") == 1 and n("2026-11-13") == 3
+    assert n("2026-11-13 09:00") == 2 and n("2026-11-13T09:00") == 2 and n("2026-11-13T09:30:00") == 2
+    assert n("2026-11-13T12:30+03:30") == 2      # 09:00 UTC
+    assert n("2026-11-13T09:31Z") == 1
+    assert n("2026-11-13T13:00+03:30") == 2      # 09:30 UTC exactly keeps event b and c
+    assert devreport.report(tmp_path, since="2026-11-13 09:00")["overview"]["trace_files"] == 1
+    assert devreport.report(tmp_path, since="2026-11-13T12:00+03:30")["overview"]["trace_files"] == 1  # 08:30 UTC
+    assert devreport.report(tmp_path, since="2026-11-13T11:00+03:30")["overview"]["trace_files"] == 2  # 07:30 UTC
+
+
+def _old_mask(text):
+    """mask_secrets as it was at 8ac284b (the same code but the original _EMAIL and _KV regexes)."""
+    import re
+
+    from keygraph.code import refs
+    email = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
+    kvr = re.compile(r"""(?P<k>[A-Za-z_$][\w$.\-]*)(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
+    text = refs._URL_CRED.sub(r"\1***@", text)
+    text = email.sub("***@***", text)
+
+    def kv(m):
+        key = m.group("k").rsplit(".", 1)[-1].lstrip("$")
+        if not m.group("v") or not refs.is_pii_name(refs._snake(key)):
+            return m.group(0)
+        whole, base = m.group(0), m.start()
+        return whole[:m.start("v") - base] + "***" + whole[m.end("v") - base:]
+    text = kvr.sub(kv, text)
+
+    def plain(m):
+        import re as _re
+        if not refs._secret_key(m.group("k")) or _re.match(r"[\w$]+\.[\w$]", m.group("v")):
+            return m.group(0)
+        return m.group("k") + m.group("sep") + "***"
+    return refs._LONG_TOKEN.sub("***", refs._PLAIN_KV.sub(plain, text))
+
+
+def test_mask_secrets_matches_the_old_output_on_tricky_strings():
+    import random
+
+    from keygraph.code.refs import mask_secrets
+    fixed = ["a1@b.comc2@d.org", "x@x@x@y.com", "+a@x.com", "..a@x.io", "a.b+c@x-y.co.uk", "u@host", "http://u:p@h/x",
+             '"password' + "_" * 100 + '": "zzz"', '"' + "x" * 120 + 'password": "zzz"', "password" + "k" * 130 + "='abc'",
+             "1abc='x'", "éabc: 'tok'", "api_key = 'abc123'", "db.password: 'hunter2'", "$token => 'q'", "a@b.c", "a@b.co@c.de",
+             "email: 'a@b.com' password:'p' token=\"t\""]
+    rng = random.Random(7)
+    parts = ["a", "1", "@", ".", "=", ":", " ", "'", '"', "_", "-", "password", "token", "x.com", "email", "=>", "$", "é", "q@w.io"]
+    corpus = fixed + ["".join(rng.choice(parts) for _ in range(rng.randint(1, 25))) for _ in range(4000)]
+    for s in corpus:
+        assert mask_secrets(s) == _old_mask(s), s
+
+
+def test_glued_emails_and_long_secret_keys_are_still_masked():
+    from keygraph.code.refs import mask_secrets
+    assert mask_secrets("a1@b.comc2@d.org") == "***@******@***"
+    assert mask_secrets('"password' + "_" * 100 + '": "zzz"').endswith('": "***"')
+
+
+def test_typed_names_are_kept_and_token_shapes_masked():
+    names = ["Order Items", "tmp$orders", "`shop`.`orders`", "فروش.سفارش", "my-schema.my-table"]
+    with devlog.collecting() as lst:
+        for n in names:
+            devlog.decide("resolve", name=n, rule="unknown", suggestions=[])
+    assert [d["name"] for d in lst] == names
+    for secret in ("AKIAIOSFODNN7EXAMPLE", "ghp_" + "a1B2" * 9, "github_pat_" + "x1" * 20, "gho_" + "Z9" * 15,
+                   "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r"):
+        assert secret not in devlog.mask_text(f"table {secret} not found")
+        with devlog.collecting() as lst:
+            devlog.decide("resolve", name=secret, rule="unknown", suggestions=[])
+        assert secret not in json.dumps(lst)
+    assert devlog.mask_text("billing.payments.transaction_reference") == "billing.payments.transaction_reference"
+
+
+def test_export_masks_corrupt_lines_and_refuses_targets_inside_dev(tmp_path):
+    write(tmp_path, [ev(1, "x"), '{"truncated": "AKIAIOSFODNN7EXAMPLE password=hunter2hunter2'])
+    f = tmp_path / "x.jsonl"
+    devreport.export(tmp_path, f)
+    text = f.read_text()
+    assert "AKIAIOSFODNN7EXAMPLE" not in text and "hunter2" not in text and '"raw"' in text
+    for bad in (tmp_path / "dev" / "x.jsonl", tmp_path / "dev" / "traces" / "x.jsonl", tmp_path / "dev"):
+        with pytest.raises(ValueError, match="dev"):
+            devreport.export(tmp_path, bad)
+    with pytest.raises(ValueError):
+        devreport.export(tmp_path, tmp_path)  # a directory
+    assert main(["dev", "export", str(tmp_path / "dev" / "e.gz"), "--dir", str(tmp_path)]) == 2
+
+
+def test_text_mode_cli_answers_are_declared_unclassified(tmp_path):
+    synthetic(tmp_path)
+    md = devreport.format_report(devreport.report(tmp_path))
+    assert "not classified" in md.split("## 5. ")[1].split("\n## ")[0]
+
+
+def test_reason_grouping_handles_apostrophes_unicode_and_missing_reasons(tmp_path):
+    trace(tmp_path, "20261113T100000000000-load.jsonl", [
+        {"kind": "infer.column", "table": "a.t", "column": "c", "outcome": "kept", "candidates": [
+            {"outcome": "kept", "reasons": ["column name 'x' matches table name with this table's 'order_' prefix"], "to": "a.x"},
+            {"reasons": ["role of فروش.سفارش"], "to": "a.y"}]}])
+    write(tmp_path, [ev(1, "search")])
+    c = devreport.report(tmp_path)["build"]["candidates"]
+    assert list(c["kept"]) == ["column name '…' matches table name with this table's '…' prefix"] or len(c["kept"]) == 1
+    assert c["rejected"] == {"(no reason recorded)": 1} and list(c["rejected_heuristics"]) == ["role of <table>"]

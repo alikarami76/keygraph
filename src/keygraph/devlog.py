@@ -33,6 +33,9 @@ _LONG = re.compile(r"\S{513,}")  # mask_secrets is quadratic on one long unbroke
 # phone-like numbers: 7+ digit runs or grouped digits (dates such as 2026-11-12 stay)
 _PHONE = re.compile(r"(?<![\w.])(?:\+?\d{7,}|\+?\d{2,4}[\s-]\d{3}[\s-]\d{3,4}(?:[\s-]\d{2,4})?)(?![\w.])")
 MSG_MAX = 300
+# token shapes that no key name gives away: AWS access key ids, GitHub tokens, JWTs (eyJ header . payload . signature)
+_TOKENS = re.compile(r"\bAKIA[0-9A-Z]{16}\b|\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
+                     r"|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*")
 # keys that hold sampled column values in a profile (counts, null rates, lengths and patterns stay)
 _VALUE_KEYS = {"top_values", "numeric", "dates", "examples", "sample_values", "samples", "reconcile",
                "undocumented_codes", "unseen_codes"}
@@ -77,9 +80,10 @@ def _long(m: re.Match) -> str:
 
 
 def mask_text(s: str) -> str:
-    """Secrets, phone-like numbers and emails masked and any scheme://... redacted."""
+    """Secrets, phone-like numbers and emails masked and any scheme://... redacted (log text only: also AWS access key
+    ids, GitHub tokens and JWTs)."""
     from .code.refs import mask_secrets
-    s = _LONG.sub(_long, s)
+    s = _TOKENS.sub("<token>", _LONG.sub(_long, s))
     s = _URL.sub(lambda m: m.group(0).split("://", 1)[0] + "://***", mask_secrets(s))
     return _PHONE.sub("<phone>", s)
 
@@ -403,12 +407,9 @@ def collecting():
         _DECISIONS.reset(tok)
 
 
-_IDENT = re.compile(r"[\w.\-]{1,128}")
-
-
 def _typed_name(name: str) -> str:
-    """A table name the user typed: kept when it looks like an identifier, else replaced (it may be a pasted secret)."""
-    return mask_text(name) if _IDENT.fullmatch(name) else "<odd-name>"
+    """A table name the user typed, as logged: through mask_text (secrets, token shapes, 512+ character runs)."""
+    return mask_text(name)
 
 
 def decide(kind: str, **fields) -> None:

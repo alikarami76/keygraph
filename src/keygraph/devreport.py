@@ -12,6 +12,7 @@ import datetime as dt
 import gzip
 import json
 import math
+import os
 import re
 from pathlib import Path
 
@@ -21,8 +22,8 @@ CALL_KINDS = {"call", "command", "resource"}
 UNIT = "approx tokens = chars/4"
 SHORT = 120
 _ROTATED = re.compile(r"events\.(\d+)\.jsonl$")
-_QUOTED = re.compile(r"'[^']*'")
-_DOTTED = re.compile(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b")
+_QUOTED = re.compile(r"'[^'\s][^']*'")
+_DOTTED = re.compile(r"\b[^\W\d]\w*\.[^\W\d]\w*\b")
 # list keys that mean "the answer had something in it", per tool (CLI names map onto the MCP names)
 _ALIASES = {"code where": "code_where", "code what": "code_what", "queries for": "query_for", "queries top": "query_top",
             "queries search": "query_search"}
@@ -36,20 +37,24 @@ _EMPTY_WHAT = {"search": "no tables", "path": "no paths", "neighbors": "no neigh
 
 # ---- reading ----------------------------------------------------------------------------------------------
 
-def _norm_since(since: str | None) -> str | None:
+def _utc(s: str) -> dt.datetime:
+    """An ISO date or time as an aware UTC datetime (no offset means UTC, which is how the logs are written)."""
+    t = dt.datetime.fromisoformat(s.strip())
+    return t.replace(tzinfo=dt.UTC) if t.tzinfo is None else t.astimezone(dt.UTC)
+
+
+def _norm_since(since) -> dt.datetime | None:
     if since is None:
         return None
-    s = str(since).strip()
     try:
-        dt.datetime.fromisoformat(s)
+        return _utc(str(since))
     except ValueError:
-        raise ValueError(f"--since wants an ISO date or time such as 2026-11-12 or 2026-11-12T09:30, got {since!r}") from None
-    return s
+        raise ValueError(f"--since wants an ISO date or time such as 2026-11-12, 2026-11-12T09:30 or 2026-11-12T09:30+03:30, got {since!r}") from None
 
 
-def _trace_stamp(since: str) -> str:
-    """The `<YYYYmmddTHHMMSSffffff>` prefix of trace file names, for comparing with a --since value."""
-    return dt.datetime.fromisoformat(since).strftime("%Y%m%dT%H%M%S%f")
+def _trace_stamp(since: dt.datetime) -> str:
+    """The `<YYYYmmddTHHMMSSffffff>` UTC prefix of trace file names, for comparing with a --since value."""
+    return since.strftime("%Y%m%dT%H%M%S%f")
 
 
 def _event_files(d: Path) -> list[Path]:
@@ -68,7 +73,8 @@ def _lines(path: Path):
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return
-    for n, raw in enumerate(text.splitlines(), 1):
+    for n, raw in enumerate(text.split("\n"), 1):  # not splitlines(): U+2028, U+2029 and U+0085 can sit inside an event
+        raw = raw.removesuffix("\r")
         if not raw.strip():
             continue
         try:
@@ -78,13 +84,17 @@ def _lines(path: Path):
         yield n, obj if isinstance(obj, dict) else None, raw
 
 
-def _keep(e: dict, since: str | None, session: str | None) -> bool:
-    if since is not None and not (isinstance(e.get("ts"), str) and e["ts"] >= since):
-        return False
+def _keep(e: dict, since: dt.datetime | None, session: str | None) -> bool:
+    if since is not None:
+        try:
+            if not (isinstance(e.get("ts"), str) and _utc(e["ts"]) >= since):
+                return False
+        except ValueError:
+            return False
     return session is None or e.get("session") == session
 
 
-def _load(out, since: str | None, session: str | None) -> tuple[list[dict], list[tuple[str, list[dict]]], int]:
+def _load(out, since: dt.datetime | None, session: str | None) -> tuple[list[dict], list[tuple[str, list[dict]]], int]:
     """(events sorted by time, [(trace name, events)], corrupt line count)."""
     d = devlog.dev_dir(out)
     events, traces, corrupt = [], [], 0
@@ -376,7 +386,8 @@ def _build(traces: list[tuple[str, list[dict]]]) -> dict | None:
                     for r in reasons:
                         kept[r] = kept.get(r, 0) + 1
                 else:
-                    rej[_reason(c.get("reason"))] = rej.get(_reason(c.get("reason")), 0) + 1
+                    why = _reason(c.get("reason")) or "(no reason recorded)"
+                    rej[why] = rej.get(why, 0) + 1
                     for r in reasons:
                         rej_h[r] = rej_h.get(r, 0) + 1
         elif k == "infer.summary":
@@ -453,7 +464,7 @@ def format_report(r: dict) -> str:
                                                [[x["tool"], x["n"], x["p50"], x["p95"], x["max"]] for x in lat["per_tool"]]),
           "", "Slowest calls:", "", *_table(["tool", "ms", "args"], [[s["tool"], s["ms"], f"`{s['args']}`"] for s in lat["slowest"]]), ""]
     L += ["## 4. Errors", "", *_table(["tool", "type", "message", "count"], [[e["tool"], e["type"], e["message"], e["count"]] for e in r["errors"]]), ""]
-    L += ["## 5. Empty answers", "", *_table(["tool", "empty", "meaning", "examples"],
+    L += ["## 5. Empty answers", "", "Answers the CLI printed as text (no `--json`) are not classified, except `path`.", "", *_table(["tool", "empty", "meaning", "examples"],
                                             [[e["tool"], e["count"], e["what"], "; ".join(f"`{x}`" for x in e["examples"])] for e in r["empty"]]), ""]
     a = r["ambiguous"]
     L += ["## 6. Ambiguous answers", "", "Name resolution (ambiguous names and unknown tables, with candidates or suggestions):", "",
@@ -524,6 +535,10 @@ def export(out, path, since: str | None = None) -> dict:
     if not any(not i[0].startswith("traces/") for i in items):
         return {"lines": 0, "files": [], "path": None}
     path = Path(path)
+    if d.resolve() in (path.resolve(), *path.resolve().parents):
+        raise ValueError(f"export FILE must not be inside the dev directory ({d}); pick a path outside it")
+    if path.is_dir():
+        raise ValueError(f"export FILE {path} is a directory; give a file name")
     path.parent.mkdir(parents=True, exist_ok=True)
 
     def dump(o) -> str:
@@ -531,13 +546,14 @@ def export(out, path, since: str | None = None) -> dict:
 
     body = [dump({"keygraph_dev_export": 1, "keygraph": __version__, "files": files})]
     for name, n, obj, raw in items:
-        body.append(dump({"file": name, "line": n, "event": obj}) if obj is not None else dump({"file": name, "line": n, "raw": raw[:2000]}))
+        body.append(dump({"file": name, "line": n, "event": obj}) if obj is not None else dump({"file": name, "line": n, "raw": devlog.mask_text(raw[:2000])}))
     data = "".join(body).encode("utf-8", "replace")
-    if path.name.endswith(".gz"):
-        with open(path, "wb") as raw_f, gzip.GzipFile(filename="", mode="wb", fileobj=raw_f, mtime=0) as gz:
-            gz.write(data)
-    else:
-        path.write_bytes(data)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as raw_f:
+        if path.name.endswith(".gz"):
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw_f, mtime=0) as gz:
+                gz.write(data)
+        else:
+            raw_f.write(data)
     with contextlib.suppress(OSError):
         path.chmod(0o600)
     return {"lines": len(items), "files": files, "path": str(path)}
