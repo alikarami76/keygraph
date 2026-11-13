@@ -262,8 +262,8 @@ def test_neighbors_hide_weak_relations_by_default(graph, monkeypatch):
 
 
 def test_describe_hides_weak_relations_but_brief_is_unchanged(graph, monkeypatch, tmp_path):
-    from keygraph.context import ContextDB
     from keygraph import search as S
+    from keygraph.context import ContextDB
     n = _weak(graph, monkeypatch)
     with ContextDB(tmp_path / "k.db", graph) as ctx:
         d = S.describe(graph, ctx, "orders")

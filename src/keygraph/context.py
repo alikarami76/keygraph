@@ -218,9 +218,9 @@ class ContextDB:
         return True
 
     def _history(self, kind: str, ref: str, action: str, old, new, source: str) -> None:
-        dump = lambda d: json.dumps(d, ensure_ascii=False, sort_keys=True, default=str)  # noqa: E731
         self.db.execute("INSERT INTO context_history VALUES(?,?,?,?,?,?,?)",
-                        (kind, ref, action, dump(old), dump(new), source, time.strftime("%Y-%m-%dT%H:%M:%S")))
+                        (kind, ref, action, *(json.dumps(d, ensure_ascii=False, sort_keys=True, default=str) for d in (old, new)),
+                         source, time.strftime("%Y-%m-%dT%H:%M:%S")))
 
     def history(self, limit: int = 50, ref: str | None = None, kind: str | None = None) -> list[dict]:
         """Overwritten and refused context writes, newest first. old/new are the rows as dicts."""
