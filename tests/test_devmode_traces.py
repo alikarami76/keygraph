@@ -3,8 +3,8 @@ response policy, and invariant 7 (dev on or off, the same bytes)."""
 
 import json
 import os
-import stat
 import shutil
+import stat
 
 import pytest
 
@@ -429,13 +429,11 @@ def test_explain_on_a_column_ref_logs_only_the_final_resolve(demo_on):
     with devlog.collecting() as lst:
         g.split_column("shop.orders")
     assert [(d["name"], d["rule"]) for d in lst if d["kind"] == "resolve"] == [("shop.orders", "exact")]
-    with devlog.collecting() as lst:
-        with pytest.raises(Exception):  # noqa: B017, PT011
-            g.split_column("shop.nothing_like_it.status")
+    with devlog.collecting() as lst, pytest.raises(Exception):  # noqa: B017
+        g.split_column("shop.nothing_like_it.status")
     assert [d["rule"] for d in lst if d["kind"] == "resolve"] == ["unknown"]
-    with devlog.collecting() as lst:
-        with pytest.raises(Exception):  # noqa: B017, PT011
-            g.split_column("nothing_like_it")
+    with devlog.collecting() as lst, pytest.raises(Exception):  # noqa: B017
+        g.split_column("nothing_like_it")
     assert [d["rule"] for d in lst if d["kind"] == "resolve"] == ["unknown"]
 
 
@@ -451,6 +449,7 @@ def test_dev_dir_and_files_are_private(tmp_path):
             devlog.trace("phase", name="x")
     finally:
         os.umask(old)
-    mode = lambda p: stat.S_IMODE(p.stat().st_mode)  # noqa: E731
+    def mode(p):
+        return stat.S_IMODE(p.stat().st_mode)
     assert mode(out / "dev") == 0o700 and mode(out / "dev" / "traces") == 0o700
     assert mode(out / "dev" / "events.jsonl") == 0o600 and mode(p) == 0o600

@@ -66,7 +66,7 @@ _PLAIN_KV = re.compile(r"(?<![\w.$])(?:[A-Za-z_$][\w$]{0,40}\.){0,4}(?P<k>[A-Za-
 _CODE_VALUE = re.compile(r"[(\[{]|[A-Za-z_$][\w$]*[(.]|[A-Z]+_[A-Z_]*$")
 # `Bearer abc`, `Authorization: Basic abc`: the credential after an auth scheme word. Outside an Authorization header
 # only Bearer is masked (the other words are common in prose: "Basic usage", "token count").
-_AUTH_SCHEME = re.compile(r"(?P<pre>\b(?:auth\w*\s*[:=]\s*['\"]?)?)(?P<s>\b(?:Bearer|Basic|Token|Digest))(?P<sp>[ \t]+)(?P<v>[A-Za-z0-9._~+/=\-]{4,})", re.I)
+_AUTH_SCHEME = re.compile(r"(?P<pre>\b(?:auth\w*\s*[:=]\s*['\"]?)?)(?P<s>\b(?:Bearer|Basic|Token|Digest))(?P<sp>[ \t]+)(?P<v>[A-Za-z0-9._~+/=\-]{4,})", re.IGNORECASE)
 _SCHEMES = frozenset({"bearer", "basic", "token", "digest"})
 _KEY_START = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$")
 _SECRET_SUBSTR = ("password", "passwd", "secret", "token", "api_key", "apikey", "access_key", "accesskey")
