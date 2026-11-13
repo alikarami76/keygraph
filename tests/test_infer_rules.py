@@ -289,3 +289,31 @@ def test_c_exactly_one_named_key_keeps_its_confidence():
               T("matches", [("home_player_1", "int")]))
     es = [e for e in g.edges if e["from_columns"] == ["home_player_1"]]
     assert len(es) == 1 and es[0]["to_columns"] == ["player_api_id"] and es[0]["confidence"] == 0.75
+
+
+def test_two_new_rules_on_one_target_keep_the_cap_and_the_right_key():
+    g = graph(T("sets", [("code", "varchar(8)"), ("set_code", "varchar(8)")], pk=["code"], uniq=["set_code"]),
+              T("cards", [("id", "int"), ("set_code", "varchar(8)")], pk=["id"]))
+    e = edge(g, "s.cards", "set_code", "s.sets")
+    assert e and e["to_columns"] == ["code"] and e["confidence"] < 0.8
+    assert e["confidence"] == 0.75
+    assert ev(e, "capped at 0.75")
+    assert not any("equals the key column" in x for x in e["evidence"])  # no evidence line about another key
+
+
+def test_shared_unique_key_name_on_many_tables_stays_fast():
+    s = Schema()
+    for i in range(6000):
+        s.add(T(f"tbl{i}", [("uuid", "varchar(36)")] + [(f"c{j}", "int") for j in range(15)], uniq=["uuid"], schema="s"))
+    inf = Inferer(s, Options())
+    t0 = time.perf_counter()
+    inf.run()
+    assert time.perf_counter() - t0 < 5  # was quadratic: about 10 s at 6000 tables, linear now
+
+
+def test_c_lifts_above_0_75_with_exact_type_and_index():
+    t = T("matches", [("home_player_1", "int")])
+    t.indexes.append(Index("ix_h1", ["home_player_1"], False, False))
+    g = graph(T("players", [("player_id", "int")], pk=["player_id"]), t)
+    e = edge(g, "s.matches", "home_player_1", "s.players")
+    assert e and e["confidence"] > 0.75

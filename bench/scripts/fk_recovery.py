@@ -151,6 +151,7 @@ def main(argv=None) -> int:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--md", type=Path)
     ap.add_argument("--label", default="")
+    ap.add_argument("--sha", default="", help="git sha of the measured keygraph (default: HEAD of the current folder)")
     a = ap.parse_args(argv)
     kg = shlex.split(a.keygraph)
     a.work.mkdir(parents=True, exist_ok=True)
@@ -159,7 +160,7 @@ def main(argv=None) -> int:
         print(f"no databases match {a.db_root}/{a.glob}", file=sys.stderr)
         return 2
     ver = ""
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False, cwd=Path(__file__).resolve().parent)
+    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False, cwd=Path.cwd())
     rows = []
     for db in dbs:
         name = db.stem
@@ -176,7 +177,7 @@ def main(argv=None) -> int:
         edges = inferred_edges(graph)
         rows.append({"db": name, "sha256": sha256(db), "tables": ntab,
                      "scores": {str(th): score(truth, edges, th) for th in THRESHOLDS}})
-    res = {"label": a.label, "keygraph_version": ver, "git_sha": sha.stdout.strip() if sha.returncode == 0 else None,
+    res = {"label": a.label, "keygraph_version": ver, "git_sha": a.sha or (sha.stdout.strip() if sha.returncode == 0 else None),
            "date": datetime.date.today().isoformat(), "databases": rows,
            "total": {str(th): summarize(rows, str(th)) for th in THRESHOLDS}}
     a.out.parent.mkdir(parents=True, exist_ok=True)

@@ -75,7 +75,8 @@ def extract_stem(col: str) -> str | None:
 
 
 GENERIC_KEY_NAMES = {"name", "title", "code", "email", "login", "username", "slug", "label", "description",
-                     "type", "status", "phone", "url", "key", "value", "sku"}  # often unique, rarely references
+                     "type", "status", "phone", "url", "key", "value", "sku", "mobile", "phone_number",
+                     "email_address", "ip_address", "version", "path", "domain", "hostname"}  # often unique, rarely references
 PK_ONLY_KEY_NAMES = {"uuid", "guid", "token", "hash", "ip", "number", "external_id", "checksum"}  # references only when the target is a primary key
 GENERIC_SUFFIXES = ("_name", "_title", "_description", "_label")  # full_name, display_name: attributes
 REF_PREFIXES = ("link_to_", "ref_", "fk_", "id_")
@@ -252,10 +253,18 @@ class Inferer:
             cur["key"] = key
 
     def _add_rule(self, c: dict, tid: str, base: float, reason: str, key) -> None:
-        """Add a candidate from rules a/c/d/e, never touching one that older rules already found."""
+        """Add a candidate from rules a/c/d/e, never touching one that older rules already found. A target keeps
+        one key: a later rule with another key is dropped, except that it replaces rule a (a name guess)."""
         cur = c.get(tid)
         if cur is not None and any("(rule:" not in r and "numbered role column" not in r for r in cur["reasons"]):
             return
+        if cur is not None and cur.get("key") and key and cur["key"][0] != key[0]:
+            if "(rule: shared key name)" in reason:
+                return
+            if all("(rule: shared key name)" in r for r in cur["reasons"]):
+                del c[tid]
+            else:
+                return
         self._add(c, tid, base, reason, key)
 
     @staticmethod
@@ -269,11 +278,16 @@ class Inferer:
             return
         low, n = colname.lower(), snake(colname)
         if low != "id" and len(low) >= 3 and low not in GENERIC_KEY_NAMES:  # (a) shared key name
-            others = sorted(x for x in self.keyname.get(low, set()) - {t.id}
-                            if self.s.tables[x].schema == t.schema or not (
-                                related_schemas(t.schema, self.s.tables[x].schema)
-                                or is_copy_schema(t.schema, self.o.copy_schemas)
-                                or is_copy_schema(self.s.tables[x].schema, self.o.copy_schemas)))
+            others: list[str] = []
+            for x in self.keyname.get(low, ()):  # stop at two: more than one other table means no edge
+                if x == t.id:
+                    continue
+                xs = self.s.tables[x].schema
+                if xs == t.schema or not (related_schemas(t.schema, xs) or is_copy_schema(t.schema, self.o.copy_schemas)
+                                          or is_copy_schema(xs, self.o.copy_schemas)):
+                    others.append(x)
+                    if len(others) > 1:
+                        break
             if len(others) == 1 and not any("primary key name" in r for r in c.get(others[0], {}).get("reasons", [])):
                 tt = self.s.tables[others[0]]
                 k = next(k for k in self._single_keys(tt) if k[0][0].lower() == low)
@@ -442,7 +456,10 @@ class Inferer:
             conf -= 0.10
             ev.append("cross-schema match")
         reasons = cand["reasons"]
-        if all("(rule: shared key name)" in r for r in reasons):
+        exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
+        shared = [r for r in reasons if "(rule: shared key name)" in r]
+        others = [r for r in reasons if "numbered role column" in r or "(rule: bare id)" in r or "(rule: table_column)" in r]
+        if shared and len(shared) + len(others) == len(reasons):  # only new naming rules: the strictest cap wins
             if [colname] in ([t.primary_key] + t.unique_keys):
                 if conf > 0.55:
                     conf = 0.55
@@ -450,21 +467,20 @@ class Inferer:
             elif conf > 0.75:
                 conf = 0.75
                 ev.append("capped at 0.75: a shared name alone is not proof of a reference")
+            if others and any("its name is part of this table's name" in r for r in others) and conf > 0.70:
+                conf = 0.70
+                ev.append("capped at 0.70: a keyless table named after another table's word is a weak signal")
         elif all("(reference prefix 'id_' stripped)" in r or "(reference prefix 'ref_' stripped)" in r for r in reasons):
-            if conf > 0.75:  # id_card, ref_code, id_type are often attributes, not references
-                exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
-                if not (exact and ix):
-                    conf = 0.75
-                    ev.append("capped at 0.75: no exact type match plus an index on the source column")
-        elif all("numbered role column" in r or "(rule: bare id)" in r or "(rule: table_column)" in r for r in reasons):
+            if conf > 0.75 and not (exact and ix):  # id_card, ref_code, id_type are often attributes, not references
+                conf = 0.75
+                ev.append("capped at 0.75: no exact type match plus an index on the source column")
+        elif others and len(others) == len(reasons):
             if any("its name is part of this table's name" in r for r in reasons) and conf > 0.70:
                 conf = 0.70
                 ev.append("capped at 0.70: a keyless table named after another table's word is a weak signal")
-            elif conf > 0.75:
-                exact = bool(fc and tc and fc.type.strip().lower() == tc.type.strip().lower())
-                if not (exact and ix):
-                    conf = 0.75  # a naming guess alone never reads as 0.8 or more
-                    ev.append("capped at 0.75: no exact type match plus an index on the source column")
+            elif conf > 0.75 and not (exact and ix):
+                conf = 0.75  # a naming guess alone never reads as 0.8 or more
+                ev.append("capped at 0.75: no exact type match plus an index on the source column")
         if cand.get("multi") and conf > 0.55:
             conf = 0.55
             ev.append("capped at 0.55: several candidate keys, none preferred")
