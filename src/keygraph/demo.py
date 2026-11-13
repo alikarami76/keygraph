@@ -26,10 +26,14 @@ PROFILE_TABLES = ["shop.customers", "shop.orders", "shop.order_items", "shop.pro
 
 def prepare_dir(out: Path) -> None:
     """Use an empty or missing folder, or one a previous demo made. Never touch anything else."""
+    if out.is_symlink() and not out.exists():
+        raise ValueError(f"{out} is a broken link; pass an empty or new folder with --dir")
     if out.exists() and not out.is_dir():
         raise ValueError(f"{out} is a file, not a folder")
     if out.is_dir() and any(out.iterdir()) and not (out / MARKER).is_file():
         raise ValueError(f"{out} is not a keygraph demo folder and is not empty; pass an empty or new folder with --dir")
+    if (out / MARKER).is_symlink():
+        raise ValueError(f"{out / MARKER} is a link; remove it or pass another folder with --dir")
     out.mkdir(parents=True, exist_ok=True)
     (out / MARKER).write_text("created by `keygraph demo`; it is safe to rebuild this folder\n", encoding="utf-8")
     for name in ("keygraph.db", "keygraph.db-wal", "keygraph.db-shm"):  # start clean: the code index and log are not appended twice
@@ -94,7 +98,7 @@ def build(out: Path) -> list[str]:
 def next_commands(out: Path) -> list[str]:
     d = shlex.quote(str(out))
     return ["keygraph path customers shipments --dir " + d, "keygraph describe shop.orders --brief --dir " + d,
-            "keygraph mcp --dir " + d]
+            "uvx --from 'keygraph[mcp]' keygraph mcp --dir " + d]
 
 
 def should_open() -> bool:
@@ -119,7 +123,7 @@ def run(directory: str, open_browser: bool = True, as_json: bool = False) -> dic
         print(f"keygraph demo: {result['tables']} tables, {result['relations']} relations -> {out}/")
         for s in skipped:
             print(f"  note: {s}")
-        print(f"explorer: {explorer}\n\ntry next (add `uvx` before keygraph if it is not installed):")
+        print(f"explorer: {explorer}\n\ntry next (add `uvx` before keygraph if it is not installed; mcp needs keygraph[mcp]):")
         for c in result["next"]:
             print(f"  {c}")
     if open_browser and should_open():

@@ -92,10 +92,10 @@ The agent detects your database and its own harness, then asks you up to six que
 **By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
 
 ```bash
-uvx keygraph demo                # builds the bundled fictional webshop and opens the explorer; no database, no extras
+uvx keygraph demo                # (keygraph 0.4.0+) builds the bundled fictional webshop and opens the explorer; no database, no extras
 pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
 keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
-keygraph ui                                                          # opens keygraph-out/keygraph.html
+keygraph ui                                                          # opens keygraph-out/keygraph.html (for the demo: keygraph ui --dir keygraph-demo)
 keygraph doctor                                                      # checks the install, the map and the MCP server
 ```
 

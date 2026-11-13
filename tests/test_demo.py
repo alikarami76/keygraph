@@ -93,17 +93,17 @@ def test_demo_without_any_extra_still_works(tmp_path, capsys, monkeypatch):
     """Core-only install: no PyYAML, SQLAlchemy or sqlglot. Context ships as JSON, profiles use sqlite3."""
     for mod in ("yaml", "sqlalchemy", "sqlglot"):
         monkeypatch.setitem(sys.modules, mod, None)
-    monkeypatch.delitem(sys.modules, "keygraph.code.sql", raising=False)
+    monkeypatch.setattr("keygraph.code.sql.sqlglot", None)
     r = _demo(tmp_path, capsys)
     g = json.loads((tmp_path / "d" / "graph.json").read_text())
     assert (tmp_path / "d" / "keygraph.html").is_file()
     assert g["profiles"]["shop.orders.status"]["reconcile"]["undocumented_codes"] == ["9"]
-    assert any("code" in s for s in r["skipped"]) or r["skipped"] == []
+    assert any("keygraph[code]" in s for s in r["skipped"])
 
 
 def test_demo_next_commands_run(tmp_path, capsys):
     r = _demo(tmp_path, capsys)
-    assert [shlex.split(c)[1] for c in r["next"]] == ["path", "describe", "mcp"]
+    assert [shlex.split(c)[1] for c in r["next"][:2]] == ["path", "describe"]
     for cmd in r["next"][:2]:
         argv = shlex.split(cmd)
         assert argv[0] == "keygraph"
@@ -111,7 +111,7 @@ def test_demo_next_commands_run(tmp_path, capsys):
         assert main(argv[1:]) == 0
         assert capsys.readouterr().out.strip()
     mcp = shlex.split(r["next"][2])
-    assert mcp[2:] == ["--dir", str(tmp_path / "d")]
+    assert mcp[:4] == ["uvx", "--from", "keygraph[mcp]", "keygraph"] and mcp[4:] == ["mcp", "--dir", str(tmp_path / "d")]
 
 
 def test_demo_text_output_names_explorer_and_commands(tmp_path, capsys):
@@ -146,3 +146,20 @@ def test_wheel_contains_the_demo_files(tmp_path):
     names = set(zipfile.ZipFile(tmp_path / name).namelist())
     for rel in ("context.json", "queries.jsonl", "shop.db", "dumps/columns.json", "app/shop/models.py"):
         assert f"keygraph/demo/{rel}" in names, rel
+
+
+def test_demo_broken_symlink_dir_is_a_clear_error(tmp_path, capsys):
+    link = tmp_path / "d"
+    link.symlink_to(tmp_path / "nowhere")
+    assert main(["demo", "--dir", str(link), "--no-open"]) == 2
+    assert "broken link" in capsys.readouterr().err
+
+
+def test_demo_never_writes_the_marker_through_a_symlink(tmp_path, capsys):
+    d = tmp_path / "d"
+    d.mkdir()
+    target = tmp_path / "victim.txt"
+    target.write_text("keep")
+    (d / ".keygraph-demo").symlink_to(target)
+    assert main(["demo", "--dir", str(d), "--no-open"]) == 2
+    assert target.read_text() == "keep"

@@ -120,7 +120,7 @@ keygraph code index . --name <repo-name> --dir "$OUT"
 keygraph queries import queries.jsonl --dir "$OUT"
 # value profiles (an EXAMPLE for a real Postgres database; use your engine for --source). Bounded sampled reads, PII values never stored. Start with the most connected tables
 ( set -a; . ./.env; set +a; keygraph profile --source postgres --url "${DATABASE_URL}" --top-hubs 20 --with-context --dir "$OUT" )
-# refresh the report, the explorer and the agent pages (add --queries if you imported a query log; the demo's build.sh renders with --queries)
+# refresh the report, the explorer and the agent pages (add --queries if you imported a query log; `keygraph demo` already renders with --queries)
 keygraph render --dir "$OUT"
 ```
 
@@ -193,7 +193,7 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
 
 ## Keeping it current
 
-- Rebuild after migrations: rerun the build command from `OUT/SETUP.md`, then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like the demo's build.sh, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
+- Rebuild after migrations: rerun the build command from `OUT/SETUP.md` (for the demo: `keygraph demo --dir OUT --no-open`), then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like `keygraph demo`, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
 - When you confirm what a table, column or status code means while working, save it with (a fact the user told you that you cannot check: leave out `verified=true` and add `source="user, <date>"`) `keygraph context add --kind column --author "<your agent name>" table=<schema.table> column=<column> meaning="..." verified=true --dir "$OUT"` (`--kind` is required: table, column, concept, relation, metric or link; `context add` merges: fields you leave out keep their values, `codes=` merges code by code, `field=` empty clears one; `verified=true` only for what you checked against data or code), as the skill describes (or set `KEYGRAPH_AUTHOR` once for the session; without either the source label is `context-add`) (`keygraph context history` shows what a later write replaced or refused). If the output says `kept` or "unverified write ... ignored", a verified note already exists and yours was not stored; either leave it, or, if you checked it yourself, repeat the command with `verified=true`.
 - After you run a query that answered a business question, log it with `query_submit`. The next agent can then reuse a proven query.
 - If keygraph is wrong or breaks, follow `setup/BUG_REPORTS.md`.

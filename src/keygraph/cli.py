@@ -592,7 +592,7 @@ def main(argv=None) -> int:
     p.set_defaults(dir="keygraph-demo")
     next(x for x in p._actions if x.dest == "dir").help = "folder to build the demo in (default keygraph-demo; must be new, empty or an earlier demo)"
     p.add_argument("--no-open", action="store_true", help="do not open keygraph.html in a browser")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="print the result as JSON ({dir, explorer, tables, relations, skipped, next})")
     p = add("scan", cmd_scan, "scan a live database (metadata only; MySQL, Postgres, SQL Server and ClickHouse use their own adapter)")
     p.add_argument("--url", required=True)
     p.add_argument("--schema", action="append")
