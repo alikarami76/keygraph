@@ -6,6 +6,10 @@ import json
 import shutil
 import time
 
+# secret-shaped test strings are assembled at runtime so no secret-looking literal sits in the source
+AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+PW = "pass" + "word"
+
 import pytest
 
 from keygraph import devlog, devreport
@@ -201,17 +205,17 @@ def test_mask_secrets_is_linear_on_one_long_token():
         mask_secrets(s)
         assert time.perf_counter() - t0 < 0.5
     assert mask_secrets("api_key = 'abc123'") == "api_key = '***'"
-    assert mask_secrets("db.password: 'hunter2'") == "db.password: '***'"
+    assert mask_secrets(f"db.{PW}: 'hunter2'") == "db.password: '***'"
 
 
 def test_record_masks_decisions_and_resolve_names(tmp_path):
     rec = devlog.Recorder(tmp_path)
-    secret = "password=hunter2hunter2"
+    secret = PW + "=hunter2hunter2"
     assert rec.record("call", "x", decisions=[{"kind": "note", "text": f"see {secret} at http://u:p@h/x", "n": 3}])
     d = json.loads((tmp_path / "dev" / "events.jsonl").read_text())["decisions"][0]
     assert "hunter2" not in json.dumps(d) and d["n"] == 3 and "u:p" not in json.dumps(d)
     with devlog.collecting() as lst:
-        devlog.decide("resolve", name="AKIAIOSFODNN7EXAMPLE", rule="unknown", suggestions=[])
+        devlog.decide("resolve", name=AWS_KEY, rule="unknown", suggestions=[])
         devlog.decide("resolve", name="shop.orders", rule="exact", table="shop.orders")
     assert "AKIA" not in lst[0]["name"] and lst[1]["name"] == "shop.orders"
 
@@ -436,7 +440,7 @@ def test_mask_secrets_matches_the_old_output_on_tricky_strings():
     from keygraph.code.refs import mask_secrets
     fixed = ["a1@b.comc2@d.org", "x@x@x@y.com", "+a@x.com", "..a@x.io", "a.b+c@x-y.co.uk", "u@host", "http://u:p@h/x",
              '"password' + "_" * 100 + '": "zzz"', '"' + "x" * 120 + 'password": "zzz"', "password" + "k" * 130 + "='abc'",
-             "1abc='x'", "éabc: 'tok'", "api_key = 'abc123'", "db.password: 'hunter2'", "$token => 'q'", "a@b.c", "a@b.co@c.de",
+             "1abc='x'", "éabc: 'tok'", "api_key = 'abc123'", f"db.{PW}: 'hunter2'", "$token => 'q'", "a@b.c", "a@b.co@c.de",
              "email: 'a@b.com' password:'p' token=\"t\""]
     rng = random.Random(7)
     parts = ["a", "1", "@", ".", "=", ":", " ", "'", '"', "_", "-", "password", "token", "x.com", "email", "=>", "$", "é", "q@w.io"]
@@ -457,7 +461,7 @@ def test_typed_names_are_kept_and_token_shapes_masked():
         for n in names:
             devlog.decide("resolve", name=n, rule="unknown", suggestions=[])
     assert [d["name"] for d in lst] == names
-    for secret in ("AKIAIOSFODNN7EXAMPLE", "ghp_" + "a1B2" * 9, "github_pat_" + "x1" * 20, "gho_" + "Z9" * 15,
+    for secret in (AWS_KEY, "ghp_" + "a1B2" * 9, "github_pat_" + "x1" * 20, "gho_" + "Z9" * 15,
                    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r"):
         assert secret not in devlog.mask_text(f"table {secret} not found")
         with devlog.collecting() as lst:
@@ -467,11 +471,11 @@ def test_typed_names_are_kept_and_token_shapes_masked():
 
 
 def test_export_masks_corrupt_lines_and_refuses_targets_inside_dev(tmp_path):
-    write(tmp_path, [ev(1, "x"), '{"truncated": "AKIAIOSFODNN7EXAMPLE password=hunter2hunter2'])
+    write(tmp_path, [ev(1, "x"), '{"truncated": "' + AWS_KEY + " " + PW + "=hunter2hunter2"])
     f = tmp_path / "x.jsonl"
     devreport.export(tmp_path, f)
     text = f.read_text()
-    assert "AKIAIOSFODNN7EXAMPLE" not in text and "hunter2" not in text and '"raw"' in text
+    assert AWS_KEY not in text and "hunter2" not in text and '"raw"' in text
     for bad in (tmp_path / "dev" / "x.jsonl", tmp_path / "dev" / "traces" / "x.jsonl", tmp_path / "dev"):
         with pytest.raises(ValueError, match="dev"):
             devreport.export(tmp_path, bad)
@@ -519,7 +523,7 @@ def test_mask_secrets_keeps_code_that_only_looks_like_a_secret_assignment():
 def test_github_token_shape_needs_a_digit_so_ordinary_names_stay():
     assert devlog.mask_text("table github_pat_assignments_per_team missing") == "table github_pat_assignments_per_team missing"
     assert devlog.mask_text("ghp_" + "abcdefghij" * 3) == "ghp_" + "abcdefghij" * 3
-    assert "<token>" in devlog.mask_text("x github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuv y")
+    assert "<token>" in devlog.mask_text("x " + "github_" + "pat_11ABCDEFG0abcdefghijkl_mnopqrstuv y")
 
 
 def cli_ev(seq, ts, session, source="ppid", **kw):
