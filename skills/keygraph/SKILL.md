@@ -36,7 +36,7 @@ Declared foreign keys have confidence 1.0. Inferred edges are guesses from names
 `describe`, `explain` and `keys` show full column types, defaults, enum members, comments and table engine, size and partitioning.
 `keygraph profile --source <mysql|postgres|sqlite|sqlserver|clickhouse|mongodb> (--url U | --cmd '... {sql}') [--tables a,b] [--top-hubs N] [--with-context] [--sample 10000]`
 samples values with one bounded read-only SELECT per table and stores null rate, distinct count, ranges, top values, recency and pattern hints, each with `profiled_at`, sample size and method.
-Treat profiles as sampled and possibly stale. Codes seen in data but undocumented, or documented but never seen, are flagged: write them back with `context add`.
+Treat profiles as sampled and possibly stale. Codes seen in data but undocumented, or documented but never seen, are flagged: write them back with `context add` (`codes=5:refunded` adds or updates code 5 and keeps the others; `codes=` clears them all).
 PII rule: for PII columns (by name, by value pattern such as email or phone, or a `pii` context flag) no raw value is ever stored, only counts, length and pattern.
 Sources are pluggable (mysql, postgres, sqlite, sqlserver, clickhouse, metabase, mongodb, dumps, external commands); every one is read-only: single SELECTs only, Metabase GET plus native SELECT, Mongo find/list only.
 

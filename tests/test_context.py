@@ -556,3 +556,42 @@ def test_file_import_keeps_whole_row_semantics(graph, tmp_path):
     ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "m", "codes": {"1": "a"}}, "f.yaml")
     ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "m2"}, "f.yaml")
     assert json.loads(_col(ctx)["codes"] or "{}") == {}
+
+
+def test_context_add_concept_merges_its_nested_links(tmp_path):
+    out = _load_shop(tmp_path)
+    _add(out, "link", "concept=order", "table=shop.orders", "column=status", "role=attribute", "note=status says if paid")
+    _add(out, "concept", "name=order", "owner=sales-team", "link=shop.orders:status:attribute")
+    assert _stored(out, "concept_links", {"concept": "order"})["note"] == "status says if paid"
+
+
+def test_context_add_codes_merge_key_by_key_and_empty_clears(tmp_path):
+    out = _load_shop(tmp_path)
+    _add(out, "column", "table=shop.orders", "column=status", "codes=1:new,2:paid,3:shipped")
+    _add(out, "column", "table=shop.orders", "column=status", "codes=3:sent,5:refunded")
+    assert json.loads(_stored(out, "column_semantics", {"col": "status"})["codes"]) == {"1": "new", "2": "paid", "3": "sent", "5": "refunded"}
+    _add(out, "column", "table=shop.orders", "column=status", "codes=")
+    assert json.loads(_stored(out, "column_semantics", {"col": "status"})["codes"] or "{}") == {}
+
+
+def test_merged_unverified_add_over_verified_row_is_refused_and_identical_merge_adds_no_history(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    _add(out, "column", "table=shop.orders", "column=status", "meaning=checked", "codes=1:new", "verified=true", "source=human")
+    n = len(ContextDB(out / "keygraph.db", readonly=True).history())
+    _add(out, "column", "table=shop.orders", "column=status", "verified=true", "source=human")  # only key fields: nothing changes
+    assert len(ContextDB(out / "keygraph.db", readonly=True).history()) == n
+    capsys.readouterr()
+    _add(out, "column", "table=shop.orders", "column=status", "meaning=guess")
+    assert json.loads(capsys.readouterr().out)["kept"] == {"column": 1}
+    r = _stored(out, "column_semantics", {"col": "status"})
+    assert r["meaning"] == "checked" and json.loads(r["codes"]) == {"1": "new"}
+
+
+def test_unknown_table_warns_once_and_missing_key_is_a_clear_error(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    capsys.readouterr()
+    _add(out, "table", "table=nosuch.t", "grain=g")
+    w = json.loads(capsys.readouterr().out)["warnings"]
+    assert len(w) == len(set(w)) == 1
+    assert main(["context", "add", "--dir", str(out), "--kind", "column", "table=shop.orders", "meaning=x"]) == 2
+    assert "column" in capsys.readouterr().err

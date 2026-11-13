@@ -1,3 +1,4 @@
+<!-- Keep this file and cursor-rule.mdc in step: edit them together. -->
 <!-- keygraph:start (managed by keygraph setup; edit between the markers, a later setup replaces this block) -->
 ## Database work: use keygraph first
 

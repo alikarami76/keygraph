@@ -263,16 +263,23 @@ class ContextDB:
                    "recommended_indexes": "recommended_indexes", "pitfalls": "pitfalls", "summary": "summary"}, ("recommended_indexes",)),
     }
 
+    _REQUIRED: ClassVar[dict] = {"concept": ("name",), "link": ("concept", "table"), "relation": ("from", "to"),
+                                 "column": ("table", "column"), "metric": ("name",), "table": ("table",)}
+
     def _merged(self, kind: str, d: dict) -> dict:
         """d with every field it does not give filled from the stored row (a field given as empty clears it)."""
         table, keyf, fields, decoded = self._MERGE[kind]
+        n_warn = len(self.warnings)
         keys = keyf(self, d)
+        del self.warnings[n_warn:]  # upsert resolves the table again and reports it once
         row = self.db.execute(f"SELECT * FROM {table} WHERE " + " AND ".join(f"{k}=?" for k in keys), tuple(keys.values())).fetchone()
         if not row:
             return d
         out = dict(d)
         for field, col in fields.items():
-            if field not in d:
+            if field == "codes" and d.get("codes") and row[col]:  # codes merge key by key; an empty map clears them
+                out["codes"] = {**json.loads(row[col]), **d["codes"]}
+            elif field not in d:
                 v = row[col]
                 out[field] = json.loads(v) if field in decoded and v else ({} if field == "codes" else v)
         return out
@@ -284,6 +291,9 @@ class ContextDB:
         not given keep their stored values; a field given as empty clears it. Imports write whole rows."""
         if kind not in KINDS:
             raise ValueError(f"unknown kind '{kind}'; use one of {sorted(KINDS)}")
+        need = self._REQUIRED[kind]
+        if missing := [k for k in need if not d.get(k)]:
+            raise ValueError(f"context add --kind {kind} needs {' and '.join(k + '=' for k in need)} (missing {', '.join(missing)})")
         if merge:
             d = self._merged(kind, d)
         src = self._meta(d, source, verified)
@@ -295,7 +305,7 @@ class ContextDB:
                                 src, allow_same_source)
             for ln in d.get("links") or []:
                 self.upsert("link", {**ln, "concept": name, "source": ln.get("source") or d.get("source"),
-                                     "verified": ln.get("verified", d.get("verified"))}, source, verified, allow_same_source)
+                                     "verified": ln.get("verified", d.get("verified"))}, source, verified, allow_same_source, merge)
         elif kind == "link":
             tid = self._tid(d["table"])
             col = d.get("column") or ""

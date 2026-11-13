@@ -100,11 +100,13 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 # (c) a read-only command template that prints JSON rows for {sql}
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
-# (d) demo: copy examples/shop and run its build.sh (keygraph on PATH; for a venv: export PATH="$VENV/bin:$PATH").
-# It imports the demo's context, code index, query log and profiles, and renders. After it run only the
-# starter-context import (question 5, below) and a final `keygraph render`; nothing else in this step.
-# Without an argument it writes examples/shop/out next to the script.
-OUT="$(pwd)/keygraph-out" && sh path/to/examples/shop/build.sh "$OUT"
+# (d) demo: copy examples/shop (keep a copy of the whole folder) and run the copy's build.sh. keygraph must be on PATH:
+# for a virtual environment run `export PATH="<path to that venv>/bin:$PATH"` first (or call <venv>/bin/keygraph).
+# build.sh changes into its own folder, so give it an absolute OUT. It imports the demo's context, code index, query
+# log and profiles, and renders. After it run only the starter-context import (question 5, below) and a final
+# `keygraph render`; skip the whole extras block that follows (`code index .` would index the wrong folder).
+# Without an argument it writes next to the script.
+OUT="$(pwd)/keygraph-out" && sh <path to your copy of examples/shop>/build.sh "$OUT"
 ```
 
 Then, in this order, only the extras the user said yes to:
@@ -123,7 +125,7 @@ keygraph queries import queries.jsonl --dir "$OUT"
 keygraph render --dir "$OUT"
 ```
 
-**Starter business context (question 5).** (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`; start from a real demo table such as `shop.orders`.) Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. Leave `verified: false`: use `verified=true` only for a fact you checked against data or code in this session, never for a guess or something merely read in a comment. Before you import it, look up each table, column, concept, metric and relation in your file with `keygraph describe <table> --brief --dir "$OUT"` (notes and codes already stored) or `keygraph search "<name>" --dir "$OUT"`. Since keygraph 0.4.0 and later (listed under Unreleased in CHANGELOG.md until it ships) an import from another source never replaces a verified entry (it keeps the verified one and prints a warning), but an older keygraph does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`). Then import it as above. Tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
+**Starter business context (question 5).** (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`; start from a real demo table such as `shop.orders`.) Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. A short starter file is fine, and when every fact is already stored and verified you may add nothing. Leave `verified: false`: use `verified=true` only for a fact you checked against data or code in this session, never for a guess or something merely read in a comment. Before you import it, look up each table, column, concept, metric and relation in your file with `keygraph describe <table> --brief --dir "$OUT"` (notes and codes already stored) or `keygraph search "<name>" --dir "$OUT"`. With keygraph 0.4.0+ (and unreleased builds from the repo; check with `keygraph context history --json`, which older versions do not have; `keygraph --version` is not supported) an import from another source never replaces a verified entry (it keeps the verified one and prints a warning), but an older keygraph does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`). Then import it as above. Tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
 
 **Copies and replicas.** If the scan prints a warning about ambiguous relations across schemas, or the user named copy schemas, rebuild with `--copy-schema GLOB` for each one.
 
@@ -151,7 +153,7 @@ Use `mcp_launch.command` and `mcp_launch.args` from that output exactly. Both ar
 
 Each harness file says where these go. Do both:
 
-1. **Usage skill:** copy `skills/keygraph/SKILL.md` into your harness's skills folder. It tells an agent when to use each tool and how to read confidence.
+1. **Usage skill:** copy `skills/keygraph/SKILL.md` into your harness's skills folder (Cursor has no skills folder: save it as a `.cursor/rules/keygraph-guide.mdc` rule, see `harnesses/cursor.md`). It tells an agent when to use each tool and how to read confidence.
 2. **Standing instructions:** add the block in `setup/templates/agent-instructions.md` to the instruction file of the project the map serves (if that is the keygraph repository itself, ask the user first) (`AGENTS.md`, `CLAUDE.md`, or a Cursor rule). Replace `{OUT}` with the output folder. Keep the `<!-- keygraph:start -->` and `<!-- keygraph:end -->` markers so a later setup can replace the block in place. Small and local models follow standing instructions far better than a skill they have to choose, so never skip this.
 
 ## Step 7. Verify, end to end
@@ -186,6 +188,6 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
 ## Keeping it current
 
 - Rebuild after migrations: rerun the build command from `OUT/SETUP.md`, then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like the demo's build.sh, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
-- When you confirm what a table, column or status code means while working, save it with `keygraph context add --kind column --author "<your agent name>" table=<schema.table> column=<column> meaning="..." verified=true --dir "$OUT"` (`--kind` is required: table, column, concept, relation, metric or link; `verified=true` only for what you checked against data or code), as the skill describes (or set `KEYGRAPH_AUTHOR` once for the session; without either the source label is `context-add`) (`keygraph context history` shows what a later write replaced or refused).
+- When you confirm what a table, column or status code means while working, save it with `keygraph context add --kind column --author "<your agent name>" table=<schema.table> column=<column> meaning="..." verified=true --dir "$OUT"` (`--kind` is required: table, column, concept, relation, metric or link; `context add` merges: fields you leave out keep their values, `codes=` merges code by code, `field=` empty clears one; `verified=true` only for what you checked against data or code), as the skill describes (or set `KEYGRAPH_AUTHOR` once for the session; without either the source label is `context-add`) (`keygraph context history` shows what a later write replaced or refused). If the output says `kept` or "unverified write ... ignored", a verified note already exists and yours was not stored; either leave it, or, if you checked it yourself, repeat the command with `verified=true`.
 - After you run a query that answered a business question, log it with `query_submit`. The next agent can then reuse a proven query.
 - If keygraph is wrong or breaks, follow `setup/BUG_REPORTS.md`.
