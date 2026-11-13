@@ -62,6 +62,8 @@ _KEYRUN = re.compile(r"[\w$.\-]+")
 _KV_TAIL = re.compile(r"""(?P<q0>['"]?)\s*(?P<op>=>|:=|==|=|:)\s*(?P<q>['"])(?P<v>[^'"\n]*)(?P=q)""")
 # unquoted `key = value` / `key: value`; the key must name a secret (see _secret_key)
 _PLAIN_KV = re.compile(r"(?<![\w.$])(?P<k>[A-Za-z_]\w{0,60})(?P<sep>\s*[=:]\s*)(?![*?'\"<:$@\s])(?P<v>[^\s'\",;&)]+)")
+# values that are code, not credentials: a collection or call (`( [ {`), a call or attribute (`f(`, `a.b`), or a constant name (`MAX_TOKENS`)
+_CODE_VALUE = re.compile(r"[(\[{]|[A-Za-z_$][\w$]*[(.]|[A-Z]+_[A-Z_]*$")
 _KEY_START = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$")
 _SECRET_SUBSTR = ("password", "passwd", "secret", "token", "api_key", "apikey", "access_key", "accesskey")
 _SECRET_WORDS = {"pass", "pwd", "auth", "authorization"}
@@ -137,7 +139,8 @@ def mask_secrets(text: str) -> str:
     text = _mask_quoted_kv(text)
 
     def plain(m: re.Match) -> str:  # a dotted value is a column reference (a.token = b.token), not a secret
-        if not _secret_key(m.group("k")) or re.match(r"[\w$]+\.[\w$]", m.group("v")):
+        v = m.group("v")
+        if m.group("k").lower() in ("pass", "tokens") or not _secret_key(m.group("k")) or re.match(r"[\w$]+\.[\w$]", v) or _CODE_VALUE.match(v):
             return m.group(0)
         return m.group("k") + m.group("sep") + "***"
 

@@ -40,7 +40,10 @@ _EMPTY_WHAT = {"search": "no tables", "path": "no paths", "neighbors": "no neigh
 def _utc(s: str) -> dt.datetime:
     """An ISO date or time as an aware UTC datetime (no offset means UTC, which is how the logs are written)."""
     t = dt.datetime.fromisoformat(s.strip())
-    return t.replace(tzinfo=dt.UTC) if t.tzinfo is None else t.astimezone(dt.UTC)
+    try:
+        return t.replace(tzinfo=dt.UTC) if t.tzinfo is None else t.astimezone(dt.UTC)
+    except OverflowError:  # an offset that pushes the time outside year 1..9999
+        raise ValueError(f"time out of range: {s!r}") from None
 
 
 def _norm_since(since) -> dt.datetime | None:

@@ -194,12 +194,12 @@ The setup is done when step 7.3 works through MCP. If the harness cannot reload 
 
 ## Step 9. Optional: dev mode (default off)
 
-Skip this step unless the user says they want to help improve keygraph or are developing it. Ask them once, in your report (step 8), not as a seventh question. Dev mode records how agents use keygraph, locally, and never records database rows or secrets (details: `docs/dev-mode.md`).
+Dev mode records how agents use keygraph, locally, and never database rows or secrets (`docs/dev-mode.md`). Offer it only if the user wants to help improve keygraph or is developing it: add one line to the step 8 report asking this, and do the steps below only after a yes.
 
-1. Turn it on, by one of two ways: run `keygraph dev on --dir "$OUT"`, or add `KEYGRAPH_DEV=1` to the MCP server's environment (the optional line in your harness file).
-2. Verify: `keygraph dev status --dir "$OUT" --json` must show `"enabled": true`. If not, repeat 1 and read `source` in the output.
-3. Restart the MCP server (the harness file says how), because the `dev_note` tool appears only if dev mode was on when the server started. Then check that `dev_note` is in the tool list. `keygraph doctor --dir "$OUT"` has a `dev_mode` line that says on or off.
-4. Tell the user how to read it later: `keygraph dev report --dir "$OUT"`, and how to turn it off: `keygraph dev off --dir "$OUT"`.
+1. Run `keygraph dev on --dir "$OUT"`. (Alternative: set `KEYGRAPH_DEV=1` in the MCP server's environment, as your harness file shows.)
+2. Verify: `keygraph dev status --dir "$OUT" --json` must show `"enabled": true`. For the env var alternative, run `KEYGRAPH_DEV=1 keygraph dev status --dir "$OUT" --json` (a plain `status` shows it only when that shell has the variable set); `doctor` run by the server's environment shows it too.
+3. Restart the MCP server, because `dev_note` is listed only if dev mode was on when the server started. Then `keygraph doctor --dir "$OUT"` must print `dev_mode` as on and the MCP line as listing 16 tools.
+4. Tell the user: read it with `keygraph dev report --dir "$OUT"`, turn it off with `keygraph dev off --dir "$OUT"`.
 
 ## Keeping it current
 

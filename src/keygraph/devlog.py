@@ -34,7 +34,7 @@ _LONG = re.compile(r"\S{513,}")  # mask_secrets is quadratic on one long unbroke
 _PHONE = re.compile(r"(?<![\w.])(?:\+?\d{7,}|\+?\d{2,4}[\s-]\d{3}[\s-]\d{3,4}(?:[\s-]\d{2,4})?)(?![\w.])")
 MSG_MAX = 300
 # token shapes that no key name gives away: AWS access key ids, GitHub tokens, JWTs (eyJ header . payload . signature)
-_TOKENS = re.compile(r"\bAKIA[0-9A-Z]{16}\b|\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})"
+_TOKENS = re.compile(r"\bAKIA[0-9A-Z]{16}\b|\b(?:gh[pousr]_(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{20,}|github_pat_(?=[A-Za-z0-9_]*\d)[A-Za-z0-9_]{20,})"
                      r"|\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*")
 # keys that hold sampled column values in a profile (counts, null rates, lengths and patterns stay)
 _VALUE_KEYS = {"top_values", "numeric", "dates", "examples", "sample_values", "samples", "reconcile",

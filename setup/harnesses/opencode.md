@@ -20,7 +20,7 @@ Merge this into `opencode.json` at the project root, or into `~/.config/opencode
 }
 ```
 
-Optional, dev mode (SETUP.md step 9): add `"environment": { "KEYGRAPH_DEV": "1" }` to the `keygraph` entry, or run `keygraph dev on --dir "$OUT"` and restart OpenCode.
+Optional, dev mode (SETUP.md step 9): pass `KEYGRAPH_DEV=1` in the server's environment (check your OpenCode version's docs for the key name), or run `keygraph dev on --dir "$OUT"` and restart OpenCode.
 
 ## 2. Skill and standing instructions
 

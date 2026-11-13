@@ -44,7 +44,7 @@ Any agent that can run shell commands can use keygraph. Every query command take
 | `code_where` / `code_what` | `keygraph code where <t[.c]> --json`, `keygraph code what <path[:line]> --json` |
 | `query_for` / `query_top` / `query_search` | `keygraph queries for <t>`, `queries top --table <t>`, `queries search "<q>"` (all with `--json`) |
 | `query_submit` | `keygraph queries add --sql <file> --source <db> --ms <ms> --context "<question>"` |
-| `dev_note` (dev mode only) | `keygraph dev note --json --dir OUT "<question>"`, then `export KEYGRAPH_DEV_SESSION=<session>` |
+| `dev_note` (dev mode only) | `keygraph dev note --json --dir OUT "<question>"` (put `--` before text starting with `-`), then `export KEYGRAPH_DEV_SESSION=<session>` |
 
 Set `KEYGRAPH_DIR=OUT` in the agent's environment so you can leave out `--dir`. For step 7.3 of SETUP.md, the CLI version of `search` and `path` counts as the check.
 

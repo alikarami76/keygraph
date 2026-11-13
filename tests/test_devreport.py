@@ -423,7 +423,8 @@ def _old_mask(text):
 
     def plain(m):
         import re as _re
-        if not refs._secret_key(m.group("k")) or _re.match(r"[\w$]+\.[\w$]", m.group("v")):
+        if (m.group("k").lower() in ("pass", "tokens") or not refs._secret_key(m.group("k"))
+                or _re.match(r"[\w$]+\.[\w$]", m.group("v")) or refs._CODE_VALUE.match(m.group("v"))):
             return m.group(0)
         return m.group("k") + m.group("sep") + "***"
     return refs._LONG_TOKEN.sub("***", refs._PLAIN_KV.sub(plain, text))
@@ -494,3 +495,28 @@ def test_reason_grouping_handles_apostrophes_unicode_and_missing_reasons(tmp_pat
     c = devreport.report(tmp_path)["build"]["candidates"]
     assert list(c["kept"]) == ["column name '…' matches table name with this table's '…' prefix"] or len(c["kept"]) == 1
     assert c["rejected"] == {"(no reason recorded)": 1} and list(c["rejected_heuristics"]) == ["role of <table>"]
+
+
+def test_since_with_out_of_range_offset_is_a_friendly_error(tmp_path, capsys):
+    synthetic(tmp_path)
+    for bad in ("9999-12-31T23:59-05:00", "0001-01-01T00:00+05:00"):
+        with pytest.raises(ValueError, match="--since"):
+            devreport.report(tmp_path, since=bad)
+        assert main(["dev", "report", "--since", bad, "--dir", str(tmp_path)]) == 2
+        capsys.readouterr()
+
+
+def test_mask_secrets_keeps_code_that_only_looks_like_a_secret_assignment():
+    from keygraph.code.refs import mask_secrets
+    keep = ["_LOG_TOKENS = frozenset(LOG_HINTS)", "tokens: [1, 2]", "tokens: int,", "# second pass: uses over files", "UNIT = \"approx tokens = chars/4\"", "TOKENS = {'a': 1}", "token = settings.TOKEN",
+            "self.token = make_token(x)", "auth = (user, pw)", "token = MAX_TOKENS", "tokens: {a}"]
+    for line in keep:
+        assert mask_secrets(line) == line, line
+    for line in ("password=hunter2", "db_password: x", "api_key=abc123", "DB_PASS=x", "client_secret=s3cr3t"):
+        assert "***" in mask_secrets(line), line
+
+
+def test_github_token_shape_needs_a_digit_so_ordinary_names_stay():
+    assert devlog.mask_text("table github_pat_assignments_per_team missing") == "table github_pat_assignments_per_team missing"
+    assert devlog.mask_text("ghp_" + "abcdefghij" * 3) == "ghp_" + "abcdefghij" * 3
+    assert "<token>" in devlog.mask_text("x github_pat_11ABCDEFG0abcdefghijkl_mnopqrstuv y")

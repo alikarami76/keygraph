@@ -43,7 +43,7 @@ Fields: `v` (schema version), `ts`, `session`, `seq`, `surface` (`mcp` or `cli`)
 
 Responses are stored inline up to 16 KB. A larger response is stored as a hash, its size in bytes, its approximate tokens and its shape (counts of lists and keys). Approximate tokens are the character count divided by 4. Some CLI commands that print text are stored as a reference only, even when small.
 
-Sessions: one MCP server process is one session. CLI commands share a session when `KEYGRAPH_DEV_SESSION` is set; otherwise the report groups commands by a 10-minute idle gap.
+Sessions: one MCP server process is one session. CLI commands share a session when `KEYGRAPH_DEV_SESSION` is set; otherwise the session id comes from the parent process id and the output directory, so commands run from one shell share a session and commands from separate shells (for example one agent tool call each) do not. Set `KEYGRAPH_DEV_SESSION` to group them.
 
 Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events.1.jsonl` to `events.5.jsonl`). A trace stops at 50 MB or 200,000 events and ends with a `truncated` event. Only the newest 20 traces are kept.
 
@@ -54,7 +54,7 @@ Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events
 - Secrets: `password=`, `token=`, `api_key=` style values, AWS and GitHub token formats, JWTs, emails and phone-like numbers are masked in every logged string. Very long unbroken strings are replaced by a length marker.
 - Connection URLs: any `scheme://...` value is stored as `scheme://***`.
 - `--cmd` templates: stored as `<program> <redacted-cmd>`.
-- Tools that return database rows (such as a future guarded `run_query`) log only the shape of the result, never the rows.
+- Tools that return database rows log only the shape of the result, never the rows.
 
 ## What is recorded, and you should know it
 
@@ -66,9 +66,9 @@ Size limits: `events.jsonl` rotates at 20 MB and keeps five older files (`events
 keygraph sees only tool calls. It does not see what the user asked or what the agent said. To attach the user's question, the agent calls `dev_note`:
 
 - With MCP, when the `dev_note` tool is listed, the agent calls it once per user question, before its first keygraph call for that question, with the question in the user's words and no personal data. When dev mode is off the tool is not listed and the agent does nothing.
-- Without MCP, the agent runs `keygraph dev note --dir <out> "<question>"` (add `--json` for JSON; use `--` before text that starts with `-`). It prints a session id. The agent then runs `export KEYGRAPH_DEV_SESSION=<session>` so its later commands join that question. When dev mode is off, `dev note` records nothing and says so.
+- Without MCP, the agent runs `keygraph dev note --dir <out> "<question>"` (add `--json` for JSON; use `--` before text that starts with `-`). With `--json` it prints the session id; the agent then runs `export KEYGRAPH_DEV_SESSION=<session>` so its later commands join that question. When dev mode is off, `dev note` records nothing and says so.
 
-Both return `{"noted", "session", "question"}`. `noted: false` means nothing was written (dev mode off, or the write failed). Do not retry.
+Both return `{"noted", "session", "question", "hint"}`, plus a `reason` when `noted` is false (`dev mode is off` or `write failed`). Nothing was written then. Do not retry.
 
 ## Read the log
 
@@ -129,9 +129,17 @@ The `dev` folder sits inside the output directory, which `.gitignore` usually ex
 
 ## Overhead
 
-Measured on 2026-11-13:
+Build time (`keygraph load`, in process, median of repeated runs, measured 2026-11-13): dev off is within noise of the baseline. Dev on adds about 10% on the demo (0.05 s) and about 2x on a 2,000-table synthetic schema, because the build trace records every inference candidate.
 
-- Dev off: no measurable change in build time or in tool latency.
-- Dev on: about +10% build time on the demo, and about 2x on a 2,000-table synthetic schema, because the build trace records every candidate.
+Query-time latency (MCP tools called in process through `keygraph.mcp_server.build_server`, 200 calls per tool after a warm-up, five interleaved rounds of separate processes, so 1,000 calls per cell; demo map; Apple M4, Python 3.12; measured 2026-11-13). Median / p95 in milliseconds:
+
+| tool | main (8ac284b) | this branch, dev off | this branch, dev on |
+|---|---|---|---|
+| search | 0.865 / 1.129 | 0.872 / 1.041 | 1.761 / 2.067 |
+| describe | 0.357 / 0.419 | 0.354 / 0.439 | 1.325 / 1.456 |
+| path | 0.236 / 0.255 | 0.242 / 0.265 | 0.972 / 1.282 |
+| neighbors | 0.145 / 0.153 | 0.146 / 0.153 | 1.114 / 1.436 |
+
+With dev off the latency matches main within noise. With dev on every call costs about 0.9 to 1.0 ms more (an event is written to disk per call, plus masking and hashing), which is 2x on `search` and 4 to 8x on the cheapest tools. That is small next to an agent round trip, but it is not free: do not leave dev mode on where you measure keygraph's own speed.
 
 Logging never breaks a tool: if a write fails, the tool still answers and one line goes to stderr.
