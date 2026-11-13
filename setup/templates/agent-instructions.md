@@ -16,7 +16,7 @@ Read confidence honestly. Declared keys are 1.0. Use inferred relations at 0.8 a
 After the work:
 
 - Log a query that answered a business question with `query_submit`.
-- Save a fact you confirmed (what a row is, what a status code means) with `keygraph context add ... verified=true --dir {OUT}`.
+- Save a fact you confirmed (what a row is, what a status code means) with `keygraph context add --author <agent> ... verified=true --dir {OUT}`.
 - If keygraph errors or gives a wrong answer, follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md. Never send a report without the user's yes.
 
 keygraph never runs SQL and never writes to the database. Run read-only queries with your own access.

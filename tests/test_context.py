@@ -374,3 +374,95 @@ def test_import_notes_counts_only_rows_written(tmp_path, capsys):
     j = json.loads(capsys.readouterr().out)
     assert j["imported"]["tables"] + j["kept"].get("table", 0) == 1
     assert j["imported"]["tables"] == 0 and j["kept"]["table"] == 1
+
+
+KIND_CASES = {
+    "concept": ({"name": "buyer", "definition": "{}"}, "buyer"),
+    "link": ({"concept": "buyer", "table": "shop.orders", "column": "customer_id", "note": "{}"}, "buyer -> shop.orders.customer_id (attribute)"),
+    "relation": ({"from": "buyer", "to": "order", "rel": "places", "note": "{}"}, "buyer places order"),
+    "column": ({"table": "shop.orders", "column": "status", "meaning": "{}"}, "shop.orders.status"),
+    "metric": ({"name": "revenue", "definition": "{}", "expression": "sum(x)"}, "revenue"),
+    "table": ({"table": "shop.orders", "grain": "{}"}, "shop.orders"),
+}
+NOTE_KEY = {"concept": "definition", "link": "note", "relation": "note", "column": "meaning", "metric": "definition", "table": "grain"}
+
+
+def test_history_records_refused_write_for_every_kind(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    for kind, (d, ref) in KIND_CASES.items():
+        key = NOTE_KEY[kind]
+        assert ctx.upsert(kind, {**d, key: "checked", "source": "human"}, "", True) is True
+        ctx.upsert(kind, {**d, key: "guess", "source": "agent-x"}, "", False)
+        h = ctx.history(limit=1, ref=ref, kind=kind)[0]
+        assert h["action"] == "kept" and h["source"] == "agent-x", kind
+        assert h["old"][next(k for k in h["old"] if h["old"][k] == "checked")] == "checked"
+        assert "guess" in h["new"].values() and "checked" in h["old"].values()
+    assert len(ctx.history(limit=100)) == 6
+
+
+def test_history_records_replaced_but_not_identical_rewrite(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    d = {"table": "shop.orders", "column": "status", "meaning": "v1"}
+    ctx.upsert("column", d, "a.yaml")
+    ctx.upsert("column", d, "a.yaml")  # identical re-import: no row
+    assert ctx.history() == []
+    ctx.upsert("column", {**d, "meaning": "v2"}, "a.yaml")
+    (h,) = ctx.history()
+    assert h["action"] == "replaced" and h["old"]["meaning"] == "v1" and h["new"]["meaning"] == "v2"
+    ctx.upsert("column", {**d, "meaning": "v2"}, "a.yaml")
+    assert len(ctx.history()) == 1
+    assert ctx.history(ref="nope") == [] and ctx.history(kind="metric") == []
+
+
+def test_history_readonly_open_of_older_file(graph, tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE concepts(name TEXT PRIMARY KEY, definition TEXT, domain TEXT, owner TEXT, synonyms TEXT, source TEXT, verified INTEGER, updated_at TEXT)")
+    con.commit()
+    con.close()
+    with ContextDB(path, graph, readonly=True) as ctx:
+        assert ctx.history() == []
+    assert sqlite3.connect(path).execute("SELECT name FROM sqlite_master WHERE name='context_history'").fetchone() is None
+
+
+def _load_shop(tmp_path):
+    out = tmp_path / "out"
+    assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json"), "--statistics", str(FIX / "shop_statistics.json"),
+                 "--key-columns", str(FIX / "shop_key_columns.json")]) == 0
+    return out
+
+
+def test_context_add_author_env_and_default_source(tmp_path, monkeypatch, capsys):
+    out = _load_shop(tmp_path)
+    monkeypatch.delenv("KEYGRAPH_AUTHOR", raising=False)
+    base = ["context", "add", "--dir", str(out), "--kind", "column"]
+
+    def src(col):
+        with ContextDB(out / "keygraph.db", readonly=True) as c:
+            return next(r for r in c.rows("column_semantics") if r["col"] == col)["source"]
+    assert main(base + ["table=shop.orders", "column=status", "meaning=a"]) == 0
+    assert src("status") == "context-add"
+    assert main(base + ["--author", "ali", "table=shop.orders", "column=created_at", "meaning=a"]) == 0  # option between positionals
+    assert src("created_at") == "ali"
+    monkeypatch.setenv("KEYGRAPH_AUTHOR", "envbot")
+    assert main(base + ["table=shop.orders", "column=id", "meaning=a"]) == 0
+    assert src("id") == "envbot"
+    assert main(base + ["--author", "ali", "table=shop.orders", "column=id", "meaning=b", "source=explicit"]) == 0
+    assert src("id") == "explicit"
+    capsys.readouterr()
+
+
+def test_context_history_cli_json(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    base = ["context", "add", "--dir", str(out), "--kind", "column", "table=shop.orders", "column=status"]
+    assert main(base + ["meaning=human", "verified=true", "source=human"]) == 0
+    assert main(base + ["meaning=guess", "--author", "bot"]) == 0
+    capsys.readouterr()
+    assert main(["context", "history", "--dir", str(out), "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) == 1 and rows[0]["action"] == "kept" and rows[0]["source"] == "bot" and rows[0]["ref"] == "shop.orders.status"
+    assert main(["context", "history", "--dir", str(out), "--ref", "other", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert main(["context", "history", "--dir", str(out)]) == 0
+    assert "kept" in capsys.readouterr().out

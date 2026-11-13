@@ -415,9 +415,21 @@ def cmd_context(a):
         ctx.reindex()
     elif a.action == "add":
         d = _kv(a.fields)
-        ok = ctx.upsert(a.kind, d, d.get("source") or "agent", a.verified or d.get("verified") in ("true", "yes", "1"))
+        who = d.get("source") or a.author or os.environ.get("KEYGRAPH_AUTHOR") or "context-add"
+        ok = ctx.upsert(a.kind, d, who, a.verified or d.get("verified") in ("true", "yes", "1"))
         ctx.reindex()
         counts = {a.kind: 1 if ok else 0}
+    elif a.action == "history":
+        rows = ctx.history(a.limit, a.ref, a.kind)
+        ctx.close()
+        if a.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=1, sort_keys=True))
+        else:
+            for r in rows:
+                print(f"{r['at']}  {r['action']:<8} {r['kind']} {r['ref']}  by {r['source']}")
+            if not rows:
+                print("no history")
+        return
     elif a.action == "export":
         data = ctx.dump()
         text = json.dumps(data, ensure_ascii=False, indent=1)
@@ -647,13 +659,17 @@ def main(argv=None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--include-mirrors", action="store_true", help="also use tables in mirror schemas (copies of another schema)")
     p = add("context", cmd_context, "import / add / export business context")
-    p.add_argument("action", choices=["import", "import-notes", "add", "export", "stats"])
+    p.add_argument("action", choices=["import", "import-notes", "add", "export", "stats", "history"])
     p.add_argument("path", nargs="?")
     p.add_argument("--verified", action="store_true")
     p.add_argument("--schema-key", default="schema", help="front-matter key holding the schema name (import-notes)")
     p.add_argument("--default-schema", default="main")
     p.add_argument("--out")
     p.add_argument("--kind", choices=sorted(["concept", "relation", "link", "column", "metric", "table"]))
+    p.add_argument("--author", help="for add: who is writing (the source label unless source=... is given; env KEYGRAPH_AUTHOR)")
+    p.add_argument("--ref", help="for history: only this item (table, table.column, concept or metric name)")
+    p.add_argument("--limit", type=int, default=50, help="for history: newest N entries")
+    p.add_argument("--json", action="store_true", help="for history: JSON output")
     p.add_argument("fields", nargs="*", help="for add: key=value pairs (codes=1:new,2:paid; link=table:col:role)")
     p = add("fetch", cmd_fetch, "fetch STATISTICS / KEY_COLUMN_USAGE through an external read-only command")
     p.add_argument("--cmd", required=True, help="command template with {sql}, printing JSON rows")
