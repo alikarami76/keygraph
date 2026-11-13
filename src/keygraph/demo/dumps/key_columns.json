@@ -1,0 +1,182 @@
+[
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customer_addresses",
+  "CONSTRAINT_NAME": "fk_customer_addresses_customer_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "customer_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "customers",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "seller_users",
+  "CONSTRAINT_NAME": "fk_seller_users_seller_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "seller_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "sellers",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "CONSTRAINT_NAME": "fk_categories_parent_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "parent_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "categories",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "CONSTRAINT_NAME": "fk_products_category_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "category_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "categories",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "CONSTRAINT_NAME": "fk_products_brand_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "brand_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "brands",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_variants",
+  "CONSTRAINT_NAME": "fk_product_variants_product_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "product_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "products",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "inventory",
+  "CONSTRAINT_NAME": "fk_inventory_variant_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "variant_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "product_variants",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "inventory",
+  "CONSTRAINT_NAME": "fk_inventory_warehouse_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "warehouse_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "warehouses",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "cart_items",
+  "CONSTRAINT_NAME": "fk_cart_items_cart_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "cart_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "carts",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "CONSTRAINT_NAME": "fk_orders_customer_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "customer_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "customers",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "CONSTRAINT_NAME": "fk_order_items_order_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "order_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "orders",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "CONSTRAINT_NAME": "fk_order_items_variant_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "variant_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "product_variants",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipments",
+  "CONSTRAINT_NAME": "fk_shipments_order_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "order_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "orders",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipment_items",
+  "CONSTRAINT_NAME": "fk_shipment_items_shipment_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "shipment_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "shipments",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "reviews",
+  "CONSTRAINT_NAME": "fk_reviews_product_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "product_id",
+  "REFERENCED_TABLE_SCHEMA": "shop",
+  "REFERENCED_TABLE_NAME": "products",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "voucher_redemptions",
+  "CONSTRAINT_NAME": "fk_voucher_redemptions_voucher_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "voucher_id",
+  "REFERENCED_TABLE_SCHEMA": "billing",
+  "REFERENCED_TABLE_NAME": "vouchers",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payments",
+  "CONSTRAINT_NAME": "fk_payments_method_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "method_id",
+  "REFERENCED_TABLE_SCHEMA": "billing",
+  "REFERENCED_TABLE_NAME": "payment_methods",
+  "REFERENCED_COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "refunds",
+  "CONSTRAINT_NAME": "fk_refunds_payment_id",
+  "ORDINAL_POSITION": 1,
+  "COLUMN_NAME": "payment_id",
+  "REFERENCED_TABLE_SCHEMA": "billing",
+  "REFERENCED_TABLE_NAME": "payments",
+  "REFERENCED_COLUMN_NAME": "id"
+ }
+]

@@ -1,0 +1,594 @@
+[
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "users",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "users",
+  "INDEX_NAME": "uq_users_login",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "login"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customers",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customers",
+  "INDEX_NAME": "uq_customers_email",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "email"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customer_addresses",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "customer_addresses",
+  "INDEX_NAME": "ix_customer_addresses_customer_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "customer_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "sellers",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "seller_users",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "seller_users",
+  "INDEX_NAME": "ix_seller_users_seller_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "seller_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "INDEX_NAME": "uq_categories_slug",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "slug"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "categories",
+  "INDEX_NAME": "ix_categories_parent_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "parent_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "brands",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "INDEX_NAME": "ix_products_category_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "category_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "INDEX_NAME": "ix_products_brand_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "brand_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "products",
+  "INDEX_NAME": "ix_products_seller",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "seller_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_variants",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_variants",
+  "INDEX_NAME": "uq_variants_sku",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "sku"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_variants",
+  "INDEX_NAME": "ix_product_variants_product_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "product_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_images",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "product_images",
+  "INDEX_NAME": "ix_images_product",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "product_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "warehouses",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "inventory",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "inventory",
+  "INDEX_NAME": "ix_inventory_variant_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "variant_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "inventory",
+  "INDEX_NAME": "ix_inventory_warehouse_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "warehouse_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "carts",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "carts",
+  "INDEX_NAME": "ix_carts_customer",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "customer_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "cart_items",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "cart_items",
+  "INDEX_NAME": "ix_cart_items_cart_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "cart_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "cart_items",
+  "INDEX_NAME": "ix_cart_items_variant",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "variant_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "ix_orders_customer_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "customer_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "ix_orders_placed",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "placed_at"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "ix_orders_customer_placed",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "customer_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders",
+  "INDEX_NAME": "ix_orders_customer_placed",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 2,
+  "COLUMN_NAME": "placed_at"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "ix_order_items_order_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "ix_order_items_variant_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "variant_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_items",
+  "INDEX_NAME": "ix_items_seller",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "seller_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_status_history",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_status_history",
+  "INDEX_NAME": "ix_hist_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "order_status_history",
+  "INDEX_NAME": "ix_hist_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 2,
+  "COLUMN_NAME": "changed_at"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "orders_shadow",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipments",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipments",
+  "INDEX_NAME": "ix_shipments_order_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipment_items",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "shipment_items",
+  "INDEX_NAME": "ix_shipment_items_shipment_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "shipment_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "returns",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "returns",
+  "INDEX_NAME": "ix_returns_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "reviews",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "reviews",
+  "INDEX_NAME": "ix_reviews_product_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "product_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "comments",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "comments",
+  "INDEX_NAME": "ix_comments_target",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "target_type"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "comments",
+  "INDEX_NAME": "ix_comments_target",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 2,
+  "COLUMN_NAME": "target_id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "audit_log",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "audit_log",
+  "INDEX_NAME": "ix_audit_entity",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "entity_type"
+ },
+ {
+  "TABLE_SCHEMA": "shop",
+  "TABLE_NAME": "audit_log",
+  "INDEX_NAME": "ix_audit_entity",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 2,
+  "COLUMN_NAME": "entity_id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payment_methods",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payment_methods",
+  "INDEX_NAME": "uq_pm_code",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "code"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "vouchers",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "vouchers",
+  "INDEX_NAME": "uq_vouchers_code",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "code"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "voucher_redemptions",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "voucher_redemptions",
+  "INDEX_NAME": "ix_voucher_redemptions_voucher_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "voucher_id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "voucher_redemptions",
+  "INDEX_NAME": "ix_redeem_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payments",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payments",
+  "INDEX_NAME": "ix_payments_method_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "method_id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "payments",
+  "INDEX_NAME": "ix_payments_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "refunds",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "refunds",
+  "INDEX_NAME": "ix_refunds_payment_id",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "payment_id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "invoices",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "invoices",
+  "INDEX_NAME": "uq_invoices_number",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "number"
+ },
+ {
+  "TABLE_SCHEMA": "billing",
+  "TABLE_NAME": "invoices",
+  "INDEX_NAME": "ix_invoices_order",
+  "NON_UNIQUE": 1,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "order_id"
+ },
+ {
+  "TABLE_SCHEMA": "reporting",
+  "TABLE_NAME": "daily_sales_load",
+  "INDEX_NAME": "PRIMARY",
+  "NON_UNIQUE": 0,
+  "SEQ_IN_INDEX": 1,
+  "COLUMN_NAME": "id"
+ }
+]

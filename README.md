@@ -92,6 +92,7 @@ The agent detects your database and its own harness, then asks you up to six que
 **By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
 
 ```bash
+uvx keygraph demo                # builds the bundled fictional webshop and opens the explorer; no database, no extras
 pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
 keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
 keygraph ui                                                          # opens keygraph-out/keygraph.html
@@ -110,7 +111,7 @@ keygraph search "monthly revenue"        # which tables hold this
 keygraph keys orders                     # primary key, unique keys, indexes in column order
 ```
 
-To try it without a database, clone the repository and build the bundled fictional webshop (35 tables, three schemas):
+`keygraph demo [--dir DIR] [--no-open] [--json]` builds the bundled fictional webshop (35 tables, three schemas) into `./keygraph-demo` (or `--dir`) with the core install only, opens `keygraph.html` and prints three commands to try next (`path`, `describe`, `mcp`; `mcp` needs `keygraph[mcp]`). It refuses a folder that is not empty and not an earlier demo, and a rerun gives byte-identical files. Steps that need an extra (SQL parsing in the code index needs `keygraph[code]`) are skipped with a note. To build the same demo from a clone of the repository instead:
 
 ```bash
 git clone https://github.com/alikarami76/keygraph && cd keygraph

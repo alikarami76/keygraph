@@ -100,13 +100,12 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 # (c) a read-only command template that prints JSON rows for {sql}
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
-# (d) demo: copy examples/shop (keep a copy of the whole folder) and run the copy's build.sh. keygraph must be on PATH:
+# (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no extras, no clone). keygraph must be on PATH:
 # for a virtual environment run `export PATH="<path to that venv>/bin:$PATH"` first (or call <venv>/bin/keygraph).
-# build.sh changes into its own folder, so give it an absolute OUT. It imports the demo's context, code index, query
-# log and profiles, and renders. After it run only the starter-context import (question 5, below) and a final
-# `keygraph render`; skip the whole extras block that follows (`code index .` would index the wrong folder).
-# Without an argument it writes next to the script.
-OUT="$(pwd)/keygraph-out" && sh <path to your copy of examples/shop>/build.sh "$OUT"
+# It loads the demo's context, code index, query log and profiles, and renders. OUT must be new or empty. After it run only
+# the starter-context import (question 5, below) and a final `keygraph render`; skip the whole extras block that follows
+# (`code index .` would index the wrong folder).
+OUT="$(pwd)/keygraph-out" && keygraph demo --dir "$OUT" --no-open
 ```
 
 Then, in this order, only the extras the user said yes to:

@@ -34,6 +34,7 @@
 
 ## Examples and docs
 
+- [keygraph demo](https://github.com/alikarami76/keygraph#quickstart): `uvx keygraph demo` builds the bundled webshop and opens the explorer with no database and no extras (`--dir`, `--no-open`, `--json`).
 - [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md): a fictional 35-table webshop you can build and query in a minute.
 - [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf): a guided tour with screenshots of every explorer view.
 - [Design system](https://github.com/alikarami76/keygraph/blob/main/design/DESIGN.md): the explorer's visual design rules.

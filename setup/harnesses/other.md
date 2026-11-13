@@ -43,6 +43,8 @@ Any agent that can run shell commands can use keygraph. Every query command take
 | `query_for` / `query_top` / `query_search` | `keygraph queries for <t>`, `queries top --table <t>`, `queries search "<q>"` (all with `--json`) |
 | `query_submit` | `keygraph queries add --sql <file> --source <db> --ms <ms> --context "<question>"` |
 
+No database yet? `keygraph demo --dir OUT --no-open --json` builds the bundled demo webshop (core install, no extras) and prints three commands to try.
+
 Set `KEYGRAPH_DIR=OUT` in the agent's environment so you can leave out `--dir`. For step 7.3 of SETUP.md, the CLI version of `search` and `path` counts as the check.
 
 Agents that can only read files can use the markdown pages: `OUT/areas/index.md`, `OUT/areas/<area>.md` and `OUT/tables/<schema.table>.md`.

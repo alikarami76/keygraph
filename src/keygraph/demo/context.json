@@ -1,0 +1,347 @@
+{
+ "source": "examples/shop/context.yaml",
+ "verified": true,
+ "concepts": [
+  {
+   "name": "order",
+   "definition": "One checkout by a customer. It holds one or more order items.",
+   "domain": "sales",
+   "synonyms": [
+    "purchase",
+    "checkout",
+    "basket sold"
+   ],
+   "links": [
+    {
+     "table": "shop.orders",
+     "role": "primary-record"
+    },
+    {
+     "table": "shop.orders",
+     "column": "status",
+     "role": "attribute"
+    },
+    {
+     "table": "shop.order_items",
+     "role": "detail"
+    }
+   ]
+  },
+  {
+   "name": "customer",
+   "definition": "A person with an account who can place orders.",
+   "domain": "sales",
+   "synonyms": [
+    "buyer",
+    "shopper",
+    "account holder"
+   ],
+   "links": [
+    {
+     "table": "shop.customers",
+     "role": "primary-record"
+    }
+   ]
+  },
+  {
+   "name": "product",
+   "definition": "Something for sale as shown on a page. The thing a person actually buys is a variant of it.",
+   "domain": "catalog",
+   "synonyms": [
+    "item",
+    "article",
+    "listing"
+   ],
+   "links": [
+    {
+     "table": "shop.products",
+     "role": "primary-record"
+    },
+    {
+     "table": "shop.product_variants",
+     "role": "detail"
+    }
+   ]
+  },
+  {
+   "name": "seller",
+   "definition": "A third-party company that lists products on the marketplace.",
+   "domain": "marketplace",
+   "synonyms": [
+    "vendor",
+    "merchant"
+   ],
+   "links": [
+    {
+     "table": "shop.sellers",
+     "role": "primary-record"
+    }
+   ]
+  },
+  {
+   "name": "payment",
+   "definition": "Money taken from a customer for an order. A refund gives part or all of it back.",
+   "domain": "billing",
+   "synonyms": [
+    "charge",
+    "transaction"
+   ],
+   "links": [
+    {
+     "table": "billing.payments",
+     "role": "primary-record"
+    },
+    {
+     "table": "billing.refunds",
+     "role": "detail"
+    }
+   ]
+  },
+  {
+   "name": "voucher",
+   "definition": "A discount code. A redemption records its use on one order.",
+   "domain": "billing",
+   "synonyms": [
+    "coupon",
+    "promo code",
+    "discount code"
+   ],
+   "links": [
+    {
+     "table": "billing.vouchers",
+     "role": "primary-record"
+    },
+    {
+     "table": "billing.voucher_redemptions",
+     "role": "detail"
+    }
+   ]
+  },
+  {
+   "name": "shipment",
+   "definition": "A parcel sent from a warehouse for one order. An order can ship in several parcels.",
+   "domain": "fulfilment",
+   "synonyms": [
+    "parcel",
+    "delivery",
+    "package"
+   ],
+   "links": [
+    {
+     "table": "shop.shipments",
+     "role": "primary-record"
+    }
+   ]
+  },
+  {
+   "name": "stock",
+   "definition": "Units of a variant on hand in a warehouse, and how many are reserved.",
+   "domain": "fulfilment",
+   "synonyms": [
+    "inventory",
+    "availability"
+   ],
+   "links": [
+    {
+     "table": "shop.inventory",
+     "role": "primary-record"
+    }
+   ]
+  }
+ ],
+ "relations": [
+  {
+   "from": "customer",
+   "rel": "places",
+   "to": "order",
+   "note": "a customer places many orders"
+  },
+  {
+   "from": "order",
+   "rel": "is paid by",
+   "to": "payment"
+  },
+  {
+   "from": "seller",
+   "rel": "lists",
+   "to": "product"
+  },
+  {
+   "from": "order",
+   "rel": "ships as",
+   "to": "shipment"
+  }
+ ],
+ "columns": [
+  {
+   "table": "shop.orders",
+   "column": "status",
+   "meaning": "Order lifecycle state",
+   "codes": {
+    "1": "placed",
+    "2": "paid",
+    "3": "shipped",
+    "4": "cancelled"
+   },
+   "null_meaning": "never null"
+  },
+  {
+   "table": "shop.orders",
+   "column": "total",
+   "meaning": "Order total including tax and delivery, after discounts",
+   "unit": "euro, two decimals"
+  },
+  {
+   "table": "shop.order_items",
+   "column": "unit_price",
+   "meaning": "Price of one unit when the order was placed. Later price changes do not touch it.",
+   "unit": "euro"
+  },
+  {
+   "table": "shop.customers",
+   "column": "status",
+   "meaning": "Account state",
+   "codes": {
+    "1": "active",
+    "2": "blocked"
+   }
+  },
+  {
+   "table": "shop.customers",
+   "column": "email",
+   "meaning": "Login and contact address",
+   "pii": true
+  },
+  {
+   "table": "billing.payments",
+   "column": "status",
+   "meaning": "Payment state",
+   "codes": {
+    "1": "pending",
+    "2": "captured",
+    "3": "failed"
+   }
+  },
+  {
+   "table": "shop.products",
+   "column": "status",
+   "meaning": "Visibility on the site",
+   "codes": {
+    "1": "live",
+    "2": "hidden"
+   }
+  },
+  {
+   "table": "shop.shipments",
+   "column": "status",
+   "meaning": "Parcel state",
+   "codes": {
+    "1": "packed",
+    "2": "in transit",
+    "3": "delivered",
+    "4": "lost"
+   }
+  }
+ ],
+ "metrics": [
+  {
+   "name": "net revenue",
+   "definition": "Sum of paid order lines after discounts, excluding cancelled orders",
+   "expression": "SUM(order_items.qty * order_items.unit_price - order_items.discount)",
+   "grain": "order item",
+   "tables": [
+    "shop.order_items",
+    "shop.orders"
+   ]
+  },
+  {
+   "name": "average order value",
+   "definition": "Net revenue divided by the number of paid orders",
+   "expression": "SUM(orders.total) / COUNT(DISTINCT orders.id)",
+   "grain": "order",
+   "tables": [
+    "shop.orders"
+   ]
+  },
+  {
+   "name": "refund rate",
+   "definition": "Refunded amount divided by captured payment amount",
+   "expression": "SUM(refunds.amount) / SUM(payments.amount)",
+   "grain": "payment",
+   "tables": [
+    "billing.refunds",
+    "billing.payments"
+   ]
+  }
+ ],
+ "tables": [
+  {
+   "table": "shop.orders",
+   "grain": "one row per order",
+   "date_column": "placed_at",
+   "pitfalls": "Status 1 rows are baskets that are not paid yet, so leave them out of revenue."
+  },
+  {
+   "table": "shop.order_items",
+   "grain": "one row per variant on an order",
+   "pitfalls": "Joining this table to shipments repeats each line once per parcel. Join through shipment_items to keep counts right."
+  },
+  {
+   "table": "shop.orders_shadow",
+   "grain": "one row per order at the time of a one-off migration",
+   "pitfalls": "Scratch table. Do not use it for analysis."
+  },
+  {
+   "table": "shop.audit_log",
+   "grain": "one row per change made by staff",
+   "date_column": "created_at",
+   "pitfalls": "Very large and append-only. Always filter by entity_type and entity_id first."
+  },
+  {
+   "table": "shop.comments",
+   "grain": "one row per comment",
+   "pitfalls": "target_type says which table target_id points to, so there is no single foreign key."
+  },
+  {
+   "table": "billing.payments",
+   "grain": "one row per payment attempt",
+   "date_column": "created_at",
+   "pitfalls": "An order can have several attempts, and only status 2 means money was taken."
+  }
+ ],
+ "areas": [
+  {
+   "name": "Ordering",
+   "match": [
+    "shop.orders"
+   ]
+  },
+  {
+   "name": "Fulfilment",
+   "pin": [
+    "shop.shipments",
+    "shop.shipment_items",
+    "shop.warehouses",
+    "shop.inventory",
+    "shop.returns"
+   ]
+  },
+  {
+   "name": "Catalog",
+   "match": [
+    "shop.products"
+   ]
+  },
+  {
+   "name": "Payments and vouchers",
+   "match": [
+    "billing.payments"
+   ],
+   "pin": [
+    "billing.vouchers",
+    "billing.voucher_redemptions",
+    "billing.invoices"
+   ]
+  }
+ ]
+}

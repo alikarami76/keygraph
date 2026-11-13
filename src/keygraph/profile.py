@@ -178,7 +178,8 @@ def build_sample_sql(dialect: str, table_ref: str, cols: list[str], n: int, stra
 
 def profile_table(source, table, node: dict, n: int = 10000, strategy: str = "auto", budget_s: float = 20.0,
                   skip_over_rows: int | None = 50_000_000, force: bool = False, pii_cols: set[str] | None = None,
-                  codes_by_col: dict | None = None, max_cols: int = 200) -> dict:
+                  codes_by_col: dict | None = None, max_cols: int = 200,
+                  now: dt.datetime | None = None) -> dict:
     """Profile one table through source.sample(table, cols, n, strategy) -> (cols, rows). Returns {col: profile}
     plus "_meta". Never scans a whole table: the sample is always LIMIT/TOP bounded."""
     rows_est = (node.get("info") or {}).get("rows_estimate")
@@ -197,7 +198,7 @@ def profile_table(source, table, node: dict, n: int = 10000, strategy: str = "au
     by = {c["name"]: c for c in node["columns"]}
     for i, c in enumerate(got_cols):
         vals = [r[i] for r in rows]
-        p = profile_values(vals, c, by[c]["type"], pii=bool(pii_cols and c in pii_cols), method=method)
+        p = profile_values(vals, c, by[c]["type"], pii=bool(pii_cols and c in pii_cols), method=method, now=now)
         if by[c].get("values") or (codes_by_col or {}).get(c):
             rec = reconcile(p, by[c].get("values"), (codes_by_col or {}).get(c))
             if rec:
