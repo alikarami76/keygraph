@@ -70,13 +70,14 @@ def build_server(dir: str | Path) -> MCPServer:
             return run(S.search, g, ctx, query, limit, with_paths)
 
     @srv.tool()
-    def describe(table: str, brief: bool = False) -> dict:
+    def describe(table: str, brief: bool = False, min_confidence: float = 0.6) -> dict:
         """Everything known about one table: keys and indexes, columns, business context (grain, pitfalls, code
         meanings) and its relations grouped by role (parent, child, lookup, audit...) with confidence. Use it
         before querying a table you have not seen. Give schema.table when the bare name exists in several schemas.
         brief=true returns only keys, filter columns, table notes and columns as name/type/key/codes (no profiles or
-        relations): use it for a first look at a wide table, then call again without it."""
-        return run(describe_result, out, graph(), table, True, brief)
+        relations): use it for a first look at a wide table, then call again without it. Relations below min_confidence
+        (default 0.6) are left out; hidden_relations counts them, and min_confidence=0 shows every one."""
+        return run(describe_result, out, graph(), table, True, brief, min_confidence)
 
     @srv.tool()
     def keys(table: str) -> dict:
@@ -101,11 +102,11 @@ def build_server(dir: str | Path) -> MCPServer:
         return run(path_result, graph(), from_table, to_table, max_hops, min_confidence, k, include_mirrors)
 
     @srv.tool()
-    def neighbors(table: str, depth: int = 1) -> dict:
+    def neighbors(table: str, depth: int = 1, min_confidence: float = 0.6) -> dict:
         """Tables directly (depth 1) or transitively (depth 2 or 3; larger values are capped at 3) related to a table,
-        with the relation kind and confidence. It has no confidence filter: weak inferred relations are included, so
-        read each confidence. Use it to see what a table connects to when you do not have a target table in mind."""
-        return run(Q.neighbors, graph(), table, max(1, min(int(depth), MAX_DEPTH)), 0.0)
+        with the relation kind and confidence. Relations below min_confidence (default 0.6) are left out and counted in
+        "hidden"; pass min_confidence=0 to see the weak inferred ones and read each confidence. Use it to see what a table connects to when you do not have a target table in mind."""
+        return run(Q.neighbors, graph(), table, max(1, min(int(depth), MAX_DEPTH)), min_confidence)
 
     @srv.tool()
     def areas(include_mirrors: bool = False) -> dict:

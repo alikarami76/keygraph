@@ -125,9 +125,10 @@ def format_search(r: dict) -> str:
     return "\n".join(out)
 
 
-def describe(graph: Graph, ctx: ContextDB, ref: str, brief: bool = False) -> dict:
+def describe(graph: Graph, ctx: ContextDB, ref: str, brief: bool = False, min_confidence: float = 0.6) -> dict:
     """Everything about one table. brief: keys, filter columns, table notes and columns as name/type/key/codes only
-    (no profiles, relations or per-column prose), a cheap first look at a wide table."""
+    (no profiles, relations or per-column prose), a cheap first look at a wide table.
+    Relations below min_confidence are left out and counted in hidden_relations."""
     from .query import keys
     t = graph.resolve(ref)
     c = ctx.table_context(t)
@@ -138,9 +139,10 @@ def describe(graph: Graph, ctx: ContextDB, ref: str, brief: bool = False) -> dic
                 "columns": [{"name": x["name"], "type": x["type"], **({"key": x["key"]} if x.get("key") else {}),
                              **({"codes": codes[x["name"]]} if x["name"] in codes else {})} for x in graph.nodes[t]["columns"]]}
     from .query import neighbors
-    nb = neighbors(graph, t, 1)
+    nb = neighbors(graph, t, 1, min_confidence)
     return {"table": t, "keys": keys(graph, t), "filter_columns": filter_columns(graph.nodes[t], c["notes"]),
             "context": c, "relations": nb["levels"].get("1", []),
+            "min_confidence": min_confidence, "hidden_relations": nb["hidden"],
             "info_line": table_info_line(graph.nodes[t]),
             "columns": [{**x, "detail": column_detail(x), "profile": (graph.data.get("profiles") or {}).get(f"{t}.{x['name']}")}
                         for x in graph.nodes[t]["columns"]]}
@@ -194,4 +196,7 @@ def format_describe(d: dict) -> str:
         out.append("  relations:")
         for x in d["relations"]:
             out.append(f"    {x['from']}({','.join(x['from_columns'])}) -> {x['to']}({','.join(x['to_columns'])}) [{x['kind']} {x['confidence']:.2f}]")
+    if d.get("hidden_relations"):
+        from .query import hidden_note
+        out.append("  " + hidden_note(d["hidden_relations"], d["min_confidence"]))
     return "\n".join(out)

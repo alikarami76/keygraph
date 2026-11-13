@@ -279,3 +279,28 @@ def test_search_without_paths_matches_cli(srv, out, capsys):
     err, full = call(srv, "search", query="orders")
     assert not err and full == cli_json(capsys, out, "search", "orders") and full["join_paths"]
     assert got["join_paths"] == []
+
+
+def _weak_copy(tmp_path, out):
+    import shutil
+    d = tmp_path / "weak"
+    shutil.copytree(out, d)
+    gj = json.loads((d / "graph.json").read_text())
+    for e in gj["edges"]:
+        if e["from"] == "shop.orders" and e["to"] == "shop.users":
+            e["confidence"] = 0.55
+    (d / "graph.json").write_text(json.dumps(gj))
+    return d
+
+
+def test_neighbors_and_describe_floor_match_cli(tmp_path, out, capsys):
+    d = _weak_copy(tmp_path, out)
+    s = build_server(d)
+    err, got = call(s, "neighbors", table="shop.orders")
+    assert not err and got == cli_json(capsys, d, "neighbors", "shop.orders") and got["hidden"] >= 1
+    err, got = call(s, "neighbors", table="shop.orders", min_confidence=0.0)
+    assert not err and got == cli_json(capsys, d, "neighbors", "shop.orders", "--min-confidence", "0") and got["hidden"] == 0
+    err, got = call(s, "describe", table="shop.orders")
+    assert not err and got == cli_json(capsys, d, "describe", "shop.orders") and got["hidden_relations"] >= 1
+    err, got = call(s, "describe", table="shop.orders", min_confidence=0.0)
+    assert not err and got == cli_json(capsys, d, "describe", "shop.orders", "--min-confidence", "0") and got["hidden_relations"] == 0

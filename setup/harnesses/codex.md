@@ -16,7 +16,7 @@ command = "/abs/path/to/python"
 args = ["-m", "keygraph", "mcp", "--dir", "/abs/path/to/keygraph-out"]
 ```
 
-This config is user-level, shared by every project, so ask the user before you change it (ground rule 3). To keep the map per project, point `--dir` at that project's output folder, and register a second server with a different name (for example `keygraph-billing`) for another database.
+This config is user-level (`~/.codex/config.toml`), shared by every project. Say so in step 2 of the setup, and when the user chose project-only, ask before you write it. To keep the map per project, point `--dir` at that project's output folder, and register a second server with a different name (for example `keygraph-billing`) for another database.
 
 ## 2. Skill and standing instructions
 

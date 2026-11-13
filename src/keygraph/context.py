@@ -8,6 +8,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from typing import ClassVar
 
 _DIGITS = {**{0x0660 + i: 0x30 + i for i in range(10)}, **{0x06F0 + i: 0x30 + i for i in range(10)}}
 _MAP = {0x064A: 0x06CC, 0x0649: 0x06CC, 0x0643: 0x06A9, 0x200C: 0x20, 0x0640: None, 0x06C0: 0x0647, 0x0629: 0x0647}
@@ -49,12 +50,13 @@ CREATE TABLE IF NOT EXISTS column_profile(table_id TEXT, col TEXT, profile TEXT,
   PRIMARY KEY(table_id, col));
 CREATE TABLE IF NOT EXISTS column_details(table_id TEXT, col TEXT, detail TEXT, PRIMARY KEY(table_id, col));
 CREATE TABLE IF NOT EXISTS table_info(table_id TEXT PRIMARY KEY, info TEXT);
+CREATE TABLE IF NOT EXISTS context_history(kind TEXT, ref TEXT, action TEXT, old TEXT, new TEXT, source TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS curation(kind TEXT, body JSON, source TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body, tokenize='unicode61');
 """
 
 KINDS = {"concept", "relation", "link", "column", "metric", "table"}
-ROLES = ("primary-record", "attribute", "foreign-reference", "measure", "filter")
+ROLES = ("primary-record", "attribute", "foreign-reference", "measure", "filter", "detail")
 
 
 def _j(v) -> str:
@@ -198,23 +200,115 @@ class ContextDB:
                               "pass --verified (or verified=true) if you have confirmed it")
         return True
 
+    def _put(self, kind: str, table: str, keys: dict, label: str, values: tuple, src: tuple, same_ok: bool = False) -> bool:
+        """Write one row (INSERT OR REPLACE) unless a verified row is kept; record a history row when a verified
+        write is refused ("kept") or an existing row's content changes ("replaced"). Identical rewrites leave no trace."""
+        cols = [r[1] for r in self.db.execute(f"PRAGMA table_info({table})")]
+        new = dict(zip(cols, values))
+        where = " AND ".join(f"{k}=?" for k in keys)
+        old = self.db.execute(f"SELECT * FROM {table} WHERE {where}", tuple(keys.values())).fetchone()
+        old_d = dict(old) if old else None
+        if old_d and old_d.get("source"):
+            old_d["source"] = safe_source(old_d["source"])
+        if self._keeps_verified(kind, table, keys, label, src, same_ok):
+            skip = ("source", "verified", "updated_at")
+            last = self.db.execute("SELECT new FROM context_history WHERE kind=? AND ref=? AND action='kept' ORDER BY rowid DESC LIMIT 1",
+                                   (kind, label)).fetchone()
+            body = {k: v for k, v in new.items() if k not in skip}
+            if not (last and {k: v for k, v in json.loads(last[0]).items() if k not in skip} == body):
+                self._history(kind, label, "kept", old_d, new, src[0])
+            return False
+        self.db.execute(f"INSERT OR REPLACE INTO {table} VALUES({','.join('?' * len(values))})", values)
+        if old_d and any(old_d[c] != new[c] for c in cols if c != "updated_at"):
+            self._history(kind, label, "replaced", old_d, new, src[0])
+        return True
+
+    def _history(self, kind: str, ref: str, action: str, old, new, source: str) -> None:
+        self.db.execute("INSERT INTO context_history VALUES(?,?,?,?,?,?,?)",
+                        (kind, ref, action, *(json.dumps(d, ensure_ascii=False, sort_keys=True, default=str) for d in (old, new)),
+                         source, time.strftime("%Y-%m-%dT%H:%M:%S")))
+
+    def history(self, limit: int = 50, ref: str | None = None, kind: str | None = None) -> list[dict]:
+        """Overwritten and refused context writes, newest first. old/new are the rows as dicts."""
+        where, args = [], []
+        for col, v in (("ref", ref), ("kind", kind)):
+            if v:
+                where.append(f"{col}=?")
+                args.append(v)
+        q = "SELECT * FROM context_history" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY rowid DESC LIMIT ?"
+        out = []
+        for r in self.db.execute(q, (*args, int(limit))):
+            d = dict(r)
+            d["old"], d["new"] = json.loads(d["old"]) if d["old"] else None, json.loads(d["new"]) if d["new"] else None
+            out.append(d)
+        return out
+
+    # per kind: (table, how to find the key columns from the input dict, {input field: stored column}, JSON-decoded fields)
+    _MERGE: ClassVar[dict] = {
+        "concept": ("concepts", lambda s, d: {"name": str(d["name"]).strip()},
+                    {"definition": "definition", "domain": "domain", "owner": "owner", "synonyms": "synonyms"}, ("synonyms",)),
+        "link": ("concept_links", lambda s, d: {"concept": d["concept"], "table_id": s._tid(d["table"]), "col": d.get("column") or "",
+                                                "role": d.get("role") or ("primary-record" if not d.get("column") else "attribute")},
+                 {"note": "note"}, ()),
+        "relation": ("concept_relations", lambda s, d: {"from_concept": d["from"], "rel": d.get("rel", "related-to"), "to_concept": d["to"]},
+                     {"note": "note", "edge": "edge_id"}, ()),
+        "column": ("column_semantics", lambda s, d: {"table_id": s._tid(d["table"]), "col": d["column"]},
+                   {"meaning": "meaning", "unit": "unit", "codes": "codes", "null_meaning": "null_meaning", "pii": "pii",
+                    "typical_filters": "typical_filters", "index_hint": "index_hint"}, ("codes", "typical_filters")),
+        "metric": ("metrics", lambda s, d: {"name": d["name"]},
+                   {"definition": "definition", "expression": "expression", "grain": "grain", "tables": "tables", "filters": "filters",
+                    "caveats": "caveats"}, ("tables",)),
+        "table": ("table_notes", lambda s, d: {"table_id": s._tid(d["table"])},
+                  {"grain": "grain", "freshness": "freshness", "soft_delete": "soft_delete", "date_column": "date_column",
+                   "recommended_indexes": "recommended_indexes", "pitfalls": "pitfalls", "summary": "summary"}, ("recommended_indexes",)),
+    }
+
+    _REQUIRED: ClassVar[dict] = {"concept": ("name",), "link": ("concept", "table"), "relation": ("from", "to"),
+                                 "column": ("table", "column"), "metric": ("name",), "table": ("table",)}
+
+    def _merged(self, kind: str, d: dict) -> dict:
+        """d with every field it does not give filled from the stored row (a field given as empty clears it)."""
+        table, keyf, fields, decoded = self._MERGE[kind]
+        n_warn = len(self.warnings)
+        keys = keyf(self, d)
+        del self.warnings[n_warn:]  # upsert resolves the table again and reports it once
+        row = self.db.execute(f"SELECT * FROM {table} WHERE " + " AND ".join(f"{k}=?" for k in keys), tuple(keys.values())).fetchone()
+        if not row:
+            return d
+        out = dict(d)
+        for field, col in fields.items():
+            if field == "codes" and d.get("codes") and row[col]:  # codes merge key by key; an empty map clears them
+                out["codes"] = {**json.loads(row[col]), **d["codes"]}
+            elif field not in d:
+                v = row[col]
+                out[field] = json.loads(v) if field in decoded and v else ({} if field == "codes" else v)
+        return out
+
     def upsert(self, kind: str, d: dict, source: str = "", verified=False,
-               allow_same_source: bool = False) -> bool:
+               allow_same_source: bool = False, merge: bool = False) -> bool:
         """Write one context item; False when a verified row was kept instead. allow_same_source (file imports only)
-        lets an unverified write update a verified row that came from the same source."""
+        lets an unverified write update a verified row that came from the same source. merge (the CLI add path): fields
+        not given keep their stored values; a field given as empty clears it. Imports write whole rows."""
         if kind not in KINDS:
             raise ValueError(f"unknown kind '{kind}'; use one of {sorted(KINDS)}")
+        need = self._REQUIRED[kind]
+        if missing := [k for k in need if not d.get(k)]:
+            if allow_same_source:  # a file import: say which file and which item
+                raise ValueError(f"context file {source or 'unknown'}: a {kind} entry needs {' and '.join(need)} "
+                                 f"(missing {', '.join(missing)}): {json.dumps(d, ensure_ascii=False, default=str)[:120]}")
+            raise ValueError(f"context add --kind {kind} needs {' and '.join(k + '=' for k in need)} (missing {', '.join(missing)})")
+        if merge:
+            d = self._merged(kind, d)
         src = self._meta(d, source, verified)
         x = self.db
         if kind == "concept":
             name = str(d["name"]).strip()
-            written = not self._keeps_verified(kind, "concepts", {"name": name}, name, src, allow_same_source)
-            if written:
-                x.execute("INSERT OR REPLACE INTO concepts VALUES(?,?,?,?,?,?,?,?)",
-                          (name, d.get("definition", ""), d.get("domain", ""), d.get("owner", ""), _j(_l(d.get("synonyms"))), *src))
+            written = self._put(kind, "concepts", {"name": name}, name,
+                                (name, d.get("definition", ""), d.get("domain", ""), d.get("owner", ""), _j(_l(d.get("synonyms"))), *src),
+                                src, allow_same_source)
             for ln in d.get("links") or []:
                 self.upsert("link", {**ln, "concept": name, "source": ln.get("source") or d.get("source"),
-                                     "verified": ln.get("verified", d.get("verified"))}, source, verified, allow_same_source)
+                                     "verified": ln.get("verified", d.get("verified"))}, source, verified, allow_same_source, merge)
         elif kind == "link":
             tid = self._tid(d["table"])
             col = d.get("column") or ""
@@ -222,42 +316,38 @@ class ContextDB:
             role = d.get("role") or ("primary-record" if not col else "attribute")
             if role not in ROLES:
                 self.warnings.append(f"link role '{role}' is not one of {ROLES}")
-            if self._keeps_verified(kind, "concept_links", {"concept": d["concept"], "table_id": tid, "col": col, "role": role},
-                                    f"{d['concept']} -> {tid}{'.' + col if col else ''} ({role})", src, allow_same_source):
+            if not self._put(kind, "concept_links", {"concept": d["concept"], "table_id": tid, "col": col, "role": role},
+                             f"{d['concept']} -> {tid}{'.' + col if col else ''} ({role})",
+                             (d["concept"], tid, col, role, d.get("note", ""), *src), src, allow_same_source):
                 return False
-            x.execute("INSERT OR REPLACE INTO concept_links VALUES(?,?,?,?,?,?,?,?)",
-                      (d["concept"], tid, col, role, d.get("note", ""), *src))
         elif kind == "relation":
             rel = d.get("rel", "related-to")
-            if self._keeps_verified(kind, "concept_relations", {"from_concept": d["from"], "rel": rel, "to_concept": d["to"]},
-                                    f"{d['from']} {rel} {d['to']}", src, allow_same_source):
+            if not self._put(kind, "concept_relations", {"from_concept": d["from"], "rel": rel, "to_concept": d["to"]},
+                             f"{d['from']} {rel} {d['to']}",
+                             (d["from"], rel, d["to"], d.get("edge", ""), d.get("note", ""), *src), src, allow_same_source):
                 return False
-            x.execute("INSERT OR REPLACE INTO concept_relations VALUES(?,?,?,?,?,?,?,?)",
-                      (d["from"], d.get("rel", "related-to"), d["to"], d.get("edge", ""), d.get("note", ""), *src))
         elif kind == "column":
             tid = self._tid(d["table"])
             self._check_col(tid, d["column"])
-            if self._keeps_verified(kind, "column_semantics", {"table_id": tid, "col": d["column"]}, f"{tid}.{d['column']}", src, allow_same_source):
+            if not self._put(kind, "column_semantics", {"table_id": tid, "col": d["column"]}, f"{tid}.{d['column']}",
+                             (tid, d["column"], d.get("meaning", ""), d.get("unit", ""), _j(d.get("codes") or {}),
+                              d.get("null_meaning", ""), 1 if d.get("pii") in (True, 1, "true", "yes") else 0,
+                              _j(d.get("typical_filters", "")), d.get("index_hint", ""), *src), src, allow_same_source):
                 return False
-            x.execute("INSERT OR REPLACE INTO column_semantics VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (tid, d["column"], d.get("meaning", ""), d.get("unit", ""), _j(d.get("codes") or {}),
-                       d.get("null_meaning", ""), 1 if d.get("pii") in (True, 1, "true", "yes") else 0,
-                       _j(d.get("typical_filters", "")), d.get("index_hint", ""), *src))
         elif kind == "metric":
             tbls = [self._tid(t) for t in _l(d.get("tables"))]
-            if self._keeps_verified(kind, "metrics", {"name": d["name"]}, d["name"], src, allow_same_source):
+            if not self._put(kind, "metrics", {"name": d["name"]}, d["name"],
+                             (d["name"], d.get("definition", ""), d.get("expression", ""), d.get("grain", ""), _j(tbls),
+                              d.get("filters", ""), d.get("caveats", ""), *src), src, allow_same_source):
                 return False
-            x.execute("INSERT OR REPLACE INTO metrics VALUES(?,?,?,?,?,?,?,?,?,?)",
-                      (d["name"], d.get("definition", ""), d.get("expression", ""), d.get("grain", ""), _j(tbls),
-                       d.get("filters", ""), d.get("caveats", ""), *src))
         elif kind == "table":
             tid = self._tid(d["table"])
             self._check_col(tid, d.get("date_column"))
-            if self._keeps_verified(kind, "table_notes", {"table_id": tid}, tid, src, allow_same_source):
+            if not self._put(kind, "table_notes", {"table_id": tid}, tid,
+                             (tid, d.get("grain", ""), d.get("freshness", ""), d.get("soft_delete", ""), d.get("date_column", ""),
+                              _j(_l(d.get("recommended_indexes"))), d.get("pitfalls", ""), d.get("summary", ""), *src),
+                             src, allow_same_source):
                 return False
-            x.execute("INSERT OR REPLACE INTO table_notes VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                      (tid, d.get("grain", ""), d.get("freshness", ""), d.get("soft_delete", ""), d.get("date_column", ""),
-                       _j(_l(d.get("recommended_indexes"))), d.get("pitfalls", ""), d.get("summary", ""), *src))
         x.commit()
         return written if kind == "concept" else True
 

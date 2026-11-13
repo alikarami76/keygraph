@@ -14,7 +14,7 @@ def late_orders(db, status, before):
 
 
 def mark_paid(db, order_id):
-    db.execute("UPDATE orders SET status = 3 WHERE id = ?", (order_id,))
+    db.execute("UPDATE orders SET status = 2 WHERE id = ?", (order_id,))
 
 
 def order_total(order: Order):

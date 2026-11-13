@@ -5,6 +5,7 @@ Written by an AI agent following https://github.com/alikarami76/keygraph/blob/ma
 - Set up on: <date>, keygraph <version> (from `keygraph doctor`)
 - Harness: <Claude Code | Codex | Cursor | ZCode | OpenCode | Unsloth Studio | other>, MCP scope: <project | user>
 - Map folder: <absolute OUT>
+- Verified: <through MCP | in-process stand-in only, MCP not yet reloaded>
 - Shape at setup: <N> tables, <N> relations, <N> schemas, <N> context entries
 
 ## Answers

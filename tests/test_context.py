@@ -3,6 +3,8 @@ import gzip
 import json
 import re
 
+import pytest
+
 from conftest import FIX, edge, needs_yaml
 
 from keygraph import search as S
@@ -374,3 +376,234 @@ def test_import_notes_counts_only_rows_written(tmp_path, capsys):
     j = json.loads(capsys.readouterr().out)
     assert j["imported"]["tables"] + j["kept"].get("table", 0) == 1
     assert j["imported"]["tables"] == 0 and j["kept"]["table"] == 1
+
+
+KIND_CASES = {
+    "concept": ({"name": "buyer", "definition": "{}"}, "buyer"),
+    "link": ({"concept": "buyer", "table": "shop.orders", "column": "customer_id", "note": "{}"}, "buyer -> shop.orders.customer_id (attribute)"),
+    "relation": ({"from": "buyer", "to": "order", "rel": "places", "note": "{}"}, "buyer places order"),
+    "column": ({"table": "shop.orders", "column": "status", "meaning": "{}"}, "shop.orders.status"),
+    "metric": ({"name": "revenue", "definition": "{}", "expression": "sum(x)"}, "revenue"),
+    "table": ({"table": "shop.orders", "grain": "{}"}, "shop.orders"),
+}
+NOTE_KEY = {"concept": "definition", "link": "note", "relation": "note", "column": "meaning", "metric": "definition", "table": "grain"}
+
+
+def test_history_records_refused_write_for_every_kind(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    for kind, (d, ref) in KIND_CASES.items():
+        key = NOTE_KEY[kind]
+        assert ctx.upsert(kind, {**d, key: "checked", "source": "human"}, "", True) is True
+        ctx.upsert(kind, {**d, key: "guess", "source": "agent-x"}, "", False)
+        h = ctx.history(limit=1, ref=ref, kind=kind)[0]
+        assert h["action"] == "kept" and h["source"] == "agent-x", kind
+        assert h["old"][next(k for k in h["old"] if h["old"][k] == "checked")] == "checked"
+        assert "guess" in h["new"].values() and "checked" in h["old"].values()
+    assert len(ctx.history(limit=100)) == 6
+
+
+def test_history_records_replaced_but_not_identical_rewrite(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    d = {"table": "shop.orders", "column": "status", "meaning": "v1"}
+    ctx.upsert("column", d, "a.yaml")
+    ctx.upsert("column", d, "a.yaml")  # identical re-import: no row
+    assert ctx.history() == []
+    ctx.upsert("column", {**d, "meaning": "v2"}, "a.yaml")
+    (h,) = ctx.history()
+    assert h["action"] == "replaced" and h["old"]["meaning"] == "v1" and h["new"]["meaning"] == "v2"
+    ctx.upsert("column", {**d, "meaning": "v2"}, "a.yaml")
+    assert len(ctx.history()) == 1
+    assert ctx.history(ref="nope") == [] and ctx.history(kind="metric") == []
+
+
+def test_history_readonly_open_of_older_file(graph, tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE concepts(name TEXT PRIMARY KEY, definition TEXT, domain TEXT, owner TEXT, synonyms TEXT, source TEXT, verified INTEGER, updated_at TEXT)")
+    con.commit()
+    con.close()
+    with ContextDB(path, graph, readonly=True) as ctx:
+        assert ctx.history() == []
+    assert sqlite3.connect(path).execute("SELECT name FROM sqlite_master WHERE name='context_history'").fetchone() is None
+
+
+def _load_shop(tmp_path):
+    out = tmp_path / "out"
+    assert main(["load", "--dir", str(out), "--columns", str(FIX / "shop_columns.json"), "--statistics", str(FIX / "shop_statistics.json"),
+                 "--key-columns", str(FIX / "shop_key_columns.json")]) == 0
+    return out
+
+
+def test_context_add_author_env_and_default_source(tmp_path, monkeypatch, capsys):
+    out = _load_shop(tmp_path)
+    monkeypatch.delenv("KEYGRAPH_AUTHOR", raising=False)
+    base = ["context", "add", "--dir", str(out), "--kind", "column"]
+
+    def src(col):
+        with ContextDB(out / "keygraph.db", readonly=True) as c:
+            return next(r for r in c.rows("column_semantics") if r["col"] == col)["source"]
+    assert main(base + ["table=shop.orders", "column=status", "meaning=a"]) == 0
+    assert src("status") == "context-add"
+    assert main(base + ["--author", "ali", "table=shop.orders", "column=created_at", "meaning=a"]) == 0  # option between positionals
+    assert src("created_at") == "ali"
+    monkeypatch.setenv("KEYGRAPH_AUTHOR", "envbot")
+    assert main(base + ["table=shop.orders", "column=id", "meaning=a"]) == 0
+    assert src("id") == "envbot"
+    assert main(base + ["--author", "ali", "table=shop.orders", "column=id", "meaning=b", "source=explicit"]) == 0
+    assert src("id") == "explicit"
+    capsys.readouterr()
+
+
+def test_context_history_cli_json(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    base = ["context", "add", "--dir", str(out), "--kind", "column", "table=shop.orders", "column=status"]
+    assert main(base + ["meaning=human", "verified=true", "source=human"]) == 0
+    assert main(base + ["meaning=guess", "--author", "bot"]) == 0
+    capsys.readouterr()
+    assert main(["context", "history", "--dir", str(out), "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert len(rows) == 1 and rows[0]["action"] == "kept" and rows[0]["source"] == "bot" and rows[0]["ref"] == "shop.orders.status"
+    assert main(["context", "history", "--dir", str(out), "--ref", "other", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+    assert main(["context", "history", "--dir", str(out)]) == 0
+    assert "kept" in capsys.readouterr().out
+
+
+def test_repeated_refused_write_adds_one_history_row(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    d = {"table": "shop.orders", "column": "status", "meaning": "checked"}
+    ctx.upsert("column", {**d, "source": "human"}, "", True)
+    for _ in range(3):
+        ctx.upsert("column", {**d, "meaning": "guess"}, "bot", False)
+    assert len(ctx.history()) == 1
+    ctx.upsert("column", {**d, "meaning": "other guess"}, "bot", False)
+    assert len(ctx.history()) == 2
+
+
+def test_nested_concept_links_write_history(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    c = {"name": "buyer", "definition": "d", "links": [{"table": "shop.orders", "column": "customer_id", "note": "v1"}]}
+    ctx.upsert("concept", c, "a.yaml")
+    ctx.upsert("concept", {**c, "links": [{**c["links"][0], "note": "v2"}]}, "a.yaml")
+    (h,) = ctx.history()
+    assert h["kind"] == "link" and h["action"] == "replaced" and h["old"]["note"] == "v1" and h["new"]["note"] == "v2"
+    ctx.upsert("concept", {"name": "payer", "links": [{"table": "shop.orders", "column": "customer_id", "note": "ok", "verified": True}]}, "h")
+    ctx.upsert("concept", {"name": "payer", "links": [{"table": "shop.orders", "column": "customer_id", "note": "bad"}]}, "bot")
+    assert ctx.history(kind="link")[0]["action"] == "kept"
+
+
+def test_context_history_is_readonly_and_needs_no_graph(tmp_path, capsys):
+    out = tmp_path / "out"
+    out.mkdir()
+    assert main(["context", "history", "--dir", str(out), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == [] and not (out / "keygraph.db").exists()
+
+
+def test_detail_is_a_valid_link_role(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("link", {"concept": "order", "table": "shop.order_items", "role": "detail"}, "a")
+    assert ctx.warnings == []
+
+
+def _add(out, kind, *fields):
+    assert main(["context", "add", "--dir", str(out), "--kind", kind, *fields]) == 0
+
+
+def _stored(out, table, where):
+    with ContextDB(out / "keygraph.db", readonly=True) as c:
+        return next(r for r in c.rows(table) if all(r[k] == v for k, v in where.items()))
+
+
+def test_context_add_merges_column_fields(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    _add(out, "column", "table=shop.orders", "column=status", "codes=1:new,2:paid", "null_meaning=never null", "meaning=old")
+    _add(out, "column", "table=shop.orders", "column=status", "meaning=order state", "verified=true")
+    r = _stored(out, "column_semantics", {"col": "status"})
+    assert r["meaning"] == "order state" and json.loads(r["codes"]) == {"1": "new", "2": "paid"} and r["null_meaning"] == "never null"
+    assert r["verified"] == 1
+    h = ContextDB(out / "keygraph.db", readonly=True).history(ref="shop.orders.status")[0]
+    assert h["action"] == "replaced" and h["old"]["meaning"] == "old" and h["new"]["meaning"] == "order state"
+    assert json.loads(h["new"]["codes"]) == {"1": "new", "2": "paid"}
+    _add(out, "column", "table=shop.orders", "column=status", "codes=", "verified=true")  # an explicit empty value clears the field
+    r = _stored(out, "column_semantics", {"col": "status"})
+    assert json.loads(r["codes"] or "{}") == {} and r["meaning"] == "order state"
+
+
+def test_context_add_merges_table_metric_concept_relation_link(tmp_path):
+    out = _load_shop(tmp_path)
+    _add(out, "table", "table=shop.orders", "pitfalls=soft deletes", "grain=old")
+    _add(out, "table", "table=shop.orders", "grain=one row per order")
+    r = _stored(out, "table_notes", {"table_id": "shop.orders"})
+    assert r["grain"] == "one row per order" and r["pitfalls"] == "soft deletes"
+    _add(out, "metric", "name=revenue", "definition=d", "expression=sum(x)", "tables=shop.orders")
+    _add(out, "metric", "name=revenue", "caveats=gross")
+    r = _stored(out, "metrics", {"name": "revenue"})
+    assert r["expression"] == "sum(x)" and r["caveats"] == "gross" and json.loads(r["tables"]) == ["shop.orders"]
+    _add(out, "concept", "name=buyer", "definition=d", "synonyms=client,shopper", "domain=sales")
+    _add(out, "concept", "name=buyer", "owner=growth")
+    r = _stored(out, "concepts", {"name": "buyer"})
+    assert r["definition"] == "d" and r["domain"] == "sales" and r["owner"] == "growth" and json.loads(r["synonyms"]) == ["client", "shopper"]
+    _add(out, "relation", "from=buyer", "to=order", "rel=places", "note=n1", "edge=e1")
+    _add(out, "relation", "from=buyer", "to=order", "rel=places", "edge=e2")
+    r = _stored(out, "concept_relations", {"from_concept": "buyer"})
+    assert r["note"] == "n1" and r["edge_id"] == "e2"
+    _add(out, "link", "concept=buyer", "table=shop.orders", "column=customer_id", "note=n1")
+    _add(out, "link", "concept=buyer", "table=shop.orders", "column=customer_id", "verified=true")
+    assert _stored(out, "concept_links", {"concept": "buyer"})["note"] == "n1"
+
+
+def test_file_import_keeps_whole_row_semantics(graph, tmp_path):
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "m", "codes": {"1": "a"}}, "f.yaml")
+    ctx.upsert("column", {"table": "shop.orders", "column": "status", "meaning": "m2"}, "f.yaml")
+    assert json.loads(_col(ctx)["codes"] or "{}") == {}
+
+
+def test_context_add_concept_merges_its_nested_links(tmp_path):
+    out = _load_shop(tmp_path)
+    _add(out, "link", "concept=order", "table=shop.orders", "column=status", "role=attribute", "note=status says if paid")
+    _add(out, "concept", "name=order", "owner=sales-team", "link=shop.orders:status:attribute")
+    assert _stored(out, "concept_links", {"concept": "order"})["note"] == "status says if paid"
+
+
+def test_context_add_codes_merge_key_by_key_and_empty_clears(tmp_path):
+    out = _load_shop(tmp_path)
+    _add(out, "column", "table=shop.orders", "column=status", "codes=1:new,2:paid,3:shipped")
+    _add(out, "column", "table=shop.orders", "column=status", "codes=3:sent,5:refunded")
+    assert json.loads(_stored(out, "column_semantics", {"col": "status"})["codes"]) == {"1": "new", "2": "paid", "3": "sent", "5": "refunded"}
+    _add(out, "column", "table=shop.orders", "column=status", "codes=")
+    assert json.loads(_stored(out, "column_semantics", {"col": "status"})["codes"] or "{}") == {}
+
+
+def test_merged_unverified_add_over_verified_row_is_refused_and_identical_merge_adds_no_history(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    _add(out, "column", "table=shop.orders", "column=status", "meaning=checked", "codes=1:new", "verified=true", "source=human")
+    n = len(ContextDB(out / "keygraph.db", readonly=True).history())
+    _add(out, "column", "table=shop.orders", "column=status", "verified=true", "source=human")  # only key fields: nothing changes
+    assert len(ContextDB(out / "keygraph.db", readonly=True).history()) == n
+    capsys.readouterr()
+    _add(out, "column", "table=shop.orders", "column=status", "meaning=guess")
+    assert json.loads(capsys.readouterr().out)["kept"] == {"column": 1}
+    r = _stored(out, "column_semantics", {"col": "status"})
+    assert r["meaning"] == "checked" and json.loads(r["codes"]) == {"1": "new"}
+
+
+def test_unknown_table_warns_once_and_missing_key_is_a_clear_error(tmp_path, capsys):
+    out = _load_shop(tmp_path)
+    capsys.readouterr()
+    _add(out, "table", "table=nosuch.t", "grain=g")
+    w = json.loads(capsys.readouterr().out)["warnings"]
+    assert len(w) == len(set(w)) == 1
+    assert main(["context", "add", "--dir", str(out), "--kind", "column", "table=shop.orders", "meaning=x"]) == 2
+    assert "column" in capsys.readouterr().err
+
+
+def test_import_missing_key_names_the_file_and_the_item(graph, tmp_path):
+    f = tmp_path / "ctx.json"
+    f.write_text(json.dumps({"columns": [{"table": "shop.orders", "meaning": "x"}]}))
+    ctx = ContextDB(tmp_path / "k.db", graph)
+    with pytest.raises(ValueError) as exc:
+        ctx.import_path(f)
+    msg = str(exc.value)
+    assert "ctx.json" in msg and "column" in msg and "meaning" in msg and "context add" not in msg
