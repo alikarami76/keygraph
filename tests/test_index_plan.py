@@ -1,12 +1,11 @@
 import sqlite3
 
 import pytest
+from test_example_shop import _build
 
 from keygraph.context import ContextDB
 from keygraph.graph import Graph
 from keygraph.index import plan as P
-
-from test_example_shop import _build
 
 
 @pytest.fixture(scope="module")
