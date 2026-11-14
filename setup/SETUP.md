@@ -127,11 +127,11 @@ keygraph render --dir "$OUT"
 
 **Starter business context (question 5).** Do these in order. (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`; start from a real demo table such as `shop.orders`.)
 
-1. Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table.
-2. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. A short file is fine, and when every fact is already stored and verified you may add nothing.
-3. Leave `verified: false`. Use `verified=true` only for a fact you checked against data or code in this session, never for a guess or something merely read in a comment. A fact the user told you that you cannot check stays unverified: add it with `source="user, <date>"` and no `verified`.
-4. Before you import, look up each table, column, concept, metric and relation in your file with `keygraph describe <table> --brief --dir "$OUT"` (notes and codes already stored) or `keygraph search "<name>" --dir "$OUT"`.
-5. Check the version by behaviour: keygraph 0.4.0+, or any build where `keygraph context history --json` works (`keygraph --version` is not supported). Only then does an import from another source never replace a verified entry (it keeps the verified one and prints a warning); an older keygraph does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`).
+1. Look up first, before you write any entry: for each table, column, concept, metric and relation you plan to add, run `keygraph describe <table> --brief --dir "$OUT"` (it shows the notes and codes already stored; on a small table it may still list every column) or `keygraph search "<name>" --dir "$OUT"`. Leave out every fact that is already stored and verified: the demo already has verified notes for tables such as `shop.orders`.
+2. Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table.
+3. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. A short file is fine, and when every fact is already stored and verified you may add nothing.
+4. Leave `verified: false`. Use `verified=true` only for a fact you checked against data or code in this session, never for a guess or something merely read in a comment. A fact the user told you that you cannot check stays unverified: add it with `source="user, <date>"` and no `verified`.
+5. Check the import behaviour, not the version number: run `keygraph context history --json --dir "$OUT"`. If it works, an import from another source never replaces a verified entry (it keeps the verified one and prints a warning; ignore what `doctor` prints as the version). If it fails, your keygraph is older and does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`).
 6. Import it as above, then tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
 
 **Copies and replicas.** If the scan prints a warning about ambiguous relations across schemas, or the user named copy schemas, rebuild with `--copy-schema GLOB` for each one.
@@ -144,15 +144,19 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
 
 **Ask first**, in one message: "I can also build a meaning layer with myself as the indexer. It uses my own tokens, capped at 200000 by default (I can use a smaller cap). It makes search and describe richer. Shall I do it?" Wait for the answer. If the user names a smaller number, use it as `--budget`.
 
-Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir "$OUT"` to every command, or `export KEYGRAPH_DIR="$OUT"`. Use `--json` and read the `status` field of every reply.
+Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir "$OUT"` to every command, or `export KEYGRAPH_DIR="$OUT"`. Use `--json`. Every `next` and `submit` reply has a `status` field: read it. (`start`, `finish`, `status` and `refresh` return a summary instead of a `status` field to branch on.) The `next` field of a reply names the next call.
 
-1. Plan the work. For the demo, add `--max-units 3` so the run stays short; for a real database leave it out.
+1. Plan the work.
+
+   - Probe source. keygraph can check your claims against the data with SELECT-only queries (it never shows you a row). The connection must be a **read-only** connection held in an environment variable; you pass only the variable's name, never its value. Never type a URL, password or command into a command line, a file or the chat. On a real database the user exports the variable themselves, for example `KEYGRAPH_PROBE_URL`, and you add `--url-env KEYGRAPH_PROBE_URL` (or `--cmd-env NAME` for a read-only command with `{sql}`). If `start` says the variable is not set, leave `--url-env` out: without probes everything is stored as unverified, which is fine.
+   - For the demo, use a copy of the demo database as the probe source: `cp <path to your copy of examples/shop>/shop.db "$OUT/../shop-probe.db" && export KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db"`.
+   - Start. For the demo add `--max-units 3` so the run stays short. The units beyond the cap are marked `skipped`; that is not a failure.
 
    ```bash
-   keygraph index start --budget 200000 --dir "$OUT" --json            # demo: add --max-units 3
+   keygraph index start --budget 200000 --url-env KEYGRAPH_PROBE_URL --dir "$OUT" --json      # demo: add --max-units 3
    ```
 
-   Probes (optional, real databases only): keygraph can check your relations against the data with SELECT-only queries. The user must put a read-only connection URL in an environment variable, for example `KEYGRAPH_PROBE_URL`. Ask them to export it themselves. You pass only the variable's name: add `--url-env KEYGRAPH_PROBE_URL` to the start command (or `--cmd-env NAME` for a read-only command with `{sql}`). Never type a URL, password or command into a command line, a file or the chat. If `start` says the variable is not set, leave `--url-env` out. Without probes the answers are stored as unverified, which is fine. For the demo, leave probes out.
+   The reply is `{"job_id", "units", "budget", "used", "pending", "skipped", "tasks", "url_env", "cmd_env", "dialect", "resumed", "next"}`. Running `start` again resumes the open job.
 
 2. Get a unit:
 
@@ -160,16 +164,24 @@ Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir
    keygraph index next --dir "$OUT" --json
    ```
 
-   - `"status": "unit"`: read `instructions`, `packet` and `answer_schema`, and go to 3. Note the `unit_id`.
+   - `"status": "unit"`: read `instructions`, `packet` and `answer_schema`, and go to 3. Note the `unit_id` and `packet.unit_tables`.
    - `"status": "done"`: go to 5.
    - `"status": "budget_exhausted"`: the budget is used up. Tell the user how much was spent and what is left (`keygraph index status`). Continue only if they say yes, with a larger number: `keygraph index start --budget <larger number> --dir "$OUT"`, then `next` again. If they say no, go to 5.
    - `"status": "finished"`: the job is closed. Go to 5.
 
-3. Write the answer to a file, for example `"${TMPDIR:-/tmp}/keygraph-answer.json"`. It is one JSON object with a list for every kind named in `tasks`: `relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`. Use `[]` for a kind where the packet gives you nothing to say. Write tables as `schema.table`, as in the packet. Every item needs a `reason` and a `confidence` between 0 and 1. Use only tables and columns that appear in the packet. Never write personal values. The `instructions` text ends with one valid example item per kind: copy its shape. A short honest answer is better than a long guess. Example for a unit holding `shop.users`:
+3. Write the answer to a file, for example `"${TMPDIR:-/tmp}/keygraph-answer.json"`.
+   - It is one JSON object with a list for every kind named in `tasks`: `relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`. Use `[]` for a kind where the packet gives you nothing to say.
+   - Use only tables listed in `packet.unit_tables` as the `table` of an item, and only columns that appear in the packet. Write tables as `schema.table`, as in the packet. A table outside the unit is rejected and costs an attempt.
+   - Every item needs a `reason` and a `confidence` between 0 and 1. Never write personal values.
+   - Before you answer for a column or table, check what is stored: `keygraph describe <table> --brief --dir "$OUT"`. A verified note is never replaced, and an item that tries to is rejected.
+   - Do not repeat relations that the packet already lists as declared or inferred (`candidate_relations`). A declared one is rejected; an inferred one is accepted but adds evidence only, and the reply counts it in `confirmed_existing`. Propose relations only when the columns suggest a link the map does not have. (Demo only: to watch a probe work, you may repeat one inferred candidate once.)
+   - The `instructions` text ends with one valid example item per kind: copy its shape and replace every value. Shape of the answer, with placeholders:
 
    ```json
-   {"relations": [], "columns": [{"table": "shop.users", "column": "role", "meaning": "Staff role", "reason": "column name and table comment", "confidence": 0.6}], "tables": [{"table": "shop.users", "purpose": "Back-office staff accounts", "reason": "table comment", "confidence": 0.8}], "concepts": [], "metrics": [], "performance": []}
+   {"relations": [], "columns": [{"table": "<a table from packet.unit_tables>", "column": "<a column of that table, from the packet>", "meaning": "<what it means>", "reason": "<what in the packet supports it>", "confidence": 0.6}], "tables": [{"table": "<a table from packet.unit_tables>", "purpose": "<what the table is for>", "reason": "<what in the packet supports it>", "confidence": 0.8}], "concepts": [], "metrics": [], "performance": []}
    ```
+
+   A short honest answer is better than a long guess. Do not submit the placeholders as they are.
 
 4. Submit it, using the `unit_id` from step 2, then read `status`:
 
@@ -177,12 +189,13 @@ Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir
    keygraph index submit <unit_id> "${TMPDIR:-/tmp}/keygraph-answer.json" --dir "$OUT" --json
    ```
 
+   The reply has `status`, `accepted`, `rejected` (a list of `item` and `reason`), `verified`, `unverified`, `probe_failed`, `confirmed_existing`, `budget_left` and `probe_source`.
    - `accepted`: go back to 2.
    - `rejected`: nothing was stored and the unit stays pending. Read every entry of `rejected` (`item` and `reason`; item `$` means the whole answer, for example a missing list), fix the file, and run the same submit again with the same `unit_id`. You have three attempts per unit (`attempts_left` counts them down).
-   - `partially_accepted`: the accepted items are stored. Write a new file holding only the rejected items, fixed (you may leave out the kinds that had no problem), and submit it again for the same `unit_id`.
+   - `partially_accepted`: the accepted items are stored. Write a new file holding only the rejected items, fixed (you may leave out the kinds that had no problem), and submit it again for the same `unit_id`. If a reason says a fact is already verified, drop that item: you cannot replace it. An answer with all lists empty is a valid resubmit, and it finishes the unit.
    - `failed`: three attempts are used up. The unit keeps its deterministic entry and nothing more is needed. Go back to 2.
    - An error (`"status": "error"`, exit code 2, for example "not valid JSON"): the file was not read and no attempt was used. Fix the file and submit again.
-   - `probe_failed` greater than 0: the data did not support that relation. This is not an error. Go back to 2.
+   - `probe_failed` greater than 0: the data did not support that claim. This is not an error. Go back to 2.
    - Never put a failing answer through again unchanged, and never edit `index/` files by hand.
 
 5. Finish, then show progress:
@@ -192,11 +205,13 @@ Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir
    keygraph index status --dir "$OUT"
    ```
 
-   `finish` rebuilds `graph.json`, the pages, the report and the explorer from all stored answers. If units are still pending the job stays open: run `keygraph index next` again, or tell the user how many are left. `status` shows the units done, failed and skipped, the budget used, and the accept and verify rates. If the map is rebuilt later after schema changes, run `keygraph index refresh --dir "$OUT"` to redo only what changed.
+   - `finish` rebuilds `graph.json`, the pages, the report and the explorer from all stored answers, and returns `{"units", "kept", "filled", "probe_failed", "facts", "verified_facts", "relations", "llm_edges"}`: `units` is the number of saved answers used; `facts` counts stored facts by kind; `verified_facts` how many of them a probe confirmed; `relations` counts proposed relations by status (verified, unverified, rejected); `llm_edges` is the number of new edges your relations added to `graph.json` (a relation that repeats an existing edge adds evidence only, so it is not counted); `filled` is the number of empty fields of existing notes that your facts filled; `kept` is the number of your facts that were not used because a stored note already says something else. Neither `kept` nor `filled` is a problem. If units are still pending the job stays open: run `keygraph index next` again, or tell the user how many are left.
+   - `status` shows the units pending, done, failed and skipped, the budget used and left, the accept rate (accepted items out of all items submitted; `accepted` counts items that passed validation, even when a probe then failed them) and the verify rate (verified items out of accepted items; 0% when no probes ran, empty until something was submitted).
+   - After a rebuild of the map (schema changes), run `keygraph index refresh --dir "$OUT" --json`. It returns `{"job_id", "changed", "retried", "new", "dropped", "unchanged", "pending", "next"}`: it redoes only units whose tables changed (`changed`), puts failed units back (`retried`), adds new units and drops removed ones, then run `next` again. `keygraph index replay` rebuilds the same result as `finish` from the saved answers with no model and no database, and does not close the job.
 
 If you already have the keygraph MCP server connected (step 5), you can run the same loop with the tools `index_start`, `index_next`, `index_submit` (the `answer` argument is the JSON object itself, not a file), `index_status` and `index_finish`. They return the same JSON as the commands. Probes work the same way: `index_start` takes the variable name in `url_env` or `cmd_env`, never the value.
 
-Record in `OUT/SETUP.md` that the map was indexed with yourself, the `--budget` you used and the units done and failed (counts only). If the user keeps the map in git, tell them to commit their context files (such as `keygraph-context.yaml`) next to `index/answers/`: replaying the answers from a fresh checkout gives the same result, but code-join and business-context evidence live in `keygraph.db` and the context files.
+Record the indexing in `OUT/SETUP.md` (the LLM indexing row of the template): that the map was indexed with yourself, the `--budget` you used and the units done and failed (counts only). If the user keeps the map in git, tell them to commit their context files (such as `keygraph-context.yaml`) next to `index/answers/`: replaying the answers from a fresh checkout gives the same result, but code-join and business-context evidence live in `keygraph.db` and the context files.
 
 ## Step 5. Connect the MCP server to yourself
 

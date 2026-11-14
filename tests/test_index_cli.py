@@ -479,3 +479,16 @@ def test_performance_items_merge_in_the_live_db_like_the_saved_union(work, capsy
     assert r2["status"] == "accepted" and notes() == ["status", "placed_at"]
     run(capsys, work, "index", "finish")  # the replay rebuilds from the union file
     assert notes() == ["status", "placed_at"]
+
+
+def test_submit_counts_relations_that_repeat_an_existing_edge(work, capsys, tmp_path):
+    run(capsys, work, "index", "start")
+    nxt = run(capsys, work, "index", "next")
+    c = next(x for x in nxt["packet"]["candidate_relations"] if x["kind"] == "inferred")  # declared ones are rejected outright
+    repeat = {"from_table": c["from"], "from_columns": c["from_columns"], "to_table": c["to"], "to_columns": c["to_columns"],
+              "reason": "same as the listed edge", "confidence": 0.7}
+    ans = {"relations": [repeat], "columns": [], "tables": [], "concepts": [], "metrics": [], "performance": []}
+    r = submit(capsys, work, tmp_path, nxt["unit_id"], ans)
+    assert r["status"] == "accepted" and r["accepted"] == 1 and r["confirmed_existing"] == 1
+    empty = submit(capsys, work, tmp_path, run(capsys, work, "index", "next")["unit_id"], {k: [] for k in ans})
+    assert empty["confirmed_existing"] == 0

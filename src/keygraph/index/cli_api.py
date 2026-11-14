@@ -252,7 +252,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
 
     Returns {status: accepted | partially_accepted | rejected | failed, accepted, rejected: [{item, reason}], unverified,
-    verified, probe_failed, budget_left, probe_source, next} plus attempts_left, resubmit and hint when the unit is still
+    verified, probe_failed, confirmed_existing (relations that repeat an edge the map has), budget_left, probe_source, next} plus attempts_left, resubmit and hint when the unit is still
     open or failed. A structure error, or items rejected and none accepted, is `rejected`: nothing is stored. When some
     items are accepted and some rejected the status is `partially_accepted`: the accepted items are stored, the unit stays
     pending and the agent resubmits only the rejected ones (the saved answer is the union). Every rejected or partial
@@ -349,7 +349,8 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
                       accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, unverified=n_unk,
                       probe_failed=n_bad, probe_source=label, checks=dict(sorted(Counter(v["check"] for v in verds).items())))
         res = {"status": status, "accepted": len(val["accepted"]), "rejected": rejected, "unverified": n_unk, "verified": n_ok,
-               "probe_failed": n_bad, "budget_left": left, "probe_source": label}
+               "probe_failed": n_bad, "confirmed_existing": ST.count_existing(g, acc, verds), "budget_left": left,
+               "probe_source": label}
         if status == "accepted":
             return {**res, "next": NEXT}
         if status == "failed":

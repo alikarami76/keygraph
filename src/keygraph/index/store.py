@@ -340,6 +340,19 @@ def _pair(e: dict) -> frozenset:
     return frozenset([(e["from"], tuple(e["from_columns"])), (e["to"], tuple(e["to_columns"]))])
 
 
+def count_existing(g: Graph, answer: dict, verdicts: list[dict] | None = None) -> int:
+    """How many relations of an accepted answer repeat an edge the base graph already has (either direction). A repeat
+    adds evidence only. Items that failed a probe are not counted."""
+    bad = {v["index"] for v in verdicts or [] if v["kind"] == "relations" and v.get("verified") is False}
+    pairs = {_pair(e) for e in g.data["edges"]}
+    n = 0
+    for i, it in enumerate(answer.get("relations") or []):
+        ft, tt = _tid(g, it["from_table"]), _tid(g, it["to_table"])
+        if i not in bad and ft and tt and frozenset([(ft, tuple(it["from_columns"])), (tt, tuple(it["to_columns"]))]) in pairs:
+            n += 1
+    return n
+
+
 def strip_llm(g: Graph) -> None:
     """Undo an earlier application: drop llm edges, their mirror copies, llm evidence and llm confidence raises."""
     llm = [e for e in g.data["edges"] if e.get("source") == LLM]

@@ -58,7 +58,7 @@ ITEMS = {
 INSTRUCTIONS = {
     "relations": "relations: list foreign-key style links the schema does not declare, from a table of this unit to a unit "
                  "table or to a neighbour listed in the packet. Give from/to table and columns, the reason (what in the packet supports it), "
-                 "and your confidence. Do not repeat declared relations.",
+                 "and your confidence. Do not repeat relations the packet already lists as declared or inferred (a repeat adds evidence only).",
     "columns": "columns: give the business meaning of columns whose name alone does not say it: unit, code-to-meaning map for "
                "enum or status columns, and what NULL means. Skip obvious columns.",
     "tables": "tables: for each table give its purpose, its grain (what one row is, and optionally `grain_columns`, the columns that identify a row), pitfalls, default filters, how "
