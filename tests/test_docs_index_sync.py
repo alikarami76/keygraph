@@ -65,4 +65,4 @@ def test_docs_and_instructions_say_codes_seen_is_not_verified_and_never_to_inven
     assert "never invent labels" in text and 'empty meaning ""' in text
     assert "At least one end must be a table in unit_tables" in text and "at least one end in `packet.unit_tables`" in setup
     for doc in DOCS:
-        assert "codes_seen" in (ROOT / doc).read_text(encoding="utf-8") or doc in ("llms.txt",) or "codes seen" in (ROOT / doc).read_text(encoding="utf-8"), doc
+        assert "codes_seen" in (ROOT / doc).read_text(encoding="utf-8"), doc

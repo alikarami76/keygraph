@@ -90,6 +90,22 @@ def test_text_codes_are_matched_as_text(src, shop_graph):
     assert ok["verified"] is None and ok["seen"] is True and bad["verified"] is False and "seen" not in bad
 
 
+def test_a_codes_check_next_to_another_check_keeps_seen_and_never_verifies():
+    g = {"relations": [], "tables": {}}
+    ok = {"verified": True, "check": "grain", "rate": 1.0, "n": 5}
+    seen = {"verified": None, "check": "codes", "rate": 1.0, "n": 3, "seen": True, "why": P.SEEN_WHY}
+    pr = P._Prober
+    orig = (pr.grain, pr.filters, pr.codes)
+    pr.grain = lambda self, it: ok
+    pr.filters = lambda self, it: seen
+    pr.codes = lambda self, it: seen
+    try:
+        (v,) = P.probe_items([_ent("tables", {"table": "t", "grain": "g", "grain_columns": ["a"]})], g, SelectOnlyRunner(lambda q: []), '"')
+    finally:
+        pr.grain, pr.filters, pr.codes = orig
+    assert v["seen"] is True and v["verified"] is None
+
+
 def _table(**kw):
     return _ent("tables", {"table": "shop.orders", "purpose": "p", "reason": "r", "confidence": 0.7, **kw})
 

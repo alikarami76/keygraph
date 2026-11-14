@@ -319,7 +319,10 @@ def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: st
                 v = {"verified": verified, "check": "+".join(x["check"] for x in vs),
                      "rate": min((x["rate"] for x in vs if x["rate"] is not None), default=None), "n": min(x["n"] for x in vs),
                      **({"error": next(x["error"] for x in vs if "error" in x)} if any("error" in x for x in vs) else {})}
-                if verified is None:
+                if any(x.get("seen") for x in vs):
+                    v["seen"] = True  # a codes check ran: the values occur, which never makes the item verified
+                    v["verified"] = False if verified is False else None
+                if v["verified"] is None:
                     v["why"] = next((x["why"] for x in vs if x.get("why")), "some checks could not run")
         out.append({"kind": kind, "index": ent["index"], **v})
         devlog.trace("index.probe", task=kind, index=ent["index"], check=v["check"], verified=v["verified"], rate=v["rate"], n=v["n"])
