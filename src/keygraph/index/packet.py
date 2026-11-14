@@ -193,7 +193,7 @@ def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> di
             continue
         before = len(p[sec])
         while estimate(p) > cap - SLACK and p[sec]:
-            p[sec].pop(sorted(p[sec])[-1]) if isinstance(p[sec], dict) else p[sec].pop()
+            p[sec].pop(max(p[sec])) if isinstance(p[sec], dict) else p[sec].pop()
         if len(p[sec]) != before:
             p["trimmed"].append(sec)
     _drop_columns(p)
