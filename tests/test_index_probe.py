@@ -1,0 +1,210 @@
+import json
+import shlex
+import shutil
+import sqlite3
+import sys
+
+import pytest
+from test_example_shop import SHOP
+
+from keygraph.cli import main
+from keygraph.graph import Graph
+from keygraph.index import probe as P
+from keygraph.probe import SelectOnlyRunner, UnsafeSQL
+
+
+@pytest.fixture(scope="module")
+def shop_graph(tmp_path_factory):
+    """The demo map from its dumps (no context file, so no extras are needed)."""
+    out, d = tmp_path_factory.mktemp("probeshop"), SHOP / "dumps"
+    assert main(["load", "--dir", str(out), "--columns", str(d / "columns.json"), "--statistics", str(d / "statistics.json"),
+                 "--key-columns", str(d / "key_columns.json"), "--tables", str(d / "tables.json")]) == 0
+    return Graph.load(out / "graph.json")
+
+
+@pytest.fixture()
+def shop_db(tmp_path):
+    """A copy of shop.db where the product ids no longer overlap any other id column."""
+    db = tmp_path / "shop.db"
+    shutil.copy(SHOP / "shop.db", db)
+    con = sqlite3.connect(db)
+    con.execute("UPDATE products SET id = id + 1000000")
+    con.commit()
+    con.close()
+    return db
+
+
+@pytest.fixture()
+def src(shop_db, monkeypatch):
+    monkeypatch.setenv("KG_TEST_SHOP_URL", f"sqlite:///{shop_db}")
+    return P.runner_from_env("KG_TEST_SHOP_URL", "")
+
+
+def _ent(kind, item, index=0):
+    return {"kind": kind, "index": index, "item": item}
+
+
+def _rel(ft, fc, tt, tc):
+    return _ent("relations", {"from_table": ft, "from_columns": fc, "to_table": tt, "to_columns": tc, "reason": "r", "confidence": 0.7})
+
+
+def _run(src, g, ents, **kw):
+    return P.probe_items(ents, g, src.runner, src.quote, bare=src.bare, **kw)
+
+
+def test_true_relation_passes_and_planted_false_one_fails(src, shop_graph):
+    ok, bad = _run(src, shop_graph, [_rel("billing.payments", ["order_id"], "shop.orders", ["id"]),
+                                     _rel("shop.orders", ["id"], "shop.products", ["id"])])
+    assert ok["verified"] is True and ok["rate"] == 1.0 and ok["n"] > 0 and ok["check"] == "relation_overlap"
+    assert bad["verified"] is False and bad["rate"] == 0.0
+
+
+def test_partial_overlap_is_a_rate_below_the_bar(src, shop_graph):
+    (v,) = _run(src, shop_graph, [_rel("shop.orders", ["id"], "shop.customers", ["id"])])  # ids 1..120 against 1..60
+    assert v["verified"] is False and v["rate"] == 0.5
+
+
+def test_multi_column_relation_stays_unverified(src, shop_graph):
+    (v,) = _run(src, shop_graph, [_rel("shop.orders", ["id", "customer_id"], "shop.orders", ["id", "customer_id"])])
+    assert v["verified"] is None and v["check"] == "relation_overlap_multi_column"
+
+
+def _codes(codes, col="status", table="shop.orders"):
+    return _ent("columns", {"table": table, "column": col, "meaning": "m", "codes": codes, "reason": "r", "confidence": 0.7})
+
+
+def test_present_codes_pass_and_invented_code_fails(src, shop_graph):
+    ok, bad, partial, none = _run(src, shop_graph, [_codes({"1": "placed", "2": "paid", "9": "odd"}), _codes({"77": "invented"}),
+                                                     _codes({"1": "placed", "77": "invented"}),
+                                                     _ent("columns", {"table": "shop.orders", "column": "status", "meaning": "m",
+                                                                      "reason": "r", "confidence": 0.5})])
+    assert ok["verified"] is True and ok["rate"] == 1.0 and ok["n"] == 3
+    assert bad["verified"] is False and bad["rate"] == 0.0
+    assert partial["verified"] is False and partial["rate"] == 0.5
+    assert none["verified"] is None and none["check"] == "none"
+
+
+def test_text_codes_are_matched_as_text(src, shop_graph):
+    ok, bad = _run(src, shop_graph, [_codes({"EUR": "euro"}, "currency"), _codes({"XXX": "none"}, "currency")])
+    assert ok["verified"] is True and bad["verified"] is False
+
+
+def _table(**kw):
+    return _ent("tables", {"table": "shop.orders", "purpose": "p", "reason": "r", "confidence": 0.7, **kw})
+
+
+def test_grain_key_uniqueness(src, shop_graph):
+    ok, dup, no_grain = _run(src, shop_graph, [_table(grain="one row per order"),
+                                               _table(grain="one row per customer", grain_columns=["customer_id"]), _table()])
+    assert ok["verified"] is True and ok["rate"] == 1.0 and ok["check"] == "grain_unique" and ok["n"] == 120
+    assert dup["verified"] is False and dup["rate"] == 0.5
+    assert no_grain["verified"] is None and no_grain["check"] == "none"
+
+
+def test_default_filter_selectivity(src, shop_graph):
+    ok, empty, free_sql, unknown = _run(src, shop_graph, [
+        _table(default_filters=["status = 2", "customer_id IS NOT NULL"]), _table(default_filters=["status = 77"]),
+        _table(default_filters=["status = 2; DROP TABLE orders", "1=1 OR status = 2"]), _table(default_filters=["deleted_at IS NULL"])])
+    assert ok["verified"] is True and ok["n"] == 120 and ok["rate"] == round(37 / 120, 3)
+    assert empty["verified"] is False and empty["rate"] == 0.0
+    assert free_sql["verified"] is None and free_sql["check"].endswith("_unparsed")
+    assert unknown["verified"] is None
+
+
+def test_filter_text_comes_from_the_strict_grammar_only():
+    q = lambda c: f'"{c}"'  # noqa: E731
+    cols = {"status", "deleted_at", "kind"}
+    assert P.parse_filter("status IN (1, 2) and deleted_at is null", cols, q) == ('"status" IN (1,2) AND "deleted_at" IS NULL',
+                                                                                  {"status", "deleted_at"})
+    assert P.parse_filter("kind <> 'a''b'", cols, q)[0] == "\"kind\" <> 'a''b'"
+    assert P.parse_filter("status NOT IN (1)", cols, q)[0] == '"status" NOT IN (1)'
+    for bad in ["status = 1 OR kind = 2", "status = (SELECT 1)", "status = 1 AND", "name = 1", "status > 1", "status = 'a\\'",
+                "status = 1; DROP", "status = status", "", "status IN ()", "status = 1 --"]:
+        assert P.parse_filter(bad, cols, q) is None, bad
+
+
+def test_no_env_var_means_unverified(shop_graph, monkeypatch):
+    monkeypatch.delenv("KG_TEST_NOPE", raising=False)
+    assert P.runner_from_env("KG_TEST_NOPE", "") is None and P.runner_from_env("", "") is None
+    monkeypatch.setenv("KG_TEST_EMPTY", "")
+    assert P.runner_from_env("KG_TEST_EMPTY", "") is None
+    ents = [_rel("shop.orders", ["id"], "shop.customers", ["id"]), _codes({"1": "x"}), _ent("concepts", {"name": "n"})]
+    out = P.probe_items(ents, shop_graph, None, '"')
+    assert [v["verified"] for v in out] == [None, None, None] and out[0]["check"] == "no_source" and out[2]["check"] == "none"
+
+
+def test_write_statements_raise_unsafe_sql_and_the_file_is_read_only(src, shop_db):
+    for sql in ("DELETE FROM orders", "UPDATE orders SET total = 0", "DROP TABLE orders", "SELECT 1; DELETE FROM orders",
+                "INSERT INTO orders(id) VALUES (999)"):
+        with pytest.raises(UnsafeSQL):
+            src.runner.run(sql)
+    with pytest.raises(sqlite3.OperationalError):  # even past the guard, the connection is opened mode=ro
+        src.runner._execute("DELETE FROM orders")
+    assert sqlite3.connect(shop_db).execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 120
+
+
+def test_sqlite_url_needs_a_file():
+    for url in ("sqlite://", "sqlite:///:memory:", "sqlite:///"):
+        with pytest.raises(ValueError):
+            SelectOnlyRunner.from_url(url)
+
+
+def test_sqlite_runner_returns_dicts_when_asked(shop_db):
+    r = SelectOnlyRunner.from_url(f"sqlite:///{shop_db}", as_dicts=True).run("SELECT id AS a, status FROM orders ORDER BY id LIMIT 1")
+    assert r == [{"a": 1, "status": r[0]["status"]}]
+
+
+def test_cmd_runner_probes_through_the_command(shop_graph, shop_db, tmp_path, monkeypatch):
+    script = tmp_path / "q.py"
+    script.write_text("import sys, sqlite3, json\n"
+                      "con = sqlite3.connect('file:%s?mode=ro', uri=True)\ncur = con.execute(sys.argv[1])\n"
+                      "names = [d[0] for d in cur.description]\n"
+                      "print('log line'); print(json.dumps([dict(zip(names, r)) for r in cur.fetchall()]))\n" % shop_db)
+    monkeypatch.setenv("KG_TEST_SHOP_CMD", f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{sql}}")
+    s = P.runner_from_env("", "KG_TEST_SHOP_CMD")
+    assert s.quote == "`" and not s.bare
+    with pytest.raises(UnsafeSQL):
+        s.runner.run("DELETE FROM orders")
+    ok = P.probe_items([_codes({"1": "placed"}, table="shop.orders")], shop_graph, s.runner, '"', bare=True)  # `bare` as sqlite ids
+    assert ok[0]["verified"] is True
+
+
+def test_probe_output_holds_rates_and_counts_never_values(src, shop_graph):
+    seen: list[str] = []
+    inner = src.runner
+
+    def spy(sql):
+        rows = inner.run(sql)
+        seen.extend(str(v) for r in rows for v in r)
+        return rows
+
+    ents = [_codes({"EUR": "euro"}, "currency"), _rel("billing.payments", ["gateway_ref"], "shop.orders", ["currency"]),
+            _table(default_filters=["currency = 'EUR'"], grain="g")]
+    out = P.probe_items(ents, shop_graph, SelectOnlyRunner(spy), '"', bare=True)
+    text = json.dumps(out)
+    assert any(s == "EUR" for s in seen) and "EUR" not in text
+    assert all(s not in text for s in seen if len(s) >= 3 and not s.isdigit())
+    assert set(out[0]) == {"kind", "index", "verified", "check", "rate", "n"}
+
+
+def test_query_cap_leaves_the_rest_unverified(src, shop_graph):
+    ents = [_rel("billing.payments", ["order_id"], "shop.orders", ["id"]), _codes({"1": "placed"}), _codes({"2": "paid"})]
+    a, b, c = _run(src, shop_graph, ents, cap=3)
+    assert a["verified"] is True and b["verified"] is True and c["verified"] is None and c["skipped"] == "query_cap"
+    assert P.QUERY_CAP == 40
+
+
+def test_errors_give_the_type_never_the_message(shop_graph):
+    def boom(sql):
+        raise RuntimeError("password=hunter2 value 4111111111111111")
+
+    out = P.probe_items([_codes({"1": "x"}), _table(grain="g")], shop_graph, SelectOnlyRunner(boom), '"')
+    assert [v["verified"] for v in out] == [None, None] and out[0]["error"] == "RuntimeError" and out[1]["error"] == "RuntimeError"
+    assert "hunter2" not in json.dumps(out) and "4111" not in json.dumps(out)
+
+
+def test_non_sqlite_url_without_the_live_extra_says_so(monkeypatch):
+    monkeypatch.setitem(sys.modules, "sqlalchemy", None)  # makes `import sqlalchemy` fail
+    monkeypatch.setenv("KG_TEST_PG", "postgresql://u:p@h/db")
+    with pytest.raises(RuntimeError, match="live extra"):
+        P.runner_from_env("KG_TEST_PG", "")

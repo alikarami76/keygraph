@@ -264,3 +264,9 @@ def test_space_separated_secrets_and_ids_in_snippets_and_queries_are_masked(shop
     for leak in ("hunter2", "1234567890", "09121234567", "989121234567"):
         assert leak not in text
     assert "select * from shop.orders where phone = ?" in text  # literals re-masked even if stored with --keep-literals
+
+
+def test_over_cap_packet_estimate_is_the_packets_own_size():
+    import inspect
+    src = inspect.getsource(K.build_packet)
+    assert src.count('p["estimate"] =') == 1  # one assignment, in a loop that settles on the size including itself

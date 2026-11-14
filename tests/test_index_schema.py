@@ -113,3 +113,9 @@ def test_examples_are_in_the_instructions_and_so_in_the_hash():
             S.prompt_hash(ins, S.answer_schema(["relations"]), {})
     finally:
         S.EXAMPLES["relations"] = old
+
+
+def test_huge_ints_do_not_overflow_the_number_check():
+    errs = S.check(10**400, S.ITEMS["relations"]["properties"]["confidence"])
+    assert errs and "between 0 and 1" in errs[0]
+    assert S.check(10**400, {"type": "number"}) == [] and S.check(-(10**400), {"type": "number", "minimum": 0})

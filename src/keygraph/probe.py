@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+import sqlite3
+import urllib.parse
 from decimal import Decimal
+from pathlib import Path
 from typing import Callable
 
 from . import devlog
@@ -56,8 +59,30 @@ class SelectOnlyRunner:
         return list(self._execute(assert_select(sql)))
 
     @classmethod
+    def from_sqlite(cls, path: str, as_dicts: bool = False, timeout: float = 10.0) -> SelectOnlyRunner:
+        """A stdlib sqlite3 runner, opened read-only (`file:...?mode=ro`), so it works without the live extra."""
+        uri = "file:" + urllib.parse.quote(str(Path(path).resolve())) + "?mode=ro"
+
+        def ex(sql):
+            con = sqlite3.connect(uri, uri=True, timeout=timeout)
+            try:
+                cur = con.execute(sql)
+                labels = [d[0] for d in cur.description or []]
+                return [row_dict(labels, r) if as_dicts else tuple(r) for r in cur.fetchall()]
+            finally:
+                con.close()
+        return cls(ex)
+
+    @classmethod
     def from_url(cls, url: str, as_dicts: bool = False) -> SelectOnlyRunner:
-        """as_dicts: rows keyed by column name (what the information_schema adapters read) instead of tuples."""
+        """as_dicts: rows keyed by column name (what the information_schema adapters read) instead of tuples.
+        `sqlite:` URLs use the standard library (read-only); other URLs need SQLAlchemy (extra: live)."""
+        if url.lower().startswith("sqlite:"):
+            rest = url.split(":", 1)[1]
+            path = rest[3:].split("?", 1)[0] if rest.startswith("///") else ""
+            if not path or path == ":memory:":
+                raise ValueError("a sqlite URL needs a file path: sqlite:///path/to/file.db")
+            return cls.from_sqlite(urllib.parse.unquote(path), as_dicts)
         from sqlalchemy import create_engine, text
         eng = create_engine(url)
 

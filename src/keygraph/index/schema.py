@@ -41,7 +41,8 @@ ITEMS = {
     "columns": _item({"table": _s(NAME_MAX), "column": _s(NAME_MAX), "meaning": _s(), "unit": _s(NAME_MAX),
                       "codes": {"type": "object", "additionalProperties": _s(NAME_MAX), "maxItems": 60},
                       "null_meaning": _s(REASON_MAX)}, ["table", "column", "meaning"]),
-    "tables": _item({"table": _s(NAME_MAX), "purpose": _s(), "grain": _s(REASON_MAX), "pitfalls": _list(_s(REASON_MAX), 10),
+    "tables": _item({"table": _s(NAME_MAX), "purpose": _s(), "grain": _s(REASON_MAX), "grain_columns": _list(_s(NAME_MAX), 6),
+                     "pitfalls": _list(_s(REASON_MAX), 10),
                      "default_filters": _list(_s(REASON_MAX), 10), "soft_delete": _s(REASON_MAX),
                      "freshness": _s(REASON_MAX)}, ["table", "purpose"]),
     "concepts": _item({"name": _s(NAME_MAX), "definition": _s(), "synonyms": _list(_s(NAME_MAX)),
@@ -60,7 +61,7 @@ INSTRUCTIONS = {
                  "and your confidence. Do not repeat declared relations.",
     "columns": "columns: give the business meaning of columns whose name alone does not say it: unit, code-to-meaning map for "
                "enum or status columns, and what NULL means. Skip obvious columns.",
-    "tables": "tables: for each table give its purpose, its grain (what one row is), pitfalls, default filters, how "
+    "tables": "tables: for each table give its purpose, its grain (what one row is, and optionally `grain_columns`, the columns that identify a row), pitfalls, default filters, how "
               "soft delete works and how fresh the data is, when the packet shows it.",
     "concepts": "concepts: name the business terms this unit holds, with a definition, synonyms in any language, and the "
                 "tables that hold them.",
@@ -143,7 +144,7 @@ def check(value, schema: dict, path: str = "$") -> list[str]:
     if "enum" in schema and value not in schema["enum"]:
         errs.append(f"{path}: must be one of {', '.join(map(str, schema['enum']))}")
     if t == "number":
-        if not math.isfinite(value):
+        if isinstance(value, float) and not math.isfinite(value):
             return [f"{path}: must be a finite number"]
         if "minimum" in schema and value < schema["minimum"] or "maximum" in schema and value > schema["maximum"]:
             errs.append(f"{path}: must be between {schema.get('minimum')} and {schema.get('maximum')}")

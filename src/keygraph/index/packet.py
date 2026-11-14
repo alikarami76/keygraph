@@ -266,6 +266,9 @@ def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> di
         _fit(p, cap)
     if estimate(p) > cap:
         p["over_cap"] = True
-        p["estimate"] = estimate(p)
-        p["estimate"] = estimate(p)  # the number itself is part of the size
+        for _ in range(4):  # the number itself is part of the size: repeat until it stops changing
+            size = estimate(p)
+            if p.get("estimate") == size:
+                break
+            p["estimate"] = size
     return p

@@ -32,3 +32,19 @@ def test_mask_keywords():
     assert "hunter2" not in mask_keywords("PGPASSWORD hunter2 psql")
     assert "abc" not in mask_keywords("api_key: abc123 and token=abc")
     assert mask_keywords("select author_id from t") == "select author_id from t"
+
+
+@pytest.mark.parametrize("text,gone", [
+    ("pass=hunter2", "hunter2"), ("DB_PASS=hunter2 next", "hunter2"), ("MYSQL_PASSWORD=hunter2", "hunter2"),
+    ("DB_PASSWORD: hunter2", "hunter2"), ("passw0rd hunter2", "hunter2"), ("PASSW0RD=hunter2", "hunter2"),
+    ("mysql -u root -phunter2 shop", "hunter2"), ("mysql -h db -p hunter2 shop", "hunter2"),
+    ("mariadb -u a -psecretvalue", "secretvalue"),
+])
+def test_mask_keywords_covers_pass_env_names_passw0rd_and_mysql_p(text, gone):
+    assert gone not in mask_keywords(text)
+
+
+@pytest.mark.parametrize("text", ["pass the filter", "bypass cache", "mysql -h db -p", "mysql -p -h db", "ls -p dir", "mysql -P 3306",
+                                  "compass rose", "passed=1 rows"])
+def test_mask_keywords_leaves_plain_text_alone(text):
+    assert mask_keywords(text) == text

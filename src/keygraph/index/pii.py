@@ -13,8 +13,11 @@ LONG_DIGITS = 9
 _EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})*\.[A-Za-z]{2,}")
 _IBAN = re.compile(r"\bIR\d{2}(?:[ -]?\d{4}){5}[ -]?\d{2}\b|\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", re.IGNORECASE)
 _RUN = re.compile(r"\+?\d{2,}(?:[ -]\d{3,})*")
-_SECRET_KW = re.compile(r"""(?ix)\b(\w{0,20}?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|auth|credential|private[_-]?key))
+_SECRET_KW = re.compile(r"""(?ix)\b(\w{0,20}?(?:passw[o0]rd|passwd|pwd|secret|token|api[_-]?key|apikey|auth|credential|private[_-]?key))
                             ((?:[_-]\w+)?["']?)(\s*[:=]\s*|\s+)["']?[^\s,;"')]+""")
+# `pass=x`, `DB_PASS=x` (only with `=`: a plain word "pass" is common in prose) and `mysql ... -pVALUE` / `-p VALUE`
+_PASS_EQ = re.compile(r"""(?i)\b(\w{0,20}?pass)(\s*=\s*)["']?[^\s,;"')]+""")
+_MYSQL_P = re.compile(r"(\b(?:mysql|mariadb)\w*\b[^\n|;]*?\s-p)(\s*)(?!-)\S+")
 
 
 def _luhn(digits: str) -> bool:
@@ -69,4 +72,6 @@ def scrub(text) -> str:
 
 def mask_keywords(text: str) -> str:
     """Mask the value after a secret-like word, with `=`, `:` or just a space: `secret hunter2`, `PGPASSWORD x`."""
-    return _SECRET_KW.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}", text)
+    text = _SECRET_KW.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}", text)
+    text = _PASS_EQ.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
+    return _MYSQL_P.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
