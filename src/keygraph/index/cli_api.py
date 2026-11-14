@@ -108,19 +108,25 @@ def _save_ledger(out: Path, d: dict) -> None:
     p.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
 
 
-def _save_families(out: Path, fams: dict) -> None:
-    """index/families.json: {representative: [copies]}. Copies get no unit; this file is their "copy of" note."""
+def _save_families(out: Path, g, ctx) -> None:
+    """index/families.json: {"families": {representative: [copies]}, "chosen_by": {representative: usage|rows|relations|name}}.
+    Copies get no unit; this file is their "copy of" note. `name` means nothing but the table id told the members apart."""
+    fams, basis = PL.family_report(g, ctx)
     p = out / "index" / FAMILIES
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(fams, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    p.write_text(json.dumps({"families": fams, "chosen_by": basis}, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
 
 
 def _families_view(out: Path) -> dict:
+    """Counts for the start reply. families_by_name counts families where no usage, row count or relation told the members
+    apart (profile the source first: `keygraph profile`, then `index start --restart`)."""
     try:
-        fams = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
+        d = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        fams = {}
-    return {"families": len(fams), "copies_without_unit": sum(len(v) for v in fams.values())}
+        d = {}
+    fams, by = d.get("families", {}), d.get("chosen_by", {})
+    return {"families": len(fams), "copies_without_unit": sum(len(v) for v in fams.values()),
+            "families_by_name": sum(1 for v in by.values() if v == "name")}
 
 
 def _entry(led: dict, uid: str) -> dict:
@@ -211,7 +217,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
         g = _base(out)
         pre = _pre_llm(ctx)
         units = PL.make_units(g, PL.rank_tables(g, pre))
-        _save_families(out, PL.families(g, pre))
+        _save_families(out, g, pre)
         job_id = jobs.create_job(ctx, units, budget=budget, tasks=want, url_env=url_env or "", cmd_env=cmd_env or "",
                                  dialect=dialect, skip_after=max_units if max_units > 0 else None)
         _save_ledger(out, {})
@@ -501,7 +507,7 @@ def refresh_result(dir) -> dict:
         job_id = job["job_id"]
         pre = _pre_llm(ctx)
         new = PL.make_units(g, PL.rank_tables(g, pre))
-        _save_families(out, PL.families(g, pre))
+        _save_families(out, g, pre)
         old = {u["unit_id"]: u for u in jobs.list_units(ctx, job_id)}
         for u in new:
             o = old.get(u["unit_id"])

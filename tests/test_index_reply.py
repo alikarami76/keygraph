@@ -20,7 +20,7 @@ def _wide(d):
         tabs.append({"TABLE_SCHEMA": "dw", "TABLE_NAME": name, "ENGINE": "InnoDB", "TABLE_ROWS": 1000 + t,
                      "TABLE_COMMENT": f"Fact table number {t} holding measured values for the reporting layer"})
         for i in range(COLS):
-            cname = "id" if i == 0 else f"parent_id" if i == 1 else f"m{t:03d}_{i:02d}"
+            cname = "id" if i == 0 else "parent_id" if i == 1 else f"m{t:03d}_{i:02d}"
             cols.append({"TABLE_SCHEMA": "dw", "TABLE_NAME": name, "COLUMN_NAME": cname, "ORDINAL_POSITION": i + 1,
                          "DATA_TYPE": "int" if i < 2 else "varchar", "COLUMN_TYPE": "int" if i < 2 else "varchar(40)",
                          "IS_NULLABLE": "NO" if i == 0 else "YES", "COLUMN_KEY": "PRI" if i == 0 else "",
@@ -186,8 +186,9 @@ def test_family_copies_get_no_unit_and_a_note_in_the_start_reply_and_the_packet(
     assert main(argv) == 0
     out = tmp_path / "map"
     start = json.loads(_json(capsys, out, "index", "start"))
-    assert start["units"] == 2 and start["families"] == 1 and start["copies_without_unit"] == 2
-    assert json.loads((out / "index" / "families.json").read_text()) == {"dw.orders": ["dw.orders_archive", "dw.stg_orders"]}
+    assert start["units"] == 2 and start["families"] == 1 and start["copies_without_unit"] == 2 and start["families_by_name"] == 1
+    assert json.loads((out / "index" / "families.json").read_text()) == {
+        "families": {"dw.orders": ["dw.orders_archive", "dw.stg_orders"]}, "chosen_by": {"dw.orders": "name"}}
     seen = []
     for _ in range(2):
         r = json.loads(_json(capsys, out, "index", "next"))

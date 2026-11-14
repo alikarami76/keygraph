@@ -303,7 +303,7 @@ def test_query_log_and_code_signals_still_dominate_data_presence(tmp_path):
     ctx = _ctx(tmp_path, g)
     ctx.db.execute("CREATE TABLE IF NOT EXISTS query_refs(fp TEXT, table_id TEXT, column_name TEXT, role TEXT)")
     ctx.db.execute("INSERT INTO query_refs VALUES('f1','dw.asked','id','x')")
-    assert [x["table"] for x in P.rank_tables(g, ctx)][0] == "dw.asked"
+    assert next(x["table"] for x in P.rank_tables(g, ctx)) == "dw.asked"
 
 
 def test_plan_is_the_same_for_the_same_map(tmp_path):
@@ -313,3 +313,21 @@ def test_plan_is_the_same_for_the_same_map(tmp_path):
     c2.index_graph(g2)
     assert P.rank_tables(g1, c1) == P.rank_tables(g2, c2) and P.families(g1, c1) == P.families(g2, c2)
     assert P.make_units(g1, P.rank_tables(g1, c1)) == P.make_units(g2, P.rank_tables(g2, c2))
+
+
+def test_family_representative_prefers_the_table_people_use_over_more_rows(tmp_path):
+    g = _warehouse(_shape("old_copy", 9000), _shape("live", 100))
+    ctx = _ctx(tmp_path, g)
+    ctx.db.execute("CREATE TABLE IF NOT EXISTS query_refs(fp TEXT, table_id TEXT, column_name TEXT, role TEXT)")
+    ctx.db.execute("INSERT INTO query_refs VALUES('f1','dw.live','id','x')")
+    assert P.families(g, ctx) == {"dw.live": ["dw.old_copy"]}
+
+
+def test_family_report_says_what_chose_the_representative(tmp_path):
+    g = _warehouse(_shape("a", 10), _shape("b", 10), _shape("c", 9, cols=("id", "x", "y")), _shape("d", 9, cols=("id", "x", "y")),
+                   _shape("e", None, cols=("id", "p", "q")), _shape("f", None, cols=("id", "p", "q")))
+    fams, basis = P.family_report(g, _ctx(tmp_path, g))
+    assert fams == {"dw.a": ["dw.b"], "dw.c": ["dw.d"], "dw.e": ["dw.f"]}
+    assert basis == {"dw.a": "name", "dw.c": "name", "dw.e": "name"}  # every pair is a tie but for the id
+    g = _warehouse(_shape("a", 10), _shape("b", 20))
+    assert P.family_report(g, _ctx(tmp_path, g))[1] == {"dw.b": "rows"}

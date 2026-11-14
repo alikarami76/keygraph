@@ -45,6 +45,19 @@ def _real_edges(g: Graph) -> list[dict]:
             and not e.get("rejected")]
 
 
+def _evidence(ctx) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    """(query-log hits, code references, context mentions) per table."""
+    qhits = _counts(ctx, "SELECT table_id, COUNT(DISTINCT fp) FROM query_refs GROUP BY table_id")
+    code = _counts(ctx, "SELECT table_id, COUNT(*) FROM code_refs GROUP BY table_id")
+    mentions: dict[str, int] = {}
+    for sql in ("SELECT table_id, COUNT(*) FROM concept_links GROUP BY table_id",
+                "SELECT table_id, COUNT(*) FROM table_notes WHERE COALESCE(source,'')!='llm' GROUP BY table_id",
+                "SELECT table_id, COUNT(*) FROM column_semantics WHERE COALESCE(source,'')!='llm' GROUP BY table_id"):
+        for t, n in _counts(ctx, sql).items():
+            mentions[t] = mentions.get(t, 0) + n
+    return qhits, code, mentions
+
+
 def _degree(g: Graph) -> dict[str, int]:
     """table_id -> number of distinct related tables (edges in either direction)."""
     nbrs: dict[str, set[str]] = {}
@@ -121,13 +134,21 @@ def _same_data(ctx, a: str, b: str, key_cols: list[str], cache: dict) -> bool:
 
 
 def families(g: Graph, ctx) -> dict[str, list[str]]:
+    """{representative: [copies]}; see `family_report`."""
+    return family_report(g, ctx)[0]
+
+
+def family_report(g: Graph, ctx) -> tuple[dict[str, list[str]], dict[str, str]]:
     """Near-duplicate families: tables with the same column signature (names and types, any order, at least 3 columns) that,
     when profiles exist, still share key or column values. Returns {representative: [copies]} (copies sorted), only for
-    families of two or more. The representative has the most rows, else the most relations, else the smallest table id.
+    families of two or more, and {representative: what chose it: usage, rows, relations or name}. The representative is the member that people use (most query-log hits, code references and context mentions), then the one with
+    the most rows, then the most relations, then the smallest table id, so a table with real usage never becomes a copy.
     Copies get no unit of their own: their only note is "copy of <representative>" (index/families.json and the
     representative's packet). Deterministic: same map and profiles, same families."""
     skip = skipped_tables(g)
     rows, deg = _rows(g, ctx), _degree(g)
+    ev = _evidence(ctx)
+    strong = {t: sum(d.get(t, 0) for d in ev) for t in g.nodes}
     groups: dict[tuple, list[str]] = {}
     for t in sorted(g.nodes):
         n = g.nodes[t]
@@ -135,6 +156,7 @@ def families(g: Graph, ctx) -> dict[str, list[str]]:
             groups.setdefault(_signature(n), []).append(t)
     cache: dict[str, dict] = {}
     out: dict[str, list[str]] = {}
+    basis: dict[str, str] = {}
     for sig, members in sorted(groups.items(), key=lambda kv: kv[1][0]):
         if len(members) < 2:
             continue
@@ -149,9 +171,13 @@ def families(g: Graph, ctx) -> dict[str, list[str]]:
                 clusters.append([t])
         for cl in clusters:
             if len(cl) > 1:
-                rep = min(cl, key=lambda t: (-rows.get(t, -1), -deg.get(t, 0), t))
+                keys = {t: (-strong[t], -rows.get(t, -1), -deg.get(t, 0)) for t in cl}
+                order = sorted(cl, key=lambda t: (*keys[t], t))
+                rep = order[0]
                 out[rep] = sorted(set(cl) - {rep})
-    return dict(sorted(out.items()))
+                first = next((i for i in range(3) if keys[order[0]][i] != keys[order[1]][i]), 3)
+                basis[rep] = ("usage", "rows", "relations", "name")[first]
+    return dict(sorted(out.items())), dict(sorted(basis.items()))
 
 
 def copy_of(fams: dict[str, list[str]]) -> dict[str, str]:
@@ -169,14 +195,7 @@ def rank_tables(g: Graph, ctx) -> list[dict]:
     incoming: dict[str, int] = {}
     for e in _real_edges(g):
         incoming[e["to"]] = incoming.get(e["to"], 0) + 1
-    qhits = _counts(ctx, "SELECT table_id, COUNT(DISTINCT fp) FROM query_refs GROUP BY table_id")
-    code = _counts(ctx, "SELECT table_id, COUNT(*) FROM code_refs GROUP BY table_id")
-    mentions: dict[str, int] = {}
-    for sql in ("SELECT table_id, COUNT(*) FROM concept_links GROUP BY table_id",
-                "SELECT table_id, COUNT(*) FROM table_notes WHERE COALESCE(source,'')!='llm' GROUP BY table_id",
-                "SELECT table_id, COUNT(*) FROM column_semantics WHERE COALESCE(source,'')!='llm' GROUP BY table_id"):
-        for t, n in _counts(ctx, sql).items():
-            mentions[t] = mentions.get(t, 0) + n
+    qhits, code, mentions = _evidence(ctx)
     area_of = {t: a for a in g.data.get("areas", []) for t in a["tables"]}
     inside: dict[str, int] = {}
     for e in _real_edges(g):
