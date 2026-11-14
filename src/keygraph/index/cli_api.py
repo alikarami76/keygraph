@@ -280,7 +280,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         ent = _entry(led, unit_id)
         again = bool(ent.get("partial"))  # an earlier submit stored some items and left the rest to be resubmitted
         val = VL.validate(answer, g, ctx, pk, tasks, require_all=not again)
-        rejected = [{"item": "$", "reason": e[3:] if e.startswith("$: ") else e} for e in val["errors"]] + \
+        rejected = [{"item": "$", "reason": e.removeprefix("$: ")} for e in val["errors"]] + \
                    [{"item": r["item"], "reason": r["reason"]} for r in val["rejected"]]
         attempts = unit["attempts"] + 1
         jobs.add_used(ctx, job_id, atoks + (est if unit["attempts"] == 0 else 0))  # the packet is paid for once per unit
