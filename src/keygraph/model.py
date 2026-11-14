@@ -74,6 +74,7 @@ class Table:
 @dataclass
 class Schema:
     tables: dict[str, Table] = field(default_factory=dict)
+    rows_method: dict = field(default_factory=dict)  # how rows_estimate was filled (sqlite): {method: tables}
 
     def add(self, table: Table) -> None:
         self.tables[table.id] = table

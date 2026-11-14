@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from keygraph.adapters import open_source
@@ -461,3 +463,59 @@ def test_redact_replaces_whole_tokens_only():
     out = redact(msg, "mysql://u:p@a:3306/shop")
     assert "rejected" in out and "password" in out and "connection to" in out and "failed" in out
     assert "mysql://" not in out and "@a" not in out and "3306" not in out
+
+
+# --- sqlite row counts (ENG-106 round 2) ------------------------------------------------------------------------
+
+def _sqlite_rows_db(path):
+    import sqlite3
+    con = sqlite3.connect(path)
+    con.executescript("""
+        CREATE TABLE big(id INTEGER PRIMARY KEY, v TEXT);
+        CREATE TABLE small(id INTEGER PRIMARY KEY, v TEXT);
+        CREATE TABLE empty(id INTEGER PRIMARY KEY, v TEXT);
+        CREATE INDEX ix_big_v ON big(v);
+    """)
+    con.executemany("INSERT INTO big(v) VALUES(?)", [(str(i),) for i in range(300)])
+    con.executemany("INSERT INTO small(v) VALUES(?)", [("x",)] * 7)
+    con.commit()
+    return con
+
+
+def test_sqlite_scan_records_rows_estimate_from_stat1_else_count(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    from keygraph.adapters.live import scan_any
+    db = tmp_path / "r.db"
+    con = _sqlite_rows_db(db)
+    con.execute("ANALYZE big")  # only big has sqlite_stat1 rows
+    con.execute("INSERT INTO big(v) VALUES('late')")  # stat1 is stale now: 300, not 301
+    con.commit()
+    con.close()
+    before = db.read_bytes()
+    sch, _ = scan_any(f"sqlite:///{db}")
+    rows = {t.name: t.info.get("rows_estimate") for t in sch.tables.values()}
+    assert rows == {"big": 300, "small": 7, "empty": 0}
+    assert sch.rows_method == {"sqlite_stat1": 1, "count": 2, "skipped": 0}
+    assert db.read_bytes() == before  # read-only
+
+
+def test_sqlite_count_over_the_time_cap_is_left_null(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    from keygraph.adapters.live import scan_url
+    db = tmp_path / "r.db"
+    _sqlite_rows_db(db).close()
+    sch = scan_url(f"sqlite:///{db}", row_seconds=1e-9)
+    assert all("rows_estimate" not in t.info for t in sch.tables.values())
+    assert sch.rows_method["skipped"] == 3
+
+
+def test_build_json_records_the_sqlite_row_method(tmp_path):
+    pytest.importorskip("sqlalchemy")
+    from keygraph.cli import main
+    db = tmp_path / "r.db"
+    _sqlite_rows_db(db).close()
+    assert main(["scan", "--url", f"sqlite:///{db}", "--dir", str(tmp_path / "o")]) == 0
+    b = json.loads((tmp_path / "o" / "build.json").read_text())
+    assert b["sources"][0]["rows_estimate"] == {"count": 3, "skipped": 0, "sqlite_stat1": 0}
+    g = json.loads((tmp_path / "o" / "graph.json").read_text())
+    assert {n["table"]: n["info"]["rows_estimate"] for n in g["nodes"]} == {"big": 300, "small": 7, "empty": 0}

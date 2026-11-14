@@ -7,7 +7,48 @@ from ..model import Column, ForeignKey, Index, Schema, Table
 SYSTEM_SCHEMAS = {"information_schema", "mysql", "performance_schema", "sys", "pg_catalog", "pg_toast"}
 
 
-def scan_url(url: str, schemas: list[str] | None = None, all_schemas: bool = False) -> Schema:
+ROW_SECONDS = 2.0  # time cap for one exact COUNT(*) on SQLite; a table over it keeps no rows_estimate
+
+
+def _sqlite_rows(engine, sch: Schema, row_seconds: float) -> None:
+    """rows_estimate for every SQLite table: sqlite_stat1 when it has the table, else an exact COUNT(*) under a time cap
+    (a table that exceeds it stays null). Read-only (query_only); the counts are exact, so the same file gives the same
+    numbers. sch.rows_method records how many tables used each method."""
+    import time
+    stat: dict[str, int] = {}
+    method = {"sqlite_stat1": 0, "count": 0, "skipped": 0}
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA query_only=ON")
+        raw = conn.connection.driver_connection
+        try:
+            for tbl, st in conn.exec_driver_sql("SELECT tbl, stat FROM sqlite_stat1").fetchall():
+                first = str(st or "").split(" ", 1)[0]
+                if first.isdigit():
+                    stat[tbl] = max(stat.get(tbl, 0), int(first))
+        except Exception:  # noqa: BLE001  (no sqlite_stat1 table)
+            stat = {}
+        for t in sch.tables.values():
+            if t.name in stat:
+                t.info["rows_estimate"] = stat[t.name]
+                method["sqlite_stat1"] += 1
+                continue
+            quoted = '"' + t.name.replace('"', '""') + '"'
+            deadline = time.monotonic() + row_seconds
+            raw.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+            try:
+                if time.monotonic() > deadline:
+                    raise TimeoutError
+                n = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {quoted}").scalar()  # noqa: S608
+                t.info["rows_estimate"] = int(n)
+                method["count"] += 1
+            except Exception:  # noqa: BLE001  (interrupted by the cap, or unreadable)
+                method["skipped"] += 1
+            finally:
+                raw.set_progress_handler(None, 0)
+    sch.rows_method = method
+
+
+def scan_url(url: str, schemas: list[str] | None = None, all_schemas: bool = False, row_seconds: float = ROW_SECONDS) -> Schema:
     try:
         from sqlalchemy import create_engine, inspect
     except ImportError as exc:  # pragma: no cover
@@ -47,6 +88,8 @@ def scan_url(url: str, schemas: list[str] | None = None, all_schemas: bool = Fal
                                                  fk.get("referred_schema") or s, fk["referred_table"],
                                                  list(fk["referred_columns"])))
             sch.add(t)
+    if engine.dialect.name == "sqlite":
+        _sqlite_rows(engine, sch, row_seconds)
     return sch
 
 

@@ -109,8 +109,9 @@ def _save_ledger(out: Path, d: dict) -> None:
 
 
 def _save_families(out: Path, g, ctx) -> None:
-    """index/families.json: {"families": {representative: [copies]}, "chosen_by": {representative: usage|rows|relations|name}}.
-    Copies get no unit; this file is their "copy of" note. `name` means nothing but the table id told the members apart."""
+    """index/families.json: {"families": {representative: [members]}, "chosen_by": {representative: rows|usage|relations|name}}.
+    For decided families the members get no unit and this file is their "copy of" note. `name` means nothing but the table id
+    told the members apart: those families keep a unit for every member (`family_undecided`, ranked low)."""
     fams, basis = PL.family_report(g, ctx)
     p = out / "index" / FAMILIES
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -118,15 +119,16 @@ def _save_families(out: Path, g, ctx) -> None:
 
 
 def _families_view(out: Path) -> dict:
-    """Counts for the start reply. families_by_name counts families where no usage, row count or relation told the members
-    apart (profile the source first: `keygraph profile`, then `index start --restart`)."""
+    """Counts for the start reply. families_undecided counts families where no row count, usage or relation told the members apart:
+    they keep every member as a unit."""
     try:
         d = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         d = {}
     fams, by = d.get("families", {}), d.get("chosen_by", {})
-    return {"families": len(fams), "copies_without_unit": sum(len(v) for v in fams.values()),
-            "families_by_name": sum(1 for v in by.values() if v == "name")}
+    decided = {r: v for r, v in fams.items() if by.get(r) != "name"}
+    return {"families": len(decided), "copies_without_unit": sum(len(v) for v in decided.values()),
+            "families_undecided": len(fams) - len(decided)}
 
 
 def _entry(led: dict, uid: str) -> dict:

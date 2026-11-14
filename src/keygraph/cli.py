@@ -279,7 +279,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
 def cmd_scan(a):
     from .adapters.live import scan_any
     sch, via = scan_any(a.url, a.schema, a.all_schemas, getattr(a, "generic", False))
-    src = {**url_source(a.url), "kind": via}
+    src = {**url_source(a.url), "kind": via, **({"rows_estimate": sch.rows_method} if sch.rows_method else {})}
     run_pipeline(sch, a.dir, a.overrides, a.context, snippets=a.snippets, queries=a.queries,
                  copy_schemas=getattr(a, "copy_schema", None), sources=[src])
 

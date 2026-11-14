@@ -13,7 +13,8 @@ from keygraph.graph import Graph
 # context, area centrality). `rows`, `degree` and `presence` are weak generic warehouse signals: how much data a table
 # holds (log-scaled), how many relations touch it, and a penalty for tables known to be empty or tiny. They never
 # outweigh a table that people query or code uses.
-WEIGHTS = {"hub": 3.0, "queries": 2.0, "code": 1.5, "context": 1.0, "area": 1.0, "rows": 0.6, "degree": 0.4, "presence": 1.0}
+WEIGHTS = {"hub": 3.0, "queries": 2.0, "code": 1.5, "context": 1.0, "area": 1.0, "rows": 0.6, "degree": 0.4, "presence": 1.0,
+           "family_undecided": -10.0}
 MAX_TABLES = 5
 TINY_ROWS = 10  # fewer rows than this (but known) ranks lower; zero rows ranks lowest
 PRESENCE = {"empty": -1.0, "tiny": -0.5}
@@ -134,15 +135,25 @@ def _same_data(ctx, a: str, b: str, key_cols: list[str], cache: dict) -> bool:
 
 
 def families(g: Graph, ctx) -> dict[str, list[str]]:
-    """{representative: [copies]}; see `family_report`."""
-    return family_report(g, ctx)[0]
+    """{representative: [copies]} for the families whose representative was decided by rows, usage or relations; the copies get
+    no unit. Families that only the table id could split are in `undecided_families` and keep a unit for every member."""
+    fams, basis = family_report(g, ctx)
+    return {r: c for r, c in fams.items() if basis[r] != "name"}
+
+
+def undecided_families(g: Graph, ctx) -> dict[str, list[str]]:
+    """{first member by id: [other members]} for families where rows, usage and relations tie (or are all unknown). Nothing
+    is dropped: every member keeps its unit, the others rank low and are marked `family_undecided`."""
+    fams, basis = family_report(g, ctx)
+    return {r: c for r, c in fams.items() if basis[r] == "name"}
 
 
 def family_report(g: Graph, ctx) -> tuple[dict[str, list[str]], dict[str, str]]:
     """Near-duplicate families: tables with the same column signature (names and types, any order, at least 3 columns) that,
     when profiles exist, still share key or column values. Returns {representative: [copies]} (copies sorted), only for
-    families of two or more, and {representative: what chose it: usage, rows, relations or name}. The representative is the member that people use (most query-log hits, code references and context mentions), then the one with
-    the most rows, then the most relations, then the smallest table id, so a table with real usage never becomes a copy.
+    families of two or more, and {representative: what chose it: rows, usage, relations or name}. The representative is the member with the
+    most rows; when rows are unknown or tied, the one people use (query-log hits, code references, context mentions), then the
+    one with the most relations; `name` (smallest table id) means nothing else told the top two apart.
     Copies get no unit of their own: their only note is "copy of <representative>" (index/families.json and the
     representative's packet). Deterministic: same map and profiles, same families."""
     skip = skipped_tables(g)
@@ -171,12 +182,12 @@ def family_report(g: Graph, ctx) -> tuple[dict[str, list[str]], dict[str, str]]:
                 clusters.append([t])
         for cl in clusters:
             if len(cl) > 1:
-                keys = {t: (-strong[t], -rows.get(t, -1), -deg.get(t, 0)) for t in cl}
+                keys = {t: (-rows.get(t, -1), -strong[t], -deg.get(t, 0)) for t in cl}
                 order = sorted(cl, key=lambda t: (*keys[t], t))
                 rep = order[0]
                 out[rep] = sorted(set(cl) - {rep})
                 first = next((i for i in range(3) if keys[order[0]][i] != keys[order[1]][i]), 3)
-                basis[rep] = ("usage", "rows", "relations", "name")[first]
+                basis[rep] = ("rows", "usage", "relations", "name")[first]
     return dict(sorted(out.items())), dict(sorted(basis.items()))
 
 
@@ -189,8 +200,10 @@ def rank_tables(g: Graph, ctx) -> list[dict]:
     """Rank every table except mirror, copy-schema and family-copy ones. Strong signals: hub score (incoming relations),
     query-log hits, code refs, context mentions, area centrality. Weak generic signals: row count (log-scaled), relation
     degree, and a penalty for tables with zero or fewer than 10 rows (known only from the adapter's estimate or profiles).
+    Members of an undecided family (see `undecided_families`) other than the first by id keep a unit but rank last (part `family_undecided`).
     Returns [{"table", "score", "parts"}] best first; ties broken by table id. Same inputs give the same list."""
     skip = skipped_tables(g) | set(copy_of(families(g, ctx)))
+    undecided = {c for cs in undecided_families(g, ctx).values() for c in cs} - skip
     ids = sorted(t for t in g.nodes if t not in skip)
     incoming: dict[str, int] = {}
     for e in _real_edges(g):
@@ -210,7 +223,8 @@ def rank_tables(g: Graph, ctx) -> list[dict]:
                 for t in ids}
     comps = {"hub": _norm(incoming, ids), "queries": _norm(qhits, ids), "code": _norm(code, ids),
              "context": _norm(mentions, ids), "area": _norm(inside, ids), "rows": _norm(logrows, ids),
-             "degree": _norm(_degree(g), ids), "presence": presence}
+             "degree": _norm(_degree(g), ids), "presence": presence,
+             "family_undecided": {t: 1.0 if t in undecided else 0.0 for t in ids}}
     rows = []
     for t in ids:
         parts = {k: round(comps[k][t], 6) for k in WEIGHTS}

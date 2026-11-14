@@ -172,7 +172,7 @@ def test_cli_and_mcp_give_identical_text_and_a_note_when_trimmed(work, tmp_path,
 def test_family_copies_get_no_unit_and_a_note_in_the_start_reply_and_the_packet(tmp_path, capsys):
     """Three archive-style copies share the columns of one table: one unit, a families.json note, a `copies` packet section."""
     cols, tabs = [], []
-    for name, rows in (("orders", 900), ("orders_archive", 900), ("stg_orders", 500), ("customers", 40)):
+    for name, rows in (("orders", 900), ("orders_archive", 800), ("stg_orders", 500), ("customers", 40)):
         tabs.append({"TABLE_SCHEMA": "dw", "TABLE_NAME": name, "ENGINE": "InnoDB", "TABLE_ROWS": rows})
         for i, c in enumerate(("id", "customer_ref", "total", "placed_at") if name != "customers" else ("id", "full_name", "tier")):
             cols.append({"TABLE_SCHEMA": "dw", "TABLE_NAME": name, "COLUMN_NAME": c, "ORDINAL_POSITION": i + 1, "DATA_TYPE": "int",
@@ -186,9 +186,9 @@ def test_family_copies_get_no_unit_and_a_note_in_the_start_reply_and_the_packet(
     assert main(argv) == 0
     out = tmp_path / "map"
     start = json.loads(_json(capsys, out, "index", "start"))
-    assert start["units"] == 2 and start["families"] == 1 and start["copies_without_unit"] == 2 and start["families_by_name"] == 1
+    assert start["units"] == 2 and start["families"] == 1 and start["copies_without_unit"] == 2 and start["families_undecided"] == 0
     assert json.loads((out / "index" / "families.json").read_text()) == {
-        "families": {"dw.orders": ["dw.orders_archive", "dw.stg_orders"]}, "chosen_by": {"dw.orders": "name"}}
+        "families": {"dw.orders": ["dw.orders_archive", "dw.stg_orders"]}, "chosen_by": {"dw.orders": "rows"}}
     seen = []
     for _ in range(2):
         r = json.loads(_json(capsys, out, "index", "next"))

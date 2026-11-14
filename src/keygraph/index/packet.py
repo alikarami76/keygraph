@@ -21,7 +21,7 @@ DEFAULT_CAP = 6000
 SLACK = 40  # tokens kept free for the `trimmed` note added while trimming
 # Sections are trimmed in this order (first to last) until the estimate fits; then indexes, then trailing columns.
 # Context holds the most trustworthy facts (human notes, earlier answers), so it goes last.
-TRIM_ORDER = ("queries", "code_refs", "profiles", "neighbours", "column_details", "candidate_relations", "copies", "context")
+TRIM_ORDER = ("queries", "code_refs", "profiles", "neighbours", "column_details", "candidate_relations", "copies", "family_undecided", "context")
 PII_PROFILE_KEYS = ("sample_size", "null_rate", "distinct_in_sample", "distinct_ratio", "pattern", "length")
 PLAIN_PROFILE_KEYS = (*PII_PROFILE_KEYS, "numeric", "dates", "values_complete")
 MIN_CONFIDENCE = 0.6
@@ -187,6 +187,18 @@ def _copies(g: Graph, ctx, units: list[str]) -> list[dict]:
     return out
 
 
+def _undecided(g: Graph, ctx, units: list[str]) -> list[dict]:
+    """Unit tables that belong to a family nothing could split: the members are listed so the agent can say which is canonical."""
+    out = []
+    for rep, rest in PL.undecided_families(g, ctx).items():
+        members = [rep, *rest]
+        mine = [t for t in members if t in units]
+        out.extend({"table": t, "family": [m for m in members if m != t][:MAX_COPIES],
+                    "note": "same columns as these tables and nothing tells them apart (rows, usage, relations); do not assume which is canonical"}
+                   for t in mine)
+    return sorted(out, key=lambda x: x["table"])
+
+
 def _note(p: dict, what: str) -> None:
     if what not in p["trimmed"]:
         p["trimmed"].append(what)
@@ -276,6 +288,9 @@ def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> di
     copies = _copies(g, ctx, units)
     if copies:
         p["copies"] = copies
+    undecided = _undecided(g, ctx, units)
+    if undecided:
+        p["family_undecided"] = undecided
     _fit(p, cap - SLACK)
     if estimate(p) > cap:  # the notes added while trimming may have used the slack
         _fit(p, cap)
