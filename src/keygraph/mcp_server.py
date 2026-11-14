@@ -48,7 +48,7 @@ output folder (keygraph.db and index/). keygraph runs its probes read-only throu
 fail and rates; `index_start` takes the NAME of an environment variable for the probe source, never a URL or a command.
 Loop: `index_start`, then `index_next` (a unit) and `index_submit` (your answer), and repeat until `index_next` says
 done; then `index_finish`. When `index_submit` says partially_accepted or rejected, resubmit only the rejected items for
-that unit_id. The existing query tools above are unchanged and still read the stored map."""
+that unit_id. Every index_* result is compact JSON under 40,000 characters (Claude Code saves bigger MCP results to a file). If index_next has a `truncated` note, the packet lost the sections in `truncated.cut`: answer from what remains (the unit is still submittable) and use describe, keys, query_for or code_where for the rest; `over_cap` true means even the trimmed reply is long, answer anyway. `packet.copies` lists same-shape tables that get no unit (answer only for your unit's tables); `packet.family_undecided` lists same-shape tables nothing could tell apart (index each, do not assume which is canonical). The existing query tools above are unchanged and still read the stored map."""
 
 
 def _client(context) -> dict:
@@ -307,14 +307,15 @@ def build_server(dir: str | Path) -> MCPServer:
         read-only command template with {sql}); never pass the URL or command itself. Without one, claims stay unverified.
         tasks is a list from relations, columns, tables, concepts, metrics, performance (default all). An open job is
         resumed (a larger budget raises its budget); restart=true aborts it and starts over. Returns the job id, unit counts
-        and the next step. Writes only to the output folder."""
+        and the next step, plus families (same-shape tables with overlapping profiled data that get no unit), copies_without_unit and
+        families_undecided (same-shape tables nothing could tell apart: every one keeps a unit). Writes only to the output folder."""
         return run(IX.start_result, out, budget, tasks, url_env, cmd_env, dialect, max_units, restart)
 
     @srv.tool()
     def index_next() -> dict:
         """The next unit to index: unit_id, tasks, instructions, a packet (columns, keys, candidate relations, masked
         profiles, code references, logged queries, notes) and the JSON schema your answer must follow. It returns the same
-        unit until you submit it. Also returns status budget_exhausted (with the command to resume) or done (call index_finish), or finished (the job was closed)."""
+        unit until you submit it. Also returns status budget_exhausted (with the command to resume) or done (call index_finish), or finished (the job was closed). The reply is compact JSON under 40,000 characters; a `truncated` note ({cap, original_chars, cut}) says which packet sections were dropped (the unit is still answerable; fetch more with describe, keys, query_for or code_where). The packet may carry `copies` (same-shape tables with no unit of their own) and `family_undecided` (same-shape tables nothing could tell apart)."""
         return run(IX.next_result, out)
 
     @srv.tool()

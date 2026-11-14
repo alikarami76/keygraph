@@ -7,8 +7,8 @@ without a file tool never sees the packet. Every `index` reply therefore stays u
 Trimming: only `index next` replies carry enough to need it. The packet loses content in the same priority order as the token
 cap (queries, code refs, profiles, neighbours, column details, candidate relations, context), then indexes, then trailing
 columns, never the table list, the instructions or the answer schema. The reply says what was cut in `truncated`:
-{"cap", "original_chars", "cut": ["packet.queries: 3 items", ...], "over_cap" (only when it still did not fit)}.
-Any other reply that is too long loses items from its longest lists the same way. The token budget accounting is not
+{"cap", "original_chars", "cut": ["packet.queries (items removed): 3", ...], "over_cap": true (only when it still did not fit)}.
+Any other reply that is too long loses items from the end of its longest list (`cut` says `rejected (items removed): 12`). The token budget accounting is not
 affected: tokens are estimated on the full packet before this runs."""
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from . import packet as PK
 ENV = "KEYGRAPH_INDEX_REPLY_CAP"
 DEFAULT_CAP = 40_000
 MIN_CAP = 4_000
+PROTECTED = ("tasks",)  # lists the agent needs whole: the kinds of answer it must give
 
 
 def dumps(obj) -> str:
@@ -101,7 +102,7 @@ def _trim_lists(r: dict, limit: int, original: int, counts: dict[str, int]) -> N
         _note(r, limit, original, counts)
         if _size(r) <= limit:
             return
-        lists = {k: v for k, v in r.items() if isinstance(v, list) and v}
+        lists = {k: v for k, v in r.items() if isinstance(v, list) and v and k not in PROTECTED}
         if not lists:
             return
         k = max(lists, key=lambda x: (len(lists[x]), x))
@@ -119,7 +120,7 @@ def fit(reply: dict, limit: int | None = None) -> dict:
     counts: dict[str, int] = {}
     if isinstance(r.get("packet"), dict) and isinstance(r["packet"].get("tables"), list):
         _trim_packet(r, limit, original, counts)
-    if _size(r) > limit:
+    if _size(r) > limit and "packet" not in r:  # a unit reply keeps its tasks, instructions and answer schema whole
         _trim_lists(r, limit, original, counts)
     _note(r, limit, original, counts)
     if _size(r) > limit:

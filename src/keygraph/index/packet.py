@@ -177,9 +177,9 @@ def _context(ctx, units: list[str]) -> list[dict]:
     return out
 
 
-def _copies(g: Graph, ctx, units: list[str]) -> list[dict]:
+def _copies(fams: dict, units: list[str]) -> list[dict]:
     """Family copies of the unit's tables: near-duplicates (same columns, same data) that get no unit of their own."""
-    fams, out = PL.families(g, ctx), []
+    out = []
     for t in units:
         if t in fams:
             out.append({"table": t, "copies": fams[t][:MAX_COPIES], **({"more": len(fams[t]) - MAX_COPIES} if len(fams[t]) > MAX_COPIES else {}),
@@ -187,10 +187,10 @@ def _copies(g: Graph, ctx, units: list[str]) -> list[dict]:
     return out
 
 
-def _undecided(g: Graph, ctx, units: list[str]) -> list[dict]:
+def _undecided(undecided: dict, units: list[str]) -> list[dict]:
     """Unit tables that belong to a family nothing could split: the members are listed so the agent can say which is canonical."""
     out = []
-    for rep, rest in PL.undecided_families(g, ctx).items():
+    for rep, rest in undecided.items():
         members = [rep, *rest]
         mine = [t for t in members if t in units]
         out.extend({"table": t, "family": [m for m in members if m != t][:MAX_COPIES],
@@ -275,7 +275,7 @@ def _fit(p: dict, limit: int) -> None:
     _drop_columns(p, limit)
 
 
-def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> dict:
+def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP, report: tuple | None = None) -> dict:
     """The packet for a unit: tables (columns, keys, indexes), candidate relations with evidence, neighbours, masked
     profiles, top code refs, masked logged queries and context snippets. Trimmed in TRIM_ORDER, then indexes, then
     trailing columns, until estimate() <= cap. `trimmed` lists what lost content. When even the required tables
@@ -285,10 +285,11 @@ def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> di
                "candidate_relations": _relations(g, set(units)), "neighbours": _neighbours(g, set(units)),
                "profiles": _profiles(g, ctx, units), "code_refs": _code_refs(ctx, units), "queries": _queries(ctx, units),
                "context": _context(ctx, units), "trimmed": [], "cap": int(cap)}
-    copies = _copies(g, ctx, units)
+    fams, basis = report if report is not None else PL.family_report(g, ctx)  # the job stores it once (index/families.json)
+    copies = _copies({r: c for r, c in fams.items() if basis.get(r) != "name"}, units)
     if copies:
         p["copies"] = copies
-    undecided = _undecided(g, ctx, units)
+    undecided = _undecided({r: c for r, c in fams.items() if basis.get(r) == "name"}, units)
     if undecided:
         p["family_undecided"] = undecided
     _fit(p, cap - SLACK)

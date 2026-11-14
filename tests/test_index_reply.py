@@ -140,11 +140,33 @@ def test_trimming_never_changes_the_token_accounting(work, monkeypatch):
     assert charged() == before and full["packet"]["cap"] == 6000
 
 
-def test_a_reply_that_cannot_fit_says_so(work, monkeypatch):
-    monkeypatch.setenv(RY.ENV, str(RY.MIN_CAP))
+def test_last_resort_trimming_keeps_everything_the_agent_needs(work, monkeypatch):
+    monkeypatch.setenv(RY.ENV, "40000")
     X.start_result(work)
+    full = X.next_result(work)
+    monkeypatch.setenv(RY.ENV, str(RY.MIN_CAP))
     r = X.next_result(work)
-    assert r["truncated"]["cut"] and (len(RY.dumps(r)) <= RY.MIN_CAP or r["truncated"].get("over_cap") is True)
+    t = r["truncated"]
+    assert t["cap"] == RY.MIN_CAP and t["original_chars"] == len(RY.dumps(full))
+    # every section went, then indexes and trailing columns (the packet's last resorts); nothing the agent must answer with
+    assert r["unit_id"] == full["unit_id"] and r["tasks"] == full["tasks"] and r["answer_schema"] == full["answer_schema"]
+    assert r["instructions"] == full["instructions"] and r["packet"]["unit_tables"] == full["packet"]["unit_tables"]
+    assert [x["table"] for x in r["packet"]["tables"]] == [x["table"] for x in full["packet"]["tables"]]
+    for sec in ("queries", "code_refs", "profiles", "neighbours", "candidate_relations", "context"):
+        assert not r["packet"][sec]
+    assert any(c.startswith("packet.columns") for c in t["cut"])  # trailing columns were removed
+    assert all(any(c.get("key") for c in tb["columns"]) for tb in r["packet"]["tables"])  # key columns survive
+    assert sum(tb.get("columns_omitted", 0) for tb in r["packet"]["tables"]) > 0
+    # the instructions and schema alone exceed 4,000 characters: the reply says so and does not pretend to fit
+    assert t.get("over_cap") is True and len(RY.dumps(r)) > RY.MIN_CAP
+
+
+def test_generic_list_trim_keeps_required_fields(monkeypatch):
+    reply = {"status": "accepted", "next": "n", "rejected": [{"item": str(i), "reason": "x" * 100} for i in range(300)]}
+    out = RY.fit(reply, 5000)
+    assert len(RY.dumps(out)) <= 5000 and out["status"] == "accepted" and out["next"] == "n"
+    assert 0 < len(out["rejected"]) < 300 and out["truncated"]["cut"] == [f"rejected (items removed): {300 - len(out['rejected'])}"]
+    assert [x["item"] for x in out["rejected"]] == [str(i) for i in range(len(out["rejected"]))]  # the tail goes, not the head
 
 
 def test_cli_and_mcp_give_identical_text_and_a_note_when_trimmed(work, tmp_path, capsys, monkeypatch):
@@ -167,6 +189,8 @@ def test_cli_and_mcp_give_identical_text_and_a_note_when_trimmed(work, tmp_path,
     assert mcp_next == cli_next and "\n" not in mcp_next
     assert len(mcp_next) <= 12_000 and "truncated" in json.loads(mcp_next)
     assert call("index_status") == _json(capsys, work, "index", "status").strip()
+    res = asyncio.run(s.call_tool("index_next", {}))  # the text block is the whole reply: no second, uncapped copy
+    assert getattr(res, "structured_content", None) is None and len(res.content) == 1
 
 
 def test_family_copies_get_no_unit_and_a_note_in_the_start_reply_and_the_packet(tmp_path, capsys):
@@ -185,6 +209,12 @@ def test_family_copies_get_no_unit_and_a_note_in_the_start_reply_and_the_packet(
         argv += [f"--{k}", str(tmp_path / f"{k}.json")]
     assert main(argv) == 0
     out = tmp_path / "map"
+    import sqlite3
+    con = sqlite3.connect(out / "keygraph.db")  # profile evidence: the three order tables hold overlapping ids
+    for t in ("orders", "orders_archive", "stg_orders"):
+        con.execute("INSERT INTO column_profile VALUES(?,?,?,?,?,?)", (f"dw.{t}", "id", json.dumps({"numeric": {"min": 1, "max": 900}}), "", 5, "limit"))
+    con.commit()
+    con.close()
     start = json.loads(_json(capsys, out, "index", "start"))
     assert start["units"] == 2 and start["families"] == 1 and start["copies_without_unit"] == 2 and start["families_undecided"] == 0
     assert json.loads((out / "index" / "families.json").read_text()) == {

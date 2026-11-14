@@ -495,18 +495,35 @@ def test_sqlite_scan_records_rows_estimate_from_stat1_else_count(tmp_path):
     sch, _ = scan_any(f"sqlite:///{db}")
     rows = {t.name: t.info.get("rows_estimate") for t in sch.tables.values()}
     assert rows == {"big": 300, "small": 7, "empty": 0}
-    assert sch.rows_method == {"sqlite_stat1": 1, "count": 2, "skipped": 0}
+    assert sch.rows_method == {"sqlite_stat1": 1, "count": 2, "count_capped": 0}
     assert db.read_bytes() == before  # read-only
 
 
-def test_sqlite_count_over_the_time_cap_is_left_null(tmp_path):
+def test_sqlite_count_is_bounded_and_marked_at_least(tmp_path):
     pytest.importorskip("sqlalchemy")
     from keygraph.adapters.live import scan_url
     db = tmp_path / "r.db"
     _sqlite_rows_db(db).close()
-    sch = scan_url(f"sqlite:///{db}", row_seconds=1e-9)
-    assert all("rows_estimate" not in t.info for t in sch.tables.values())
-    assert sch.rows_method["skipped"] == 3
+    sch = scan_url(f"sqlite:///{db}", row_cap=100)
+    by = {t.name: t.info for t in sch.tables.values()}
+    assert by["big"] == {"rows_estimate": 100, "rows_at_least": True}  # 300 rows, counted up to the cap only
+    assert by["small"] == {"rows_estimate": 7} and by["empty"] == {"rows_estimate": 0}
+    assert sch.rows_method == {"sqlite_stat1": 0, "count": 2, "count_capped": 1}
+    again = scan_url(f"sqlite:///{db}", row_cap=100)
+    assert {t.name: t.info for t in again.tables.values()} == by  # no clock involved
+
+
+def test_sqlite_row_statements_all_pass_assert_select(tmp_path, monkeypatch):
+    pytest.importorskip("sqlalchemy")
+    from keygraph.adapters import live
+    db = tmp_path / "r.db"
+    _sqlite_rows_db(db).close()
+    seen = []
+    real = live.assert_select
+    monkeypatch.setattr(live, "assert_select", lambda sql: (seen.append(sql), real(sql))[1])
+    live.scan_url(f"sqlite:///{db}")
+    assert seen and all(q.lstrip().upper().startswith("SELECT") for q in seen) and not any("PRAGMA" in q.upper() for q in seen)
+    assert any("sqlite_stat1" in q for q in seen) and any("COUNT(*)" in q for q in seen)
 
 
 def test_build_json_records_the_sqlite_row_method(tmp_path):
@@ -516,6 +533,6 @@ def test_build_json_records_the_sqlite_row_method(tmp_path):
     _sqlite_rows_db(db).close()
     assert main(["scan", "--url", f"sqlite:///{db}", "--dir", str(tmp_path / "o")]) == 0
     b = json.loads((tmp_path / "o" / "build.json").read_text())
-    assert b["sources"][0]["rows_estimate"] == {"count": 3, "skipped": 0, "sqlite_stat1": 0}
+    assert b["sources"][0]["rows_estimate"] == {"count": 3, "count_capped": 0, "sqlite_stat1": 0}
     g = json.loads((tmp_path / "o" / "graph.json").read_text())
     assert {n["table"]: n["info"]["rows_estimate"] for n in g["nodes"]} == {"big": 300, "small": 7, "empty": 0}

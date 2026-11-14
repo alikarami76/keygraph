@@ -3,52 +3,59 @@
 from __future__ import annotations
 
 from ..model import Column, ForeignKey, Index, Schema, Table
+from ..probe import assert_select
 
 SYSTEM_SCHEMAS = {"information_schema", "mysql", "performance_schema", "sys", "pg_catalog", "pg_toast"}
 
 
-ROW_SECONDS = 2.0  # time cap for one exact COUNT(*) on SQLite; a table over it keeps no rows_estimate
+ROW_CAP = 1_000_000  # a SQLite COUNT stops here: bigger tables record rows_estimate=ROW_CAP and rows_at_least=true
 
 
-def _sqlite_rows(engine, sch: Schema, row_seconds: float) -> None:
-    """rows_estimate for every SQLite table: sqlite_stat1 when it has the table, else an exact COUNT(*) under a time cap
-    (a table that exceeds it stays null). Read-only (query_only); the counts are exact, so the same file gives the same
-    numbers. sch.rows_method records how many tables used each method."""
-    import time
+def _sqlite_rows(url: str, sch: Schema, row_cap: int) -> None:
+    """rows_estimate for every SQLite table: sqlite_stat1 when it has the table, else a bounded exact count
+    (SELECT COUNT(*) FROM (SELECT 1 FROM t LIMIT cap+1)); a table above the cap gets rows_estimate=cap and rows_at_least=true.
+    No clock is involved, so the same file gives the same numbers. Every statement passes assert_select, and the file is
+    opened through a mode=ro URI. sch.rows_method records how many tables used each method."""
+    from urllib.parse import quote
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine.url import make_url
+    path = make_url(url).database
+    ro = f"sqlite:///file:{quote(path)}?mode=ro&uri=true" if path and path != ":memory:" else url
     stat: dict[str, int] = {}
-    method = {"sqlite_stat1": 0, "count": 0, "skipped": 0}
-    with engine.connect() as conn:
-        conn.exec_driver_sql("PRAGMA query_only=ON")
-        raw = conn.connection.driver_connection
-        try:
-            for tbl, st in conn.exec_driver_sql("SELECT tbl, stat FROM sqlite_stat1").fetchall():
-                first = str(st or "").split(" ", 1)[0]
-                if first.isdigit():
-                    stat[tbl] = max(stat.get(tbl, 0), int(first))
-        except Exception:  # noqa: BLE001  (no sqlite_stat1 table)
-            stat = {}
-        for t in sch.tables.values():
-            if t.name in stat:
-                t.info["rows_estimate"] = stat[t.name]
-                method["sqlite_stat1"] += 1
-                continue
-            quoted = '"' + t.name.replace('"', '""') + '"'
-            deadline = time.monotonic() + row_seconds
-            raw.set_progress_handler(lambda d=deadline: 1 if time.monotonic() > d else 0, 1000)
+    method = {"sqlite_stat1": 0, "count": 0, "count_capped": 0}
+    engine = create_engine(ro)
+    try:
+        with engine.connect() as conn:
             try:
-                if time.monotonic() > deadline:
-                    raise TimeoutError
-                n = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {quoted}").scalar()
-                t.info["rows_estimate"] = int(n)
-                method["count"] += 1
-            except Exception:  # noqa: BLE001  (interrupted by the cap, or unreadable)
-                method["skipped"] += 1
-            finally:
-                raw.set_progress_handler(None, 0)
+                for tbl, st in conn.exec_driver_sql(assert_select("SELECT tbl, stat FROM sqlite_stat1")).fetchall():
+                    first = str(st or "").split(" ", 1)[0]
+                    if first.isdigit():
+                        stat[tbl] = max(stat.get(tbl, 0), int(first))
+            except Exception:  # noqa: BLE001  (no sqlite_stat1 table)
+                stat = {}
+            for t in sch.tables.values():
+                if t.name in stat:
+                    t.info["rows_estimate"] = stat[t.name]
+                    method["sqlite_stat1"] += 1
+                    continue
+                quoted = '"' + t.name.replace('"', '""') + '"'
+                try:
+                    n = int(conn.exec_driver_sql(assert_select(f"SELECT COUNT(*) FROM (SELECT 1 FROM {quoted} LIMIT {row_cap + 1})")).scalar())
+                except Exception:  # noqa: BLE001  (unreadable table: no estimate)
+                    continue
+                if n > row_cap:
+                    t.info["rows_estimate"], t.info["rows_at_least"] = row_cap, True
+                    method["count_capped"] += 1
+                else:
+                    t.info["rows_estimate"] = n
+                    method["count"] += 1
+    finally:
+        engine.dispose()
     sch.rows_method = method
 
 
-def scan_url(url: str, schemas: list[str] | None = None, all_schemas: bool = False, row_seconds: float = ROW_SECONDS) -> Schema:
+def scan_url(url: str, schemas: list[str] | None = None, all_schemas: bool = False, row_cap: int = ROW_CAP) -> Schema:
     try:
         from sqlalchemy import create_engine, inspect
     except ImportError as exc:  # pragma: no cover
@@ -89,7 +96,7 @@ def scan_url(url: str, schemas: list[str] | None = None, all_schemas: bool = Fal
                                                  list(fk["referred_columns"])))
             sch.add(t)
     if engine.dialect.name == "sqlite":
-        _sqlite_rows(engine, sch, row_seconds)
+        _sqlite_rows(url, sch, row_cap)
     return sch
 
 

@@ -19,7 +19,7 @@ MAX_TABLES = 5
 TINY_ROWS = 10  # fewer rows than this (but known) ranks lower; zero rows ranks lowest
 PRESENCE = {"empty": -1.0, "tiny": -0.5}
 MIN_FAMILY_COLUMNS = 3  # a 2-column shape (id, name) is too generic to call two tables copies of each other
-MAX_FAMILY_LIST = 50
+ROW_MARGIN = 1.1  # a row count decides only when it is at least 10 percent above the next member
 
 
 def _counts(ctx, sql: str) -> dict[str, int]:
@@ -120,8 +120,9 @@ def _col_overlap(pa: dict, pb: dict) -> bool | None:
 
 
 def _same_data(ctx, a: str, b: str, key_cols: list[str], cache: dict) -> bool:
-    """False only when profiles of both tables exist and every comparable column (the key columns first) shows the two hold
-    different values. Without comparable profiles the shape alone decides (True)."""
+    """True only with evidence: profiles of both tables exist and a comparable column (the key columns first, then every shared
+    column) shows overlapping values. No profiles, nothing comparable, or values that cannot overlap: False. The shape alone
+    never makes two tables a family."""
     for t in (a, b):
         if t not in cache:
             cache[t] = _profiles_of(ctx, t)
@@ -131,7 +132,7 @@ def _same_data(ctx, a: str, b: str, key_cols: list[str], cache: dict) -> bool:
         verdicts = [v for v in (_col_overlap(pa[c], pb[c]) for c in cols) if v is not None]
         if verdicts:
             return any(verdicts)
-    return True
+    return False
 
 
 def families(g: Graph, ctx) -> dict[str, list[str]]:
@@ -149,10 +150,10 @@ def undecided_families(g: Graph, ctx) -> dict[str, list[str]]:
 
 
 def family_report(g: Graph, ctx) -> tuple[dict[str, list[str]], dict[str, str]]:
-    """Near-duplicate families: tables with the same column signature (names and types, any order, at least 3 columns) that,
-    when profiles exist, still share key or column values. Returns {representative: [copies]} (copies sorted), only for
+    """Near-duplicate families: tables with the same column signature (names and types, any order, at least 3 columns) whose
+    stored profiles show overlapping key or column values (no profile evidence, no family: the shape alone is never enough). Returns {representative: [copies]} (copies sorted), only for
     families of two or more, and {representative: what chose it: rows, usage, relations or name}. The representative is the member with the
-    most rows; when rows are unknown or tied, the one people use (query-log hits, code references, context mentions), then the
+    most rows by a clear margin (at least 10 percent more than the next); otherwise the one people use (query-log hits, code references, context mentions), then the
     one with the most relations; `name` (smallest table id) means nothing else told the top two apart.
     Copies get no unit of their own: their only note is "copy of <representative>" (index/families.json and the
     representative's packet). Deterministic: same map and profiles, same families."""
@@ -182,12 +183,17 @@ def family_report(g: Graph, ctx) -> tuple[dict[str, list[str]], dict[str, str]]:
                 clusters.append([t])
         for cl in clusters:
             if len(cl) > 1:
-                keys = {t: (-rows.get(t, -1), -strong[t], -deg.get(t, 0)) for t in cl}
-                order = sorted(cl, key=lambda t: (*keys[t], t))
+                top = max(rows.get(t, -1) for t in cl)
+                close = [t for t in cl if top < 0 or rows.get(t, -1) * ROW_MARGIN >= top]  # within the margin of the top
+                order = sorted(close, key=lambda t: (-rows.get(t, -1), t)) if len(close) == 1 else \
+                    sorted(close, key=lambda t: (-strong[t], -deg.get(t, 0), t))
                 rep = order[0]
                 out[rep] = sorted(set(cl) - {rep})
-                first = next((i for i in range(3) if keys[order[0]][i] != keys[order[1]][i]), 3)
-                basis[rep] = ("rows", "usage", "relations", "name")[first]
+                if len(close) == 1:
+                    basis[rep] = "rows"
+                else:
+                    a, b = order[0], order[1]
+                    basis[rep] = "usage" if strong[a] != strong[b] else "relations" if deg.get(a, 0) != deg.get(b, 0) else "name"
     return dict(sorted(out.items())), dict(sorted(basis.items()))
 
 

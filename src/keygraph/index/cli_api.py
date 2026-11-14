@@ -89,8 +89,18 @@ def _pre_llm(ctx):
     return mem
 
 
-def _packet(g, ctx, unit: dict) -> tuple[dict, int, str]:
-    pk = PK.build_packet(g, _pre_llm(ctx), unit["tables"])
+def _stored_families(out: Path, g, ctx) -> tuple[dict, dict]:
+    """The job's families as `index start` or `refresh` stored them; computed (once) only when the file is missing."""
+    try:
+        d = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
+        return d["families"], d["chosen_by"]
+    except (OSError, ValueError, KeyError):
+        return PL.family_report(g, ctx)
+
+
+def _packet(g, ctx, unit: dict, out: Path | None = None) -> tuple[dict, int, str]:
+    pre = _pre_llm(ctx)
+    pk = PK.build_packet(g, pre, unit["tables"], report=_stored_families(out, g, pre) if out else None)
     return pk, PK.estimate(pk), hashlib.sha256(SC.canonical(pk).encode("utf-8")).hexdigest()
 
 
@@ -247,7 +257,7 @@ def next_result(dir) -> dict:
         if unit is None:
             devlog.decide("index_next", status="done")
             return {"status": "done", "finish": FINISH}
-        pk, est, h = _packet(g, ctx, unit)
+        pk, est, h = _packet(g, ctx, unit, out)
         jobs.update_unit(ctx, job["job_id"], unit["unit_id"], tokens_est=est, packet_hash=h)
         left = jobs.budget_left(ctx, job["job_id"])
         if not jobs.has_budget(ctx, job["job_id"], est):
@@ -329,7 +339,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
                              + ("failed units and units with changed tables back" if unit["status"] == "failed"
                                 else "it back only when its tables changed"))
         tasks = unit["tasks"]
-        pk, est, ph = _packet(g, ctx, unit)
+        pk, est, ph = _packet(g, ctx, unit, out)
         prompt = SC.prompt_hash(SC.instructions(tasks), SC.answer_schema(tasks), pk)
         if not model and isinstance(answer, dict) and isinstance(answer.get("model"), str):
             model = answer["model"]
@@ -510,6 +520,7 @@ def refresh_result(dir) -> dict:
         pre = _pre_llm(ctx)
         new = PL.make_units(g, PL.rank_tables(g, pre))
         _save_families(out, g, pre)
+        rep = _stored_families(out, g, pre)
         old = {u["unit_id"]: u for u in jobs.list_units(ctx, job_id)}
         for u in new:
             o = old.get(u["unit_id"])
@@ -517,7 +528,7 @@ def refresh_result(dir) -> dict:
                 added.append(u)
                 continue
             if o["status"] in ("done", "failed"):
-                h = hashlib.sha256(SC.canonical(PK.build_packet(g, pre, u["tables"])).encode("utf-8")).hexdigest()
+                h = hashlib.sha256(SC.canonical(PK.build_packet(g, pre, u["tables"], report=rep)).encode("utf-8")).hexdigest()
                 if h != o["packet_hash"] or o["status"] == "failed":  # a failed unit gets another go even when nothing changed
                     jobs.reset_unit(ctx, job_id, u["unit_id"], u["rank"])
                     (changed if h != o["packet_hash"] else retried).append(u["unit_id"])
