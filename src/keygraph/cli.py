@@ -23,6 +23,7 @@ from .docs_out import write_docs
 from .explorer import build_html
 from .graph import BUILD_FILE, AmbiguousTable, Graph, UnknownTable, build_graph
 from .hubs import detect_hubs, mark_hubs
+from .index.store import apply_index_relations
 from .infer import Options
 from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
 from .model import Schema
@@ -155,6 +156,7 @@ def _render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None, q
     with devlog.phase("render.code_joins"):
         if ctx:
             merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
+            apply_index_relations(g, ctx)  # relations the indexing agent proposed (source llm); same place, idempotent
     with devlog.phase("render.hubs") as ph:
         hubs = detect_hubs(g, include=names["include"], exclude=names["exclude"])
         mark_hubs(g, hubs)

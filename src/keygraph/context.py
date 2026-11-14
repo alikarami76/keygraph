@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS index_units(unit_id TEXT, job_id TEXT, tables TEXT, t
 CREATE TABLE IF NOT EXISTS fact_provenance(kind TEXT, ref TEXT, source TEXT, model TEXT, prompt_hash TEXT, job_id TEXT,
   unit_id TEXT, confidence REAL, verified INTEGER, verified_by TEXT, probe TEXT, at TEXT, PRIMARY KEY(kind, ref));
 CREATE TABLE IF NOT EXISTS index_relations(rel_id TEXT PRIMARY KEY, unit_id TEXT, from_table TEXT, from_columns TEXT,
-  to_table TEXT, to_columns TEXT, confidence REAL, reason TEXT, status TEXT, probe TEXT, model TEXT, job_id TEXT, at TEXT);
+  to_table TEXT, to_columns TEXT, confidence REAL, reason TEXT, status TEXT, probe TEXT, model TEXT, job_id TEXT, at TEXT, cardinality TEXT);
 CREATE TABLE IF NOT EXISTS performance_notes(table_id TEXT PRIMARY KEY, notes TEXT, source TEXT, at TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body, tokenize='unicode61');
 """
