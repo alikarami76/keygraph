@@ -55,7 +55,7 @@ Wait for the answers. Write them down; you will save them in step 8.
 
 ## Step 3. Install
 
-Pick the first method that is available. Add the driver (optional: `--with <driver>`, or the pip package name) only when the table below names one; for SQLite or the demo, leave it out. Install the extras that match the answers: `live` (a live connection), `mcp` (always), `yaml` (context or docs files), `code` (code index or query log).
+Pick the first method that is available. Add the driver (optional: `--with <driver>`, or the pip package name) only when the table below names one; for SQLite or the demo, leave it out. Install the extras that match the answers: `live` (a live connection), `mcp` (always), `yaml` (context or docs files; always include it when question 5, the starter context, is yes, because `keygraph context import` on a YAML file fails with "needs PyYAML" without it), `code` (code index or query log).
 
 ```bash
 # uv (preferred: a persistent tool with a stable path that GUI agents can start)
@@ -101,12 +101,12 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
 # (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no extras, no clone). It needs a keygraph whose
-# `keygraph --help` lists `demo` (0.4.0 or later, or an install from this clone); otherwise use option (a), (b) or (c). keygraph must be on PATH:
-# for a virtual environment run `export PATH="<path to that venv>/bin:$PATH"` first (or call <venv>/bin/keygraph).
+# `keygraph --help` lists `demo` (check this, not the version number); otherwise use option (a), (b) or (c). Call keygraph by its full path (`<venv>/bin/keygraph`) in every command when it is in a virtual environment: a PATH export does not last across commands in some harnesses.
 # It loads the demo's context, code index, query log and profiles, and renders. OUT must be new or empty. After it run only
 # the starter-context import (question 5, below) and a final `keygraph render`; skip the whole extras block that follows
 # (`code index .` would index the wrong folder).
 OUT="$(pwd)/keygraph-out" && keygraph demo --dir "$OUT" --no-open --json
+# Ignore the `uvx ...` lines in the reply's `next` list: they would start a PyPI build, not this install. Use `mcp_launch` from `keygraph doctor --json`.
 # The JSON reply has a `database` field: the path of the packaged demo SQLite file. Keep it for the probe source in the LLM indexing step.
 ```
 
@@ -126,7 +126,7 @@ keygraph queries import queries.jsonl --dir "$OUT"
 keygraph render --dir "$OUT"
 ```
 
-**Starter business context (question 5).** Do these in order. (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`. Every fact the demo already stores for `shop.orders` is verified, so writing it again adds nothing. Pick a table the demo context does not cover yet, such as `billing.payments`, ideally with one fact you can point to in the demo's `app/` code; or import an empty starter file and tell the user so.)
+**Starter business context (question 5).** Do these in order. (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`. Every fact the demo already stores for `shop.orders` is verified, so writing it again adds nothing. Pick a table the demo context does not cover yet, such as `shop.returns` (the demo context only lists it in an area, with no notes of its own), ideally with one fact you can point to in the demo's `app/` code; or import an empty starter file and tell the user so.)
 
 1. Look up first, before you write any entry: for each table, column, concept, metric and relation you plan to add, run `keygraph describe <table> --brief --dir "$OUT"` (it shows the notes and codes already stored, with `(llm)` after every field the indexer wrote; on a small table it may still list every column). To see which stored entries are verified, run `keygraph describe <table> --dir "$OUT"` (without `--brief`) or `keygraph search "<name>" --dir "$OUT"`. Leave out every fact that is already stored and verified.
 2. Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table.
