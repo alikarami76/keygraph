@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS column_details(table_id TEXT, col TEXT, detail TEXT, 
 CREATE TABLE IF NOT EXISTS table_info(table_id TEXT PRIMARY KEY, info TEXT);
 CREATE TABLE IF NOT EXISTS context_history(kind TEXT, ref TEXT, action TEXT, old TEXT, new TEXT, source TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS curation(kind TEXT, body JSON, source TEXT);
+CREATE TABLE IF NOT EXISTS index_jobs(job_id TEXT PRIMARY KEY, started_at TEXT, finished_at TEXT, budget INTEGER, used INTEGER,
+  tasks TEXT, keygraph_version TEXT, schema_version TEXT, status TEXT, url_env TEXT, cmd_env TEXT);
+CREATE TABLE IF NOT EXISTS index_units(unit_id TEXT, job_id TEXT, tables TEXT, tasks TEXT, rank INTEGER, packet_hash TEXT,
+  status TEXT, attempts INTEGER, tokens_est INTEGER, submitted_at TEXT, PRIMARY KEY(job_id, unit_id));
+CREATE TABLE IF NOT EXISTS fact_provenance(kind TEXT, ref TEXT, source TEXT, model TEXT, prompt_hash TEXT, job_id TEXT,
+  unit_id TEXT, confidence REAL, verified INTEGER, verified_by TEXT, probe TEXT, at TEXT, PRIMARY KEY(kind, ref));
+CREATE TABLE IF NOT EXISTS index_relations(rel_id TEXT PRIMARY KEY, unit_id TEXT, from_table TEXT, from_columns TEXT,
+  to_table TEXT, to_columns TEXT, confidence REAL, reason TEXT, status TEXT, probe TEXT, model TEXT, job_id TEXT, at TEXT);
+CREATE TABLE IF NOT EXISTS performance_notes(table_id TEXT PRIMARY KEY, notes TEXT, source TEXT, at TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body, tokenize='unicode61');
 """
 
