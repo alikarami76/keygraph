@@ -366,7 +366,7 @@ def apply_index_relations(g: Graph, ctx) -> dict:
             out["merged"] += 1
             continue
         new = {"kind": "inferred", "status": "inferred", "from": r["from_table"], "from_columns": fc, "to": r["to_table"],
-               "to_columns": tc, "confidence": conf, "cardinality": _cardinality(g, r["from_table"], fc, (r["cardinality"] if "cardinality" in r.keys() else "") or ""),
+               "to_columns": tc, "confidence": conf, "cardinality": _cardinality(g, r["from_table"], fc, (r["cardinality"] if "cardinality" in dict(r) else "") or ""),
                "ambiguous": False, "evidence": ev, "source": LLM}
         new["id"] = edge_id(new)
         g.data["edges"].append(new)

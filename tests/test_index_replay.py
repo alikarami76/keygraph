@@ -184,7 +184,7 @@ def test_replay_applies_answers_in_unit_id_order(out):
             {**fill, "null_meaning": f"from {uid}"}, {**own, "meaning": f"from {uid}"}]}, "m", "h", [])
     RP.replay(out)
     with ContextDB(out / "keygraph.db") as ctx:
-        q = lambda sql: ctx.db.execute(sql).fetchone()[0]  # noqa: E731
+        q = lambda sql: ctx.db.execute(sql).fetchone()[0]
         assert q("SELECT null_meaning FROM column_semantics WHERE table_id='shop.orders' AND col='total'") == "from a1"  # first fill wins
         assert q("SELECT meaning FROM column_semantics WHERE table_id='shop.carts' AND col='customer_id'") == "from b1"  # last llm row wins
         assert q("SELECT unit_id FROM fact_provenance WHERE kind='column' AND ref='shop.carts.customer_id'") == "b1"
