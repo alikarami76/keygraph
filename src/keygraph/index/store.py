@@ -189,7 +189,8 @@ def store_unit(ctx, g: Graph, job_id: str, unit: dict, answer: dict, model: str,
                  "pitfalls": "; ".join(clean(p, 240) for p in it.get("pitfalls") or []), "summary": clean(it.get("purpose", ""))},
                 "table", tid, meta, counts, _clamp(it.get("confidence")), v, it.get("reason", ""))
         if filters:
-            perf.setdefault(tid, {})["default_filters"] = [clean(f, 240) for f in filters]
+            cur = perf.setdefault(tid, {}).get("default_filters", [])
+            perf[tid]["default_filters"] = cur + [x for x in (clean(f, 240) for f in filters) if x not in cur]
             perf_src.setdefault(tid, (_clamp(it.get("confidence")), v, it.get("reason", "")))
 
     for i, it in enumerate(answer.get("performance") or []):
@@ -198,16 +199,25 @@ def store_unit(ctx, g: Graph, job_id: str, unit: dict, answer: dict, model: str,
             continue
         for k in _PERF_LISTS:
             if it.get(k):
-                perf.setdefault(tid, {})[k] = [clean(x, 240) for x in it[k]]
+                cur = perf.setdefault(tid, {}).get(k, [])
+                perf[tid][k] = cur + [x for x in (clean(y, 240) for y in it[k]) if x not in cur]
         perf_src[tid] = (_clamp(it.get("confidence")), vd.get(("performance", i)), it.get("reason", ""))
 
     for tid in sorted(perf):
-        old = ctx.db.execute("SELECT source FROM performance_notes WHERE table_id=?", (tid,)).fetchone()
+        old = ctx.db.execute("SELECT source, notes FROM performance_notes WHERE table_id=?", (tid,)).fetchone()
         if old and old["source"] != LLM:
             counts["kept"] += 1
             continue
+        merged = perf[tid]
+        if old:  # a resubmit adds to what this unit stored before: union per list, so live and replay agree
+            try:
+                had = json.loads(old["notes"])
+            except ValueError:
+                had = {}
+            merged = {k: (had.get(k) or []) + [x for x in perf[tid].get(k, []) if x not in (had.get(k) or [])]
+                      for k in sorted(set(had) | set(perf[tid]))}
         ctx.db.execute("INSERT OR REPLACE INTO performance_notes VALUES(?,?,?,?)",
-                       (tid, json.dumps(perf[tid], ensure_ascii=False, sort_keys=True), LLM, meta["now"]))
+                       (tid, json.dumps(merged, ensure_ascii=False, sort_keys=True), LLM, meta["now"]))
         conf, v, reason = perf_src[tid]
         _prov(ctx, "performance", tid, meta, conf, v, reason)
         counts["performance"] = counts.get("performance", 0) + 1
@@ -243,7 +253,8 @@ def answers_dir(out_dir) -> Path:
     return Path(out_dir) / "index" / ANSWERS
 
 
-def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prompt_hash: str, verdicts: list[dict]) -> Path:
+def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prompt_hash: str, verdicts: list[dict],
+                attempts: int | None = None) -> Path:
     """index/answers/<unit_id>.json: sorted keys, no timestamps. Replay reads these files."""
     p = answers_dir(out_dir) / f"{unit['unit_id']}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -252,10 +263,26 @@ def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prom
     body = {"answer": known, "job_id": job_id, "model": clean(model, 120), "prompt_hash": prompt_hash,
             "schema_version": SCHEMA_VERSION, "tables": sorted(unit.get("tables") or []), "unit_id": unit["unit_id"],
             "verdicts": [{"kind": v.get("kind"), "index": v.get("index"), **_verdict(v)} for v in verdicts]}
+    if attempts is not None:  # the unit's attempts after this submit: replay uses it to tell a file from a crashed submit
+        body["attempts"] = attempts
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
     os.replace(tmp, p)  # atomic: replay sees the old file or the new one, never half of one
     return p
+
+
+def set_saved_attempts(out_dir, unit_id: str, attempts: int) -> None:
+    """Rewrite the `attempts` of a saved answer (refresh puts the unit back to 0); no file means nothing to do."""
+    p = answers_dir(out_dir) / f"{unit_id}.json"
+    try:
+        body = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(body, dict) and "attempts" in body:
+        body["attempts"] = attempts
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+        os.replace(tmp, p)
 
 
 def merge_saved(out_dir, unit: dict, answer: dict, verdicts: list[dict]) -> tuple[dict, list[dict]]:

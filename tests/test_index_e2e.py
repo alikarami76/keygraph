@@ -11,6 +11,8 @@ from test_example_shop import SHOP, _build
 
 from keygraph.cli import main
 
+NEXT = "index_next (CLI: keygraph index next)"
+FINISH = "index_finish (CLI: keygraph index finish)"
 ORDERS_UNIT = "949700962b66"
 MARKER = "MARKER_ZEBRA_7731"
 TRUE_REL = {"from_table": "billing.payments", "from_columns": ["order_id"], "to_table": "shop.orders", "to_columns": ["id"],
@@ -79,7 +81,7 @@ def test_fake_agent_indexes_the_shop_end_to_end(built, tmp_path, monkeypatch, ca
             break
         res = submit(n["unit_id"], _answer(n["unit_id"], n["tasks"], n["attempt"]))
         results.setdefault(n["unit_id"], []).append(res)
-    assert n == {"status": "done", "finish": "keygraph index finish"}
+    assert n == {"status": "done", "finish": FINISH}
 
     first, second = results[ORDERS_UNIT]
     assert first["status"] == "rejected" and first["attempts_left"] == 2 and first["accepted"] == 0

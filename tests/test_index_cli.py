@@ -11,6 +11,8 @@ from keygraph.cli import main
 from keygraph.context import ContextDB
 from keygraph.index import jobs
 
+NEXT = "index_next (CLI: keygraph index next)"
+FINISH = "index_finish (CLI: keygraph index finish)"
 ORDERS_UNIT = "949700962b66"  # payments, customers, order_items, orders, sellers
 EMPTY = {"relations": []}
 BAD = {"relations": [{"from_table": "nope.nothing", "from_columns": ["x"], "to_table": "shop.orders", "to_columns": ["id"],
@@ -67,7 +69,7 @@ def test_unset_env_var_error_names_only_the_variable(work, capsys, monkeypatch):
 
 def test_start_next_and_idempotence(work, capsys):
     r = run(capsys, work, "index", "start")
-    assert r["job_id"] == "job-0001" and r["units"] == 18 and r["budget"] == 200000 and r["next"] == "keygraph index next"
+    assert r["job_id"] == "job-0001" and r["units"] == 18 and r["budget"] == 200000 and r["next"] == NEXT
     assert (work / "index" / "base_graph.json").exists()
     a, b = run(capsys, work, "index", "next"), run(capsys, work, "index", "next")
     assert a == b and a["status"] == "unit" and a["unit_id"] == ORDERS_UNIT and a["attempt"] == 1
@@ -82,7 +84,7 @@ def test_start_next_and_idempotence(work, capsys):
 def test_budget_exhaustion_resumes_after_start_with_a_larger_budget(work, capsys, tmp_path):
     run(capsys, work, "index", "start", "--budget", "100")
     ex = run(capsys, work, "index", "next")
-    assert ex["status"] == "budget_exhausted" and ex["resume"].startswith("keygraph index start --budget ") and ex["needed"] > 100
+    assert ex["status"] == "budget_exhausted" and ex["resume"].startswith("index_start budget=") and "CLI: keygraph index start --budget " in ex["resume"] and ex["needed"] > 100
     # `start` with a bigger budget resumes the open job and raises its budget; nothing is lost
     r = run(capsys, work, "index", "start", "--budget", "200000")
     assert r["job_id"] == "job-0001" and r["resumed"] is True and r["budget"] == 200000
@@ -156,9 +158,9 @@ def test_done_when_every_unit_is_submitted_and_finish_closes_the_job(work, capsy
     for _ in range(2):
         submit(capsys, work, tmp_path, run(capsys, work, "index", "next")["unit_id"], EMPTY)
     n = run(capsys, work, "index", "next")
-    assert n == {"status": "done", "finish": "keygraph index finish"}
+    assert n == {"status": "done", "finish": FINISH}
     st = run(capsys, work, "index", "status")
-    assert st["units"]["skipped"] == 16 and st["units"]["done"] == 2 and st["next"] == "keygraph index finish"
+    assert st["units"]["skipped"] == 16 and st["units"]["done"] == 2 and st["next"] == FINISH
     fin = run(capsys, work, "index", "finish")
     assert fin["units"] == 2 and (work / "index" / "summary.json").exists()
     assert run(capsys, work, "index", "status")["status"] == "done"
@@ -285,6 +287,7 @@ TASKS2 = ("--tasks", "tables,columns")
 T_ORDERS = {"table": "shop.orders", "purpose": "One checkout", "reason": "comment", "confidence": 0.8}
 T_CUST = {"table": "shop.customers", "purpose": "A buyer", "reason": "comment", "confidence": 0.8}
 T_BAD = {"table": "nope.nothing", "purpose": "x", "reason": "made up", "confidence": 0.5}
+FAILED_HINT = "this unit keeps the deterministic map; items accepted earlier stay stored"
 RESUBMIT = "resubmit only the rejected items for this unit_id; accepted items are already stored"
 
 
@@ -298,14 +301,14 @@ def test_partial_answer_keeps_the_unit_pending_and_resubmit_merges(work, capsys,
     r1 = submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_ORDERS, T_BAD], "columns": []})
     assert r1["status"] == "partially_accepted" and r1["resubmit"] is True and r1["accepted"] == 1 and r1["attempts_left"] == 2
     assert [x["item"] for x in r1["rejected"]] == ["tables[1]"] and RESUBMIT in r1["hint"]
-    assert ORDERS_UNIT in r1["next"] and "submit" in r1["next"]
+    assert r1["next"] == f"index_submit unit_id={ORDERS_UNIT} (CLI: keygraph index submit {ORDERS_UNIT} FILE|-)"
     n = run(capsys, work, "index", "next")
     assert n["unit_id"] == ORDERS_UNIT and n["attempt"] == 2  # still pending
     assert _answer_file(work, ORDERS_UNIT)["answer"]["tables"][0]["table"] == "shop.orders"
     # the resubmit holds only the corrected item, and no `columns` list at all
     r2 = submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_CUST, T_ORDERS]})
     assert r2["status"] == "accepted" and r2["rejected"] == [] and "attempts_left" not in r2
-    assert r2["next"] == "keygraph index next"
+    assert r2["next"] == NEXT
     assert [t["table"] for t in _answer_file(work, ORDERS_UNIT)["answer"]["tables"]] == ["shop.orders", "shop.customers"]  # union, no duplicate
     assert _units(work)[ORDERS_UNIT]["status"] == "done"
 
@@ -317,7 +320,7 @@ def test_partial_answers_fail_the_unit_after_the_third_submission(work, capsys, 
         r = submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_ORDERS, T_BAD], "columns": []})
         left.append((r["status"], r.get("attempts_left")))
     assert left == [("partially_accepted", 2), ("partially_accepted", 1), ("failed", 0)]
-    assert r["next"] == "keygraph index next" and _units(work)[ORDERS_UNIT]["status"] == "failed"
+    assert r["next"] == NEXT and _units(work)[ORDERS_UNIT]["status"] == "failed" and r["hint"] == FAILED_HINT
     assert [t["table"] for t in _answer_file(work, ORDERS_UNIT)["answer"]["tables"]] == ["shop.orders"]  # accepted items stay
 
 
@@ -326,11 +329,11 @@ def test_every_submit_reply_carries_next_and_accepted_has_no_attempts_left(work,
     rej = submit(capsys, work, tmp_path, ORDERS_UNIT, BAD)
     assert rej["status"] == "rejected" and rej["resubmit"] is True and ORDERS_UNIT in rej["next"] and rej["attempts_left"] == 2
     ok = submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)
-    assert ok["status"] == "accepted" and ok["next"] == "keygraph index next" and "attempts_left" not in ok
+    assert ok["status"] == "accepted" and ok["next"] == NEXT and "attempts_left" not in ok
     unit = run(capsys, work, "index", "next")["unit_id"]
     for _ in range(3):
         last = submit(capsys, work, tmp_path, unit, BAD)
-    assert last["status"] == "failed" and last["next"] == "keygraph index next" and last["attempts_left"] == 0
+    assert last["status"] == "failed" and last["hint"] == FAILED_HINT and last["next"] == NEXT and last["attempts_left"] == 0
 
 
 def test_missing_kinds_are_one_rejection_with_a_fix(work, capsys, tmp_path):
@@ -355,7 +358,7 @@ def test_instructions_header_has_naming_rule_and_limits_for_every_kind():
 
 def test_unreadable_file_and_invalid_json_exit_2_without_a_traceback(work, capsys, tmp_path):
     run(capsys, work, "index", "start", "--tasks", "relations")
-    for name, data in (("missing.json", None), ("binary.json", b"\xff\xfe\x00"), ("bad.json", b"{not json")):
+    for name, data in (("missing.json", None), ("binary.json", b"\xff\xfe\x00"), ("bad.json", b"{not json")):  # none uses an attempt
         f = tmp_path / name
         if data is not None:
             f.write_bytes(data)
@@ -372,7 +375,8 @@ def test_submit_and_next_on_a_finished_job_say_what_to_do(work, capsys, tmp_path
     run(capsys, work, "index", "start", "--tasks", "relations", "--max-units", "1")
     submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)
     run(capsys, work, "index", "finish")
-    hint = ("the job is finished; run `keygraph index refresh` to index changed tables or `keygraph index start --restart` to redo all")
+    hint = ("the job is finished; run `keygraph index refresh` (CLI only) to index changed tables or `keygraph index start "
+            "--restart` (MCP: index_start restart=true) to redo all")
     assert submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY) == {"status": "finished", "hint": hint}
     assert run(capsys, work, "index", "next") == {"status": "finished", "hint": hint}
 
@@ -403,21 +407,75 @@ def test_budget_exhausted_names_the_unit_it_could_not_afford(work, capsys):
     assert run(capsys, work, "index", "next")["unit_id"] == ORDERS_UNIT
 
 
-def test_answer_file_is_written_only_after_the_unit_is_updated(work, capsys, tmp_path, monkeypatch):
-    """A crash between the facts commit and the unit update leaves no answer file: replay never sees a unit that is not done."""
-    from keygraph.index import cli_api as X
+def test_three_free_parse_errors_per_unit_then_they_count_as_attempts(work, capsys, tmp_path):
     run(capsys, work, "index", "start", "--tasks", "relations")
-    real = X.jobs.update_unit
+    f = tmp_path / "bad.json"
+    f.write_text("{not json", encoding="utf-8")
+    for n in (1, 2, 3):
+        assert main(["index", "submit", ORDERS_UNIT, str(f), "--dir", str(work), "--json"]) == 2
+        out = json.loads(capsys.readouterr().out)
+        assert out["status"] == "error" and f"{n} of 3" in out["error"]
+    assert _units(work)[ORDERS_UNIT]["attempts"] == 0
+    r = run(capsys, work, "index", "submit", ORDERS_UNIT, str(f))
+    assert r["status"] == "rejected" and r["attempts_left"] == 2 and "not valid JSON" in r["rejected"][0]["reason"]
+    assert _units(work)[ORDERS_UNIT]["attempts"] == 1
+    other = run(capsys, work, "index", "next")  # same unit; another unit has its own three free errors
+    assert other["unit_id"] == ORDERS_UNIT
+
+
+def _crash_replay_ignores_the_file(work, capsys, tmp_path, monkeypatch, target, only_done=False):
+    from keygraph.index import cli_api as X
+    run(capsys, work, "index", "start", "--tasks", "tables")
+    real = getattr(target[0], target[1])
 
     def boom(*a, **k):
-        if k.get("status") == "done":
-            raise RuntimeError("crash")
-        return real(*a, **k)
+        if only_done and k.get("status") != "done":
+            return real(*a, **k)
+        raise RuntimeError("crash")
 
-    monkeypatch.setattr(X.jobs, "update_unit", boom)
+    monkeypatch.setattr(target[0], target[1], boom)
     with pytest.raises(RuntimeError):
-        X.submit_text(work, ORDERS_UNIT, json.dumps(EMPTY))
-    assert not (work / "index" / "answers" / f"{ORDERS_UNIT}.json").exists()
+        X.submit_text(work, ORDERS_UNIT, json.dumps({"tables": [T_ORDERS]}))
     monkeypatch.undo()
-    assert submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)["status"] == "accepted"  # resubmit heals it
-    assert not list((work / "index" / "answers").glob("*.tmp"))
+    assert (work / "index" / "answers" / f"{ORDERS_UNIT}.json").exists()  # written first
+    assert _units(work)[ORDERS_UNIT]["status"] == "pending"
+    assert run(capsys, work, "index", "replay")["units"] == 0  # the file of a unit that is not done is ignored
+    assert submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_ORDERS]})["status"] == "accepted"  # resubmit heals
+    assert run(capsys, work, "index", "replay")["units"] == 1
+
+
+def test_crash_before_the_facts_commit_leaves_a_file_that_replay_ignores(work, capsys, tmp_path, monkeypatch):
+    from keygraph.index import cli_api as X
+    _crash_replay_ignores_the_file(work, capsys, tmp_path, monkeypatch, (X.ST, "store_unit"))
+
+
+def test_crash_before_the_unit_is_marked_done_leaves_a_file_that_replay_ignores(work, capsys, tmp_path, monkeypatch):
+    from keygraph.index import cli_api as X
+    _crash_replay_ignores_the_file(work, capsys, tmp_path, monkeypatch, (X.jobs, "update_unit"), only_done=True)
+
+
+def test_finish_fails_clearly_when_a_done_unit_has_no_answer_file(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations", "--max-units", "1")
+    submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)
+    (work / "index" / "answers" / f"{ORDERS_UNIT}.json").unlink()
+    assert main(["index", "finish", "--dir", str(work)]) == 2
+    err = capsys.readouterr().err
+    assert ORDERS_UNIT in err and "no answer file" in err and "Traceback" not in err
+
+
+def test_performance_items_merge_in_the_live_db_like_the_saved_union(work, capsys, tmp_path):
+    def perf(*filters):
+        return {"table": "shop.orders", "common_filters": list(filters), "reason": "log", "confidence": 0.6}
+
+    def notes():
+        with ContextDB(work / "keygraph.db") as ctx:
+            row = ctx.db.execute("SELECT notes FROM performance_notes WHERE table_id='shop.orders'").fetchone()
+            return json.loads(row[0])["common_filters"]
+
+    run(capsys, work, "index", "start", "--tasks", "performance")
+    r1 = submit(capsys, work, tmp_path, ORDERS_UNIT, {"performance": [perf("status"), {**perf("x"), "table": "nope.t"}]})
+    assert r1["status"] == "partially_accepted" and notes() == ["status"]
+    r2 = submit(capsys, work, tmp_path, ORDERS_UNIT, {"performance": [perf("placed_at", "status")]})
+    assert r2["status"] == "accepted" and notes() == ["status", "placed_at"]
+    run(capsys, work, "index", "finish")  # the replay rebuilds from the union file
+    assert notes() == ["status", "placed_at"]

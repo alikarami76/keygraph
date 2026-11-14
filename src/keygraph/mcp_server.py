@@ -315,7 +315,7 @@ def build_server(dir: str | Path) -> MCPServer:
         counts, and `next`. Include every requested kind as a list ([] when empty). Accepted items are stored at once; on
         partially_accepted or rejected, resubmit only the rejected items for this unit_id (attempts_left counts down, the
         third rejected or partial submission fails the unit and keeps the deterministic map)."""
-        return run(IX.submit_result, out, unit_id, answer, model, mcp=True)
+        return run(IX.submit_result, out, unit_id, answer, model)
 
     @srv.tool()
     def index_status() -> dict:

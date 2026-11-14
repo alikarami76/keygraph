@@ -33,7 +33,10 @@ from . import validate as VL
 
 DEFAULT_BUDGET = 200_000
 MAX_ATTEMPTS = 3
-NEXT, FINISH = "keygraph index next", "keygraph index finish"
+# One value for both surfaces (CLI and MCP return identical JSON), so every hint names both forms.
+NEXT = "index_next (CLI: keygraph index next)"
+FINISH = "index_finish (CLI: keygraph index finish)"
+FREE_PARSE_ERRORS = 3
 DIALECTS = ("mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite")
 LEDGER = "ledger.json"
 REASONS_KEPT = 20
@@ -90,8 +93,9 @@ def _entry(led: dict, uid: str) -> dict:
 
 
 RESUBMIT_HINT = "resubmit only the rejected items for this unit_id; accepted items are already stored"
-FINISHED_HINT = ("the job is finished; run `keygraph index refresh` to index changed tables or "
-                 "`keygraph index start --restart` to redo all")
+FINISHED_HINT = ("the job is finished; run `keygraph index refresh` (CLI only) to index changed tables or "
+                 "`keygraph index start --restart` (MCP: index_start restart=true) to redo all")
+FAILED_HINT = "this unit keeps the deterministic map; items accepted earlier stay stored"
 
 
 def _finished(ctx) -> dict | None:
@@ -202,7 +206,7 @@ def next_result(dir) -> dict:
             devlog.decide("index_next", status="budget_exhausted", unit_id=unit["unit_id"], tokens_est=est, budget_left=left)
             more = max(job["budget"] * 2, job["used"] + est)
             return {"status": "budget_exhausted", "unit_id": unit["unit_id"], "budget_left": left, "needed": est,
-                    "resume": f"keygraph index start --budget {more}"}
+                    "resume": f"index_start budget={more} (CLI: keygraph index start --budget {more})"}
         tasks = unit["tasks"]
         devlog.decide("index_next", status="unit", unit_id=unit["unit_id"], tokens_est=est, attempt=unit["attempts"] + 1,
                       budget_left=left, trimmed=len(pk.get("trimmed") or []))
@@ -228,21 +232,23 @@ def _source(job: dict, g) -> tuple[PR.Source | None, str]:
 
 
 def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET) -> dict:
-    """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt."""
+    """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt, for the first
+    three times per unit; after that each one is a rejection like any other."""
     try:
-        answer = json.loads(text)
+        answer, err = json.loads(text), None
     except ValueError as exc:
-        raise ValueError(f"the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} at line "
-                         f"{getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')}); fix the file and submit again, "
-                         f"this did not use an attempt") from None
-    return submit_result(dir, unit_id, answer, model, probe_seconds)
+        answer = None
+        err = (f"the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} at line "
+               f"{getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')}); fix the file and submit again")
+    return submit_result(dir, unit_id, answer, model, probe_seconds, _parse_error=err, _answer_tokens=(len(text) + 3) // 4 if err else None)
 
 
-def _resubmit(unit_id: str, mcp: bool) -> str:
-    return f"index_submit unit_id={unit_id}" if mcp else f"keygraph index submit {unit_id} FILE|-"
+def _resubmit(unit_id: str) -> str:
+    return f"index_submit unit_id={unit_id} (CLI: keygraph index submit {unit_id} FILE|-)"
 
 
-def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *, mcp: bool = False) -> dict:
+def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *,
+                  _parse_error: str | None = None, _answer_tokens: int | None = None) -> dict:
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
 
     Returns {status: accepted | partially_accepted | rejected | failed, accepted, rejected: [{item, reason}], unverified,
@@ -251,7 +257,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
     items are accepted and some rejected the status is `partially_accepted`: the accepted items are stored, the unit stays
     pending and the agent resubmits only the rejected ones (the saved answer is the union). Every rejected or partial
     submission uses one of three attempts; the third one marks the unit failed. The packet is charged once per unit.
-    `mcp` only changes the wording of `next`. A finished job returns {status: finished, hint}."""
+    Text that is not JSON (`_parse_error`, CLI only) is free three times per unit. A finished job returns {status: finished, hint}."""
     out = Path(dir)
     g = _base(out)
     with ContextDB(out / "keygraph.db", g) as ctx:
@@ -275,11 +281,20 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         if not model and isinstance(answer, dict) and isinstance(answer.get("model"), str):
             model = answer["model"]
         model = (model or "unknown").strip()[:120] or "unknown"
-        atoks = PK.estimate(answer)
+        atoks = _answer_tokens if _answer_tokens is not None else PK.estimate(answer)
         led = _ledger(out)
         ent = _entry(led, unit_id)
+        if _parse_error:
+            ent["parse_errors"] = ent.get("parse_errors", 0) + 1
+            if ent["parse_errors"] <= FREE_PARSE_ERRORS:
+                _save_ledger(out, led)
+                raise ValueError(f"{_parse_error} (free parse error {ent['parse_errors']} of {FREE_PARSE_ERRORS}: no attempt used; "
+                                 f"later ones count as attempts)")
         again = bool(ent.get("partial"))  # an earlier submit stored some items and left the rest to be resubmitted
-        val = VL.validate(answer, g, ctx, pk, tasks, require_all=not again)
+        if _parse_error:
+            val = {"accepted": [], "rejected": [], "errors": [f"$: {_parse_error}"]}
+        else:
+            val = VL.validate(answer, g, ctx, pk, tasks, require_all=not again)
         rejected = [{"item": "$", "reason": e.removeprefix("$: ")} for e in val["errors"]] + \
                    [{"item": r["item"], "reason": r["reason"]} for r in val["rejected"]]
         attempts = unit["attempts"] + 1
@@ -299,26 +314,25 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
                    "verified": 0, "probe_failed": 0, "attempts_left": MAX_ATTEMPTS - attempts if not failed else 0,
                    "budget_left": left, "probe_source": "none"}
             if failed:
-                return {**res, "next": "index_next" if mcp else NEXT}
-            return {**res, "resubmit": True, "next": _resubmit(unit_id, mcp),
+                return {**res, "hint": FAILED_HINT, "next": NEXT}
+            return {**res, "resubmit": True, "next": _resubmit(unit_id),
                     "hint": RESUBMIT_HINT if again else "nothing was stored; fix the listed problems and submit the answer "
                                                         "again for this unit_id"}
         src, label = _source(job, g)
         verdicts = PR.probe_items(val["accepted"], g, src.runner if src else None, src.quote if src else None,
                                   bare=src.bare if src else False, time_budget=probe_seconds)
         acc, verds = ST.accepted_answer(val, verdicts)
+        # Order: answer file first (atomic), then the facts, then the unit status. A crash in between leaves a file whose
+        # `attempts` is ahead of the unit row; replay ignores such a file, and a resubmit stores the same items again.
+        saved, saved_v = ST.merge_saved(out, unit, acc, verds) if again else (acc, verds)
+        ST.save_answer(out, unit, job_id, saved, model, prompt, saved_v, attempts=attempts)
         if not again:
             ctx.db.execute("DELETE FROM index_relations WHERE unit_id=?", (unit_id,))
+            ctx.db.execute(f"DELETE FROM performance_notes WHERE source=? AND table_id IN ({','.join('?' * len(unit['tables']))})",
+                           (ST.LLM, *unit["tables"]))
         ST.store_unit(ctx, g, job_id, unit, acc, model, prompt, verds)
-        if rejected:
-            jobs.update_unit(ctx, job_id, unit_id, status="failed" if failed else None, attempts=attempts, tokens_est=est,
-                             packet_hash=ph)
-        else:
-            jobs.update_unit(ctx, job_id, unit_id, status="done", attempts=attempts, tokens_est=est, packet_hash=ph)
-        # The answer file comes last: facts and unit status are committed first, so a crash in between leaves no file for a
-        # unit that is not done (replay reads files only); a resubmit stores the same items again. Not atomic as a whole.
-        saved, saved_v = ST.merge_saved(out, unit, acc, verds) if again else (acc, verds)
-        ST.save_answer(out, unit, job_id, saved, model, prompt, saved_v)
+        jobs.update_unit(ctx, job_id, unit_id, status="failed" if failed else "done" if not rejected else None, attempts=attempts,
+                         tokens_est=est, packet_hash=ph)
         n_ok = sum(1 for v in verds if v["verified"] is True)
         n_bad = sum(1 for v in verds if v["verified"] is False)
         n_unk = len(verds) - n_ok - n_bad
@@ -337,11 +351,11 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         res = {"status": status, "accepted": len(val["accepted"]), "rejected": rejected, "unverified": n_unk, "verified": n_ok,
                "probe_failed": n_bad, "budget_left": left, "probe_source": label}
         if status == "accepted":
-            return {**res, "next": "index_next" if mcp else NEXT}
+            return {**res, "next": NEXT}
         if status == "failed":
-            return {**res, "attempts_left": 0, "next": "index_next" if mcp else NEXT}
+            return {**res, "attempts_left": 0, "hint": FAILED_HINT, "next": NEXT}
         return {**res, "attempts_left": MAX_ATTEMPTS - attempts, "resubmit": True, "hint": RESUBMIT_HINT,
-                "next": _resubmit(unit_id, mcp)}
+                "next": _resubmit(unit_id)}
 
 
 # --- status, finish, replay, refresh ---------------------------------------------------------------------------
@@ -378,6 +392,13 @@ def finish_result(dir) -> dict:
     Returns the summary (counts only), the same dict `replay` returns."""
     out = Path(dir)
     _base(out)
+    with ContextDB(out / "keygraph.db") as ctx:
+        job = jobs.latest_job(ctx)
+        done = jobs.list_units(ctx, job["job_id"], "done") if job else []
+    for u in done:
+        if not (ST.answers_dir(out) / f"{u['unit_id']}.json").exists():
+            raise ValueError(f"unit {u['unit_id']} is marked done but has no answer file (index/answers/{u['unit_id']}.json); restore the "
+                             f"file, or run `keygraph index start --restart` to index again")
     res = RP.finish(out)
     with ContextDB(out / "keygraph.db") as ctx:
         job = jobs.open_job(ctx)
@@ -441,6 +462,7 @@ def refresh_result(dir) -> dict:
             dropped.append(uid)
         for uid in changed + retried:
             led.pop(uid, None)
+            ST.set_saved_attempts(out, uid, 0)  # the old answer keeps counting until the unit is submitted again
         _save_ledger(out, led)
         jobs.add_units(ctx, job_id, added, job["tasks"])
         if (changed or retried or added) and job["status"] != "open":

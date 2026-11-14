@@ -62,17 +62,35 @@ def _facts(ctx) -> dict:
             "relations": {r[0]: r[1] for r in rel}}
 
 
+def _crashed(ctx, f: Path, a: dict) -> bool:
+    """True for a file written by a submit that never committed: its unit row (same job) is still pending with fewer attempts
+    than the file records. Files without the `attempts` field, or from another job, always count."""
+    if not isinstance(a.get("attempts"), int):
+        return False
+    try:
+        row = ctx.db.execute("SELECT status, attempts FROM index_units WHERE job_id=? AND unit_id=?",
+                             (a.get("job_id"), a.get("unit_id") or f.stem)).fetchone()
+    except Exception:  # noqa: BLE001  (a context file without the index tables)
+        return False
+    return bool(row and row["status"] == "pending" and row["attempts"] < a["attempts"])
+
+
 def replay(out_dir) -> dict:
     """Rebuild the llm layer from index/answers/ and render. Never opens a database connection to a source."""
     from keygraph.cli import render
     out = Path(out_dir)
     g = _load_base(out)
     files = sorted(answers_dir(out).glob("*.json"), key=lambda p: p.stem)
+    have_db = (out / "keygraph.db").exists()
+    used = 0
     totals = {"kept": 0, "filled": 0, "probe_failed": 0}
     with ContextDB(out / "keygraph.db", g) as ctx:
         clear_llm(ctx)
         for f in files:
             a = json.loads(f.read_text(encoding="utf-8"))
+            if have_db and _crashed(ctx, f, a):
+                continue
+            used += 1
             unit = {"unit_id": a.get("unit_id") or f.stem, "tables": a.get("tables") or []}
             res = store_unit(ctx, g, a.get("job_id", ""), unit, a.get("answer") or {}, a.get("model", ""), a.get("prompt_hash", ""),
                              a.get("verdicts") or [], reindex=False)
@@ -84,7 +102,7 @@ def replay(out_dir) -> dict:
             g.data["profiles"] = prof
         render(out, g, ctx)
         facts = _facts(ctx)
-    return {"units": len(files), **totals, **facts,
+    return {"units": used, **totals, **facts,
             "llm_edges": sum(1 for e in g.data["edges"] if e.get("source") == LLM)}
 
 
