@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS column_details(table_id TEXT, col TEXT, detail TEXT, 
 CREATE TABLE IF NOT EXISTS table_info(table_id TEXT PRIMARY KEY, info TEXT);
 CREATE TABLE IF NOT EXISTS context_history(kind TEXT, ref TEXT, action TEXT, old TEXT, new TEXT, source TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS curation(kind TEXT, body JSON, source TEXT);
+CREATE TABLE IF NOT EXISTS index_jobs(job_id TEXT PRIMARY KEY, started_at TEXT, finished_at TEXT, budget INTEGER, used INTEGER,
+  tasks TEXT, keygraph_version TEXT, schema_version TEXT, status TEXT, url_env TEXT, cmd_env TEXT, dialect TEXT);
+CREATE TABLE IF NOT EXISTS index_units(unit_id TEXT, job_id TEXT, tables TEXT, tasks TEXT, rank INTEGER, packet_hash TEXT,
+  status TEXT, attempts INTEGER, tokens_est INTEGER, submitted_at TEXT, PRIMARY KEY(job_id, unit_id));
+CREATE TABLE IF NOT EXISTS fact_provenance(kind TEXT, ref TEXT, source TEXT, model TEXT, prompt_hash TEXT, job_id TEXT,
+  unit_id TEXT, confidence REAL, verified INTEGER, verified_by TEXT, probe TEXT, at TEXT, PRIMARY KEY(kind, ref));
+CREATE TABLE IF NOT EXISTS index_relations(rel_id TEXT PRIMARY KEY, unit_id TEXT, from_table TEXT, from_columns TEXT,
+  to_table TEXT, to_columns TEXT, confidence REAL, reason TEXT, status TEXT, probe TEXT, model TEXT, job_id TEXT, at TEXT, cardinality TEXT);
+CREATE TABLE IF NOT EXISTS override_rejects(item TEXT);
+CREATE TABLE IF NOT EXISTS performance_notes(table_id TEXT PRIMARY KEY, notes TEXT, source TEXT, at TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body, tokenize='unicode61');
 """
 
@@ -140,6 +150,10 @@ class ContextDB:
         self.db.row_factory = sqlite3.Row
         if not (readonly and self.path.exists()):
             self.db.executescript(SCHEMA)
+            if "cardinality" not in {r[1] for r in self.db.execute("PRAGMA table_info(index_relations)")}:
+                self.db.execute("ALTER TABLE index_relations ADD COLUMN cardinality TEXT")  # a file from before the column
+            if "dialect" not in {r[1] for r in self.db.execute("PRAGMA table_info(index_jobs)")}:
+                self.db.execute("ALTER TABLE index_jobs ADD COLUMN dialect TEXT")
         else:  # a file from an older keygraph may lack newer tables: read them as empty (temp tables, file untouched)
             have = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
             for stmt in SCHEMA.split(";"):
@@ -380,6 +394,16 @@ class ContextDB:
         if globs:
             self.db.execute("INSERT INTO curation VALUES('copies',?,?)", (json.dumps(list(globs)), source))
         self.db.commit()
+
+    def set_override_rejects(self, items: list[dict]) -> None:
+        """Keep the `reject` items of the overrides this map was built with (replaces the earlier ones)."""
+        self.db.execute("DELETE FROM override_rejects")
+        for it in items:
+            self.db.execute("INSERT INTO override_rejects VALUES(?)", (json.dumps(it, ensure_ascii=False, sort_keys=True),))
+        self.db.commit()
+
+    def override_rejects(self) -> list[dict]:
+        return [json.loads(r[0]) for r in self.db.execute("SELECT item FROM override_rejects ORDER BY rowid")]
 
     def clear_curation(self) -> None:
         """Forget all curation rules (a build that imports context starts from the files it imports now)."""

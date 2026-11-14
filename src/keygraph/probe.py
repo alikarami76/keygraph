@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+import sqlite3
+import urllib.parse
 from decimal import Decimal
+from pathlib import Path
 from typing import Callable
 
 from . import devlog
@@ -18,18 +21,42 @@ class UnsafeSQL(ValueError):
     pass
 
 
+_TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\])|(/\*.*?\*/|--[^\n]*)""", re.DOTALL)
+
+
 def assert_select(sql: str) -> str:
-    s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
-    s = re.sub(r"--[^\n]*", " ", s).strip()
+    """The statement with comments removed, or UnsafeSQL. One left-to-right pass reads quoted text ('..', "..", `..`, [..])
+    and comments; comments are cut only outside quotes. The checks run on a copy where every quoted text is a placeholder, so
+    keywords hidden after a quote or comment marker are still seen. Any backslash, dollar quote and E'..' string is
+    refused too (engines disagree on where such a string ends). Any `;` (even inside a quote) and any unterminated
+    quote are refused: keygraph's own SQL never needs them."""
+    if "\\" in sql:  # MySQL reads a backslash as an escape, other engines do not: the two readings of a string can differ
+        raise UnsafeSQL("backslash not allowed")
+    if re.search(r"\$\w*\$", sql):
+        raise UnsafeSQL("dollar-quoted strings are not allowed")
+    out, masked, pos = [], [], 0
+    for m in _TOKENS.finditer(sql):
+        if m.group(1) and m.group(1)[0] == "'" and m.start() and sql[m.start() - 1] in "eE" \
+                and (m.start() < 2 or not (sql[m.start() - 2].isalnum() or sql[m.start() - 2] in "_$")):
+            raise UnsafeSQL("escape strings (E'..') are not allowed")
+        out.append(sql[pos:m.start()])
+        masked.append(sql[pos:m.start()])
+        out.append(m.group(1) if m.group(1) is not None else " ")
+        masked.append(" 0 " if m.group(1) is not None else " ")
+        pos = m.end()
+    out.append(sql[pos:])
+    masked.append(sql[pos:])
+    s, stripped = "".join(out).strip(), "".join(masked).strip()
     if s.endswith(";"):
-        s = s[:-1].strip()
+        s, stripped = s[:-1].strip(), stripped[:-1].strip()
     if not s:
         raise UnsafeSQL("empty statement")
-    if ";" in s:
+    if ";" in s or ";" in stripped:
         raise UnsafeSQL("only one statement is allowed")
-    if not re.match(r"select\b", s, re.I):
+    if re.search(r"['\"`]", stripped):
+        raise UnsafeSQL("unterminated quote")
+    if not re.match(r"select\b", stripped, re.IGNORECASE):
         raise UnsafeSQL("only SELECT statements are allowed")
-    stripped = re.sub(r"'(?:[^']|'')*'", "''", s)
     m = _BAD.search(stripped)
     if m:
         raise UnsafeSQL(f"forbidden keyword in query: {m.group(0)}")
@@ -56,8 +83,30 @@ class SelectOnlyRunner:
         return list(self._execute(assert_select(sql)))
 
     @classmethod
+    def from_sqlite(cls, path: str, as_dicts: bool = False, timeout: float = 10.0) -> SelectOnlyRunner:
+        """A stdlib sqlite3 runner, opened read-only (`file:...?mode=ro`), so it works without the live extra."""
+        uri = "file:" + urllib.parse.quote(str(Path(path).resolve())) + "?mode=ro"
+
+        def ex(sql):
+            con = sqlite3.connect(uri, uri=True, timeout=timeout)
+            try:
+                cur = con.execute(sql)
+                labels = [d[0] for d in cur.description or []]
+                return [row_dict(labels, r) if as_dicts else tuple(r) for r in cur.fetchall()]
+            finally:
+                con.close()
+        return cls(ex)
+
+    @classmethod
     def from_url(cls, url: str, as_dicts: bool = False) -> SelectOnlyRunner:
-        """as_dicts: rows keyed by column name (what the information_schema adapters read) instead of tuples."""
+        """as_dicts: rows keyed by column name (what the information_schema adapters read) instead of tuples.
+        `sqlite:` URLs use the standard library (read-only); other URLs need SQLAlchemy (extra: live)."""
+        if url.lower().startswith("sqlite:"):
+            rest = url.split(":", 1)[1]
+            path = rest[3:].split("?", 1)[0] if rest.startswith("///") else ""
+            if not path or path == ":memory:":
+                raise ValueError("a sqlite URL needs a file path: sqlite:///path/to/file.db")
+            return cls.from_sqlite(urllib.parse.unquote(path), as_dicts)
         from sqlalchemy import create_engine, text
         eng = create_engine(url)
 
@@ -80,6 +129,9 @@ class SelectOnlyRunner:
         return cls(ex)
 
 
+_DOLLAR = re.compile(r"\$\w*\$")  # assert_select refuses dollar quoting, so a value holding one (a `$2b$` hash) is not sampled
+
+
 def _lit(v) -> str | None:
     if isinstance(v, bool):
         return None
@@ -87,7 +139,7 @@ def _lit(v) -> str | None:
         return str(v)
     if isinstance(v, Decimal) and v == v.to_integral_value():
         return str(int(v))
-    if isinstance(v, str) and "\\" not in v and "\x00" not in v:
+    if isinstance(v, str) and "\\" not in v and "\x00" not in v and not _DOLLAR.search(v):
         return "'" + v.replace("'", "''") + "'"
     return None
 

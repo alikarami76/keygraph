@@ -56,3 +56,84 @@ def test_fetch_chunking():
     stats, kcu = fetch_metadata(run, "DATABASE()", limit=3)
     assert len(calls) > 2 and all(c.startswith("SELECT") for c in calls)
     assert parse_rows('log line\n{"rows": [{"x": 1}]}') == [{"x": 1}]
+
+
+def test_assert_select_keeps_comment_markers_inside_literals():
+    assert assert_select("SELECT a FROM t WHERE b = '--x' AND c = '/* y */'") == "SELECT a FROM t WHERE b = '--x' AND c = '/* y */'"
+    assert assert_select("SELECT 1 /* c */ -- tail") == "SELECT 1"
+    assert assert_select("SELECT '--' ; ").endswith("'--'")
+    with pytest.raises(UnsafeSQL):
+        assert_select("SELECT '--' /* ' */; DELETE FROM t")
+    with pytest.raises(UnsafeSQL):
+        assert_select("SELECT 'a' -- c\n; DROP TABLE t")
+
+
+def test_sqlite_memory_url_is_a_clean_error(tmp_path, capsys):
+    from keygraph.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["probe", "--dir", str(tmp_path), "--url", "sqlite://"])
+    assert "sqlite URL needs a file path" in str(e.value.code)
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT \"a'b\" ; DROP TABLE t; SELECT 'c'",
+    "SELECT `a'b` FROM t; DELETE FROM t WHERE x='1'",
+    "SELECT 1 FROM t WHERE c=\"x'\" ; DELETE FROM t; SELECT '1'",
+    "SELECT 'a' FROM t WHERE b = 'unterminated",
+    "SELECT \"a FROM t",
+    "SELECT `a FROM t",
+    "SELECT \"--\" FROM t WHERE x = 1 DELETE FROM t",
+    "SELECT \"a -- b\" FROM t WHERE 1=1 /* \" */ UNION SELECT 1; DROP TABLE t",
+    "SELECT 'a;b' FROM t",
+    "SELECT [a'b] FROM t; DROP TABLE t; SELECT '1'",
+])
+def test_assert_select_rejects_quote_confusion(sql):
+    with pytest.raises(UnsafeSQL):
+        assert_select(sql)
+
+
+def test_assert_select_still_allows_quoted_markers_and_backslashes():
+    assert assert_select("SELECT 'a -- b', '/* c */' FROM t") == "SELECT 'a -- b', '/* c */' FROM t"
+    assert assert_select('SELECT "a--b", `c/*d` FROM t -- tail') == 'SELECT "a--b", `c/*d` FROM t'
+    with pytest.raises(UnsafeSQL):
+        assert_select('SELECT "x--y" FROM t; DELETE FROM t')
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 'a\\' ' INTO OUTFILE '/tmp/x' -- '",
+    "SELECT 'a\\' ' FROM t UNION SELECT 1 INTO DUMPFILE '/tmp/y' -- '",
+    "SELECT 'a\\' FROM t",
+    "SELECT $$x$$",
+    "SELECT $a$ x $a$",
+    "SELECT E'a\\'b'",
+    "SELECT e'a' FROM t",
+    "SELECT 1 FROM t WHERE x = 'a' || E'b'",
+])
+def test_assert_select_refuses_backslashes_dollar_quotes_and_escape_strings(sql):
+    with pytest.raises(UnsafeSQL):
+        assert_select(sql)
+
+
+def test_assert_select_allows_words_ending_in_e_and_dollar_params():
+    assert assert_select("SELECT type FROM t WHERE name = 'e' AND x = 'type e' AND y = $1").endswith("$1")
+    assert assert_select("SELECT date 'x' FROM t") == "SELECT date 'x' FROM t"
+
+
+def test_table_chunking_sql_has_no_backslash():
+    from keygraph.adapters.fetch import fetch_metadata
+    seen = []
+
+    def run(sql):
+        seen.append(sql)
+        return [{}] * 3 if len(seen) < 3 else []
+
+    fetch_metadata(run, limit=3)
+    assert any("LIKE" in q for q in seen) and not any("\\" in q for q in seen)
+    assert all(assert_select(q) for q in seen)
+
+
+def test_lit_skips_values_that_look_like_dollar_quotes():
+    from keygraph.probe import _lit
+    assert _lit("$2b$12$abc") is None and _lit("$$") is None and _lit("a$tag$b") is None
+    assert _lit("price $5") == "'price $5'" and _lit(7) == "7" and _lit("ok") == "'ok'"
+    assert_select(f"SELECT 1 WHERE x IN ({_lit('plain')})")

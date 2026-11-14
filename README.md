@@ -7,7 +7,7 @@
 
 keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input. It can also link your source code to the same tables and columns (where each column is declared, written, read and used) and keep a log of the queries people and agents ran, with their timing and the business question behind them.
 
-**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Fifteen MCP tools (plus `dev_note` only in dev mode): fourteen read-only and one that logs a query. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
+**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Twenty MCP tools (plus `dev_note` only in dev mode): fourteen read-only, one that logs a query and five `index_*` tools for LLM indexing. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
 
 [![PyPI](https://img.shields.io/pypi/v/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
 
@@ -57,7 +57,7 @@ Build the map once with `keygraph scan`, then let your agent look up tables, joi
 5. Write the SQL and run it with your own read-only database access. keygraph has no tool for running your queries: it only reads metadata, and samples values when you ask it to profile. Before you write it, if code or past queries were indexed, `code_where` shows how a column is used in code and `query_for` shows queries that already touched the table, with their business question and timing.
 6. Check the result against what the map said: aggregate before a fan-out join, treat relations below 0.6 confidence as unverified, and verify them with a small `SELECT`. Then log the query you ran with `query_submit` (or `keygraph queries add`), so the next agent can reuse a proven query shape. `query_submit` only records; keygraph still runs nothing.
 
-Register the MCP server once and the fifteen tools (sixteen with dev mode on) appear in your agent (the configs for other clients are in [MCP](#mcp)):
+Register the MCP server once and the twenty tools (twenty-one with dev mode on) appear in your agent (the configs for other clients are in [MCP](#mcp)):
 
     claude mcp add keygraph -- uvx --from 'keygraph[mcp]' keygraph mcp --dir /abs/path/to/out
 
@@ -129,6 +129,30 @@ keygraph load --columns columns.jsonl [--statistics stats.jsonl] [--key-columns 
 
 Dumps use `information_schema` field names. `--columns-map '{"TABLE_SCHEMA":"db"}'`, `--flatten raw` and `--where field=value` adapt other shapes. Without STATISTICS the tool falls back to `COLUMN_KEY` (PRI/UNI/MUL), and without KEY_COLUMN_USAGE every relation is inferred. `keygraph fetch --cmd 'my-sql-cli --sql {sql}' --out dir` fetches those two tables through any read-only command that prints JSON rows.
 
+## LLM indexing (recommended for agents)
+
+The deterministic map above is built from metadata and never changes with a model. LLM indexing adds a meaning layer on top (undeclared relations, column and status-code meanings, table grain and pitfalls, concepts, metrics, performance notes) with your own coding agent as the indexer. keygraph never calls a model. It hands your agent small packets of facts about a group of tables, the agent reads each packet and submits a JSON answer, and keygraph checks and stores the answer.
+
+- Every stored fact carries provenance (it shows as `llm`, `llm, codes seen in data` or `llm, verified by probe`, next to the deterministic and declared facts; the describe text marks every LLM-written field `(llm)`). A field the LLM filled into an empty slot of a note a person wrote is labelled `llm` and unverified, while the person's fields keep their label.
+- Answers are validated against a schema. If you point keygraph at a read-only database through an environment variable (the variable's name, never its value), it also probe-checks claims with SELECT-only queries. Only checks of the claim itself (relation overlap, grain uniqueness, filter selectivity) count as verified; for status codes the probe can only see that the values occur in the data, which is reported as `codes_seen` and never as verified. Without a source the facts stay unverified.
+- Personal data never reaches the agent: packets carry no raw values from personal-data columns.
+- The deterministic map is the fallback. A table the agent skips, or a unit that fails, keeps its deterministic entry, and `keygraph index replay` rebuilds the same result from the saved answers with no model and no database access.
+- Costs: it spends your agent's own tokens. `--budget` caps them (default 200000).
+
+Build the deterministic map first (the quickstart above), then let your agent run this loop (every command takes `--dir` and `--json`):
+
+```bash
+keygraph index start --budget 200000            # plan the work; add --url-env KEYGRAPH_PROBE_URL to allow read-only probes
+keygraph index next --json                      # the next packet, instructions and answer schema (same unit until you submit it)
+keygraph index submit UNIT_ID answer.json       # validate, probe-check, store; read "status" and "next" in the reply
+# repeat next and submit until next says "done", then:
+keygraph index finish                           # rebuild graph.json, pages, report and explorer from all stored answers
+```
+
+`keygraph index status` shows progress and budget. The same loop is available over MCP as `index_start`, `index_next`, `index_submit`, `index_status` and `index_finish`, which return the same JSON. The full rules (attempts, resubmits, budget, probes, `refresh`) are in [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md#llm-indexing). Commit your context files next to `index/answers/`: replay from a fresh checkout is deterministic, but code-join and business-context evidence live in `keygraph.db` and the context files.
+
+LLM indexing is recommended for agents but not yet the default. It becomes the default once a benchmark shows it improves answers over the deterministic map alone; no accuracy or speed numbers are published yet.
+
 ## Supported sources
 
 Each source is a module in `keygraph.adapters`, read-only by construction. SQL statements pass `assert_select` (a single SELECT, no write keywords, no `INTO OUTFILE` or `FOR UPDATE`); SQLite is read through the SQLAlchemy inspector, and MongoDB and Metabase are limited to the calls listed below.
@@ -197,7 +221,7 @@ The Claude Code skill is in [skills/keygraph/SKILL.md](https://github.com/alikar
 directory (`<out>` below, e.g. `keygraph-out`). Tools (`describe` takes `brief=true`, `search` takes `with_paths=false`, the same as the CLI `describe --brief` and `search --no-paths`; `describe` and `neighbors` take `min_confidence`, default 0.6, the same as the CLI `--min-confidence`, and report how many weaker relations they hid): `search`, `describe`, `keys`, `explain`, `path`, `neighbors`,
 `areas`, `area`, `profile_summary` (stored, sampled profiles; PII values are withheld), `code_where` and `code_what`
 (the code index), `query_for`, `query_top` and `query_search` (the query log), and `query_submit`, the one tool that
-writes: it logs a query the agent ran into the query log tables and nothing else. In dev mode (below) there is also `dev_note`. Each returns the same JSON as
+writes to the query log: it logs a query the agent ran into the query log tables and nothing else. The five `index_*` tools (`index_start`, `index_next`, `index_submit`, `index_status`, `index_finish`) run the [LLM indexing](#llm-indexing-recommended-for-agents) loop and write only inside the output folder. In dev mode (below) there is also `dev_note`. Each returns the same JSON as
 the CLI's `--json`, except that `areas` wraps the list of areas as `{"areas": [...]}` because MCP tool results must be objects. `path`, `areas` and `area` take `include_mirrors`. Resources: `keygraph://areas/index` and
 `keygraph://tables/{schema.table}`. The server never runs SQL against your database.
 
@@ -395,7 +419,7 @@ Have the agent ask keygraph for the path before it writes a join. `keygraph path
 ### Can an LLM agent query my database through keygraph?
 No. keygraph has no tool that runs SQL, and the MCP server never runs SQL against your database. The agent reads the map, writes SQL, and runs it with whatever read-only database access you give it separately. The `query_submit` tool only logs a query the agent already ran.
 
-The server exposes fifteen tools, fourteen read-only and `query_submit`, which only writes the query log, plus `dev_note` when dev mode is on, and it never runs SQL against your database.
+The server exposes twenty tools: fourteen read-only, `query_submit`, which only writes the query log, and the five `index_*` tools, which write only inside the output folder (see [LLM indexing](#llm-indexing-recommended-for-agents)). `dev_note` is added when dev mode is on. It never runs SQL against your database.
 
 ### How do I find where a column is used in code?
 Index your repos with `keygraph code index ./repo --name repo`, then run `keygraph code where schema.table.column`. It lists the ORM declarations first, then the SQL that writes and reads the column, then uses of its property, each with file, line, rule and confidence. `keygraph code what path/to/file.py:42` goes the other way.
@@ -428,7 +452,7 @@ No. It makes no network requests of its own beyond the connection to the databas
 It is built for them. The overview shows areas, not tables. An area over 25 tables first shows its 25 most connected tables (in the explorer and in the Mermaid diagram of `areas/<area>.md`), and no explorer canvas draws more than 40 boxes. Profiling samples with one bounded SELECT per table and can skip tables above a row limit (`--skip-over-rows`). No benchmarks are published here.
 
 ### How do I set up the MCP server?
-Install `keygraph[mcp]`, build an output directory, then register `keygraph mcp --dir /abs/path/to/out` with your client. Copy-paste configs for Claude Code, Claude Desktop, Cursor and Codex are in the [MCP section](#mcp) above. The server exposes fifteen tools (fourteen read-only, plus `query_submit`, which only logs a query; a sixteenth, `dev_note`, appears only in dev mode) and never runs SQL against your database.
+Install `keygraph[mcp]`, build an output directory, then register `keygraph mcp --dir /abs/path/to/out` with your client. Copy-paste configs for Claude Code, Claude Desktop, Cursor and Codex are in the [MCP section](#mcp) above. The server exposes twenty tools (fourteen read-only, `query_submit`, which only logs a query, and five `index_*` tools that write only inside the output folder; a twenty-first, `dev_note`, appears only in dev mode) and never runs SQL against your database.
 
 ### How does confidence work?
 Confidence is a score from 0 to 1 for an inferred relation. Declared foreign keys are 1.0; inferred ones are raised or lowered by name match, types, indexes, key targets, ambiguity and cross-schema matches, and every reason is listed as evidence. Use 0.8 and above freely, read the evidence between 0.6 and 0.8, and verify anything lower.
@@ -447,6 +471,7 @@ Write it in an overrides file with `confirm`, `reject`, `add` or `aliases`, and 
 
 - `scan` reads metadata only. It never reads table rows.
 - `profile` and `probe` send single SELECT statements, one bounded sample per table. Anything else is rejected before it reaches the database.
+- `index submit` probes (LLM indexing) go through the same SELECT-only check, read the source from an environment variable at submit time, and are capped at 40 queries and 60 seconds per submit.
 - Metabase: GET metadata plus native SELECT. MongoDB: list, find and index reads only.
 - Personal data is never stored in profiles (the PII rule above).
 - The explorer is one self-contained HTML file with no runtime network fetches.

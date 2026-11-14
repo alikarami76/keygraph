@@ -16,6 +16,7 @@ Written by an AI agent following https://github.com/alikarami76/keygraph/blob/ma
 | Schemas | <list>; copies: <globs or none> |
 | Extras | profiles <yes/no>, code index <yes/no>, docs import <yes/no>, query log <yes/no> |
 | Starter context | <yes: keygraph-context.yaml (unverified) / no> |
+| LLM indexing | <yes, self-indexed: budget <N>, units done <N>, failed <N>, probe source <env var NAME or none> / no> |
 | Bug reports | <draft and ask / never> |
 
 ## Rebuild (after schema changes)

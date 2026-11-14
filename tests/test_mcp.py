@@ -16,6 +16,8 @@ from tests.test_example_shop import _build  # noqa: E402
 
 TOOLS = {"search", "describe", "keys", "explain", "path", "neighbors", "areas", "area", "profile_summary", "code_where", "code_what",
          "query_for", "query_top", "query_search", "query_submit"}
+INDEX_TOOLS = {"index_start", "index_next", "index_submit", "index_status", "index_finish"}
+TOOLS |= INDEX_TOOLS
 
 
 @pytest.fixture(scope="module")
@@ -304,3 +306,77 @@ def test_neighbors_and_describe_floor_match_cli(tmp_path, out, capsys):
     assert not err and got == cli_json(capsys, d, "describe", "shop.orders") and got["hidden_relations"] >= 1
     err, got = call(s, "describe", table="shop.orders", min_confidence=0.0)
     assert not err and got == cli_json(capsys, d, "describe", "shop.orders", "--min-confidence", "0") and got["hidden_relations"] == 0
+
+
+def _copy(out, tmp_path, name):
+    import shutil
+    d = tmp_path / name
+    shutil.copytree(out, d)
+    return d
+
+
+def test_index_tools_match_the_cli(out, tmp_path, capsys):
+    """Every index tool returns exactly what the matching `keygraph index ... --json` prints (own copies: they write)."""
+    cli_dir, mcp_dir = _copy(out, tmp_path, "cli"), _copy(out, tmp_path, "mcp")
+    s2 = build_server(mcp_dir)
+    start = cli_json(capsys, cli_dir, "index", "start", "--budget", "60000", "--tasks", "relations")
+    err, got = call(s2, "index_start", budget=60000, tasks=["relations"])
+    assert not err and got == start and start["resumed"] is False
+    nxt = cli_json(capsys, cli_dir, "index", "next")
+    err, got = call(s2, "index_next")
+    assert not err and got == nxt and nxt["status"] == "unit"
+    bad = {"relations": [{"from_table": "nope.nothing", "from_columns": ["x"], "to_table": "shop.orders", "to_columns": ["id"],
+                          "reason": "r", "confidence": 0.5}]}
+    f = tmp_path / "a.json"
+    for answer in (bad, {"relations": []}):
+        f.write_text(json.dumps(answer, indent=3), encoding="utf-8")
+        cli_res = cli_json(capsys, cli_dir, "index", "submit", nxt["unit_id"], str(f), "--model", "m1", "--probe-seconds", "5")
+        err, got = call(s2, "index_submit", unit_id=nxt["unit_id"], answer=answer, model="m1", probe_seconds=5)
+        assert not err and got == cli_res  # every field, the `next` hint included
+    assert cli_res["status"] == "accepted"
+    err, got = call(s2, "index_status")
+    assert not err and got == cli_json(capsys, cli_dir, "index", "status") and got["units"]["done"] == 1
+    err, got = call(s2, "index_finish")
+    assert not err and got == cli_json(capsys, cli_dir, "index", "finish") and got["units"] == 1
+    assert (mcp_dir / "index" / "summary.json").read_bytes() == (cli_dir / "index" / "summary.json").read_bytes()
+
+
+def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatch):
+    d = _copy(out, tmp_path, "names")
+    s2 = build_server(d)
+    tools = {t.name: t for t in asyncio.run(s2.list_tools())}
+    props = {n: set((tools[n].input_schema or {}).get("properties", {})) for n in INDEX_TOOLS}
+    assert props["index_start"] == {"budget", "tasks", "url_env", "cmd_env", "dialect", "max_units", "restart"}
+    assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds"} and props["index_next"] == set() == props["index_status"] == props["index_finish"]
+    assert not any("url" in p.replace("url_env", "") or "cmd" in p.replace("cmd_env", "") for ps in props.values() for p in ps)
+    monkeypatch.delenv("KG_MCP_UNSET", raising=False)
+    err, msg = call(s2, "index_start", url_env="KG_MCP_UNSET")
+    assert err and "KG_MCP_UNSET" in msg and "://" not in msg
+    err, msg = call(s2, "index_start", url_env="mysql://root:hunter2@db/shop")
+    assert err and "hunter2" not in msg
+    err, msg = call(s2, "index_next")
+    assert err and "index start" in msg
+
+
+def test_index_instructions_paragraph_and_existing_tools_unchanged(srv):
+    text = srv.instructions
+    assert "index_submit" in text and "assert_select" in text and "output folder" in text
+    assert "The existing query tools above are unchanged" in text
+    assert {t.name for t in asyncio.run(srv.list_tools())} - INDEX_TOOLS == TOOLS - INDEX_TOOLS
+
+
+def test_index_env_values_typed_into_mcp_never_reach_the_dev_log(out, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYGRAPH_DEV", "1")
+    d = _copy(out, tmp_path, "devnames")
+    s2 = build_server(d)
+    for arg in ("cmd_env", "url_env"):
+        err, msg = call(s2, "index_start", **{arg: "mysql -phunter3 {sql}"})
+        assert err and "hunter3" not in msg
+    log = "".join(p.read_text(encoding="utf-8") for p in (d / "dev").glob("events*.jsonl"))
+    assert log and "hunter3" not in log and "<invalid>" in log
+
+
+def test_index_instructions_state_the_loop_and_that_index_tools_write():
+    from keygraph.mcp_server import INSTRUCTIONS
+    assert "Every tool is read-only except `query_submit`" not in INSTRUCTIONS
+    assert "index_start" in INSTRUCTIONS and "index_next" in INSTRUCTIONS and "repeat" in INSTRUCTIONS and "index_finish" in INSTRUCTIONS

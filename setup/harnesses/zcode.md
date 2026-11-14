@@ -35,5 +35,5 @@ You may not be able to edit ZCode's settings yourself. In that case, give the us
 
 ## 3. Verify
 
-- The MCP list in settings shows `keygraph` as connected with 15 tools (16 if dev mode is on).
+- The MCP list in settings shows `keygraph` as connected with 20 tools (21 if dev mode is on).
 - In a new task, do step 7.3 of SETUP.md.

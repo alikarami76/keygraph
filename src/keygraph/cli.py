@@ -23,6 +23,7 @@ from .docs_out import write_docs
 from .explorer import build_html
 from .graph import BUILD_FILE, AmbiguousTable, Graph, UnknownTable, build_graph
 from .hubs import detect_hubs, mark_hubs
+from .index.store import apply_index_relations
 from .infer import Options
 from .mirrors import detect_mirrors, mark_mirrors, transfer_mirror_edges
 from .model import Schema
@@ -155,6 +156,7 @@ def _render(out: Path, g: Graph, ctx: ContextDB | None, snippets: bool | None, q
     with devlog.phase("render.code_joins"):
         if ctx:
             merge_code_joins(g, ctx.path)  # joins seen in code and logged queries; after mirrors, before hubs and areas
+            apply_index_relations(g, ctx)  # relations the indexing agent proposed (source llm); same place, idempotent
     with devlog.phase("render.hubs") as ph:
         hubs = detect_hubs(g, include=names["include"], exclude=names["exclude"])
         mark_hubs(g, hubs)
@@ -254,6 +256,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
                 ctx.import_path(path)
             if copy_schemas:
                 ctx.add_copy_schemas(copy_schemas)
+        ctx.set_override_rejects(ov.reject if ov else [])  # replace: a build starts from the overrides it was given
         with devlog.phase("reindex"):
             ctx.reindex()
         prof = ctx.load_profiles()
@@ -309,8 +312,11 @@ def cmd_render(a):
 
 def cmd_probe(a):
     from .probe import SelectOnlyRunner, probe_graph
+    try:
+        runner = SelectOnlyRunner.from_url(a.url)
+    except ValueError as exc:
+        sys.exit(f"keygraph: {exc}")
     g = _load(a)
-    runner = SelectOnlyRunner.from_url(a.url)
     quote = "`" if a.url.startswith("mysql") else '"'
     res = probe_graph(g, runner, a.sample, quote, a.max_edges, a.min_confidence)
     ctx = _ctx(a, g)
@@ -631,6 +637,95 @@ def cmd_demo(a):
     demo.run(a.dir, open_browser=not a.no_open, as_json=a.json)
 
 
+def _index_text(cmd: str, r: dict) -> str:
+    """Plain text for `keygraph index ...` without --json (agents should pass --json)."""
+    if cmd == "start":
+        return (f"{'resumed' if r['resumed'] else 'started'} {r['job_id']}: {r['units']} units ({r['pending']} pending, "
+                f"{r['skipped']} skipped), budget {r['budget']} tokens, used {r['used']}\nnext: {r['next']}")
+    if cmd == "next":
+        if r["status"] == "finished":
+            return r["hint"]
+        if r["status"] == "done":
+            return f"nothing left to index; run `{r['finish']}`"
+        if r["status"] == "budget_exhausted":
+            return f"budget exhausted ({r['budget_left']} tokens left, the next unit needs about {r['needed']}); continue with: {r['resume']}"
+        return (f"unit {r['unit_id']} (attempt {r['attempt']}, {r['budget_left']} tokens left)\ntasks: {', '.join(r['tasks'])}\n\n"
+                f"{r['instructions']}\n\npacket:\n{json.dumps(r['packet'], ensure_ascii=False, indent=1)}\n\nanswer schema:\n"
+                f"{json.dumps(r['answer_schema'], indent=1)}\n\nsubmit with: keygraph index submit {r['unit_id']} FILE|-")
+    if cmd == "submit":
+        if r["status"] == "finished":
+            return r["hint"]
+        if r["status"] == "budget_exhausted":
+            return (f"budget exhausted: this answer needs about {r['needed']} tokens and {r['budget_left']} are left. {r['hint']}\n"
+                    f"continue with: {r['resume']}")
+        left = f", {r['attempts_left']} attempts left" if "attempts_left" in r else ""
+        lines = [(f"{r['status']}: {r['accepted']} accepted ({r['verified']} verified by probe, {r['codes_seen']} codes seen in data, "
+                  f"{r['unverified']} unverified, "
+                  f"{r['probe_failed']} failed a probe), {len(r['rejected'])} rejected{left}, {r['budget_left']} tokens left")]
+        lines += [f"  rejected {x['item']}: {x['reason']}" for x in r["rejected"]]
+        lines += [f"{r['hint']}"] if r.get("hint") else []
+        return "\n".join(lines + [f"next: {r['next']}"])
+    if cmd == "status":
+        u = r["units"]
+
+        def rate(v):
+            return "n/a" if v is None else f"{v:.0%}"
+
+        lines = [(f"{r['job_id']} ({r['status']}): {u['done']} done, {u['pending']} pending, {u['failed']} failed, {u['skipped']} skipped; "
+                  f"budget {r['used']}/{r['budget']} tokens"),
+                 (f"accept rate {rate(r['accept_rate'])}, verify rate {rate(r['verify_rate'])} "
+                  f"({r['verified']} verified by probe; {r['codes_seen']} more had code values seen in data, which is not verification)")]
+        for f in r["failed_units"]:
+            lines.append(f"  failed {f['unit_id']} ({', '.join(f['tables'])}): "
+                         + ("; ".join(f"{x['item']}: {x['reason']}" for x in f["reasons"][:3]) or "no reason kept"))
+        return "\n".join(lines + [f"next: {r['next']}"])
+    if cmd == "refresh":
+        return (f"{r['job_id']}: {len(r['changed'])} changed, {len(r['retried'])} failed units retried, {len(r['new'])} new, {len(r['dropped'])} dropped, "
+                f"{r['unchanged']} unchanged; {r['pending']} pending\nnext: {r['next']}")
+    return (f"{r['units']} units replayed; {r['llm_edges']} llm edges, {r['filled']} fields filled, {r['probe_failed']} probe failures; "
+            f"{r['verified_facts']} facts verified by probe, {r['codes_seen_facts']} with code values seen in data")
+
+
+class _Reported(ValueError):
+    """An error already printed as JSON on stdout (--json): main only sets exit status 2."""
+
+
+def cmd_index(a):
+    """keygraph index start|next|submit|status|finish|replay|refresh: the work-queue protocol for LLM indexing."""
+    from .index import cli_api as X
+    c = a.index_cmd
+    try:
+        r = _index_run(X, a, c)
+    except (ValueError, OSError) as exc:
+        if not getattr(a, "json", False):
+            raise ValueError(str(exc)) from None
+        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=1))
+        raise _Reported(str(exc)) from None
+    _emit(a, r, _index_text(c if c != "finish" else "replay", r))
+
+
+def _index_run(X, a, c: str) -> dict:
+    if c == "start":
+        tasks = [t for x in (a.tasks or []) for t in x.split(",") if t.strip()]
+        return X.start_result(a.dir, a.budget, tasks or None, a.url_env or "", a.cmd_env or "", a.dialect or "", a.max_units, a.restart)
+    if c == "next":
+        return X.next_result(a.dir)
+    if c == "submit":
+        try:
+            text = sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            what = exc.strerror if isinstance(exc, OSError) and exc.strerror else "not readable as UTF-8 text"
+            raise ValueError(f"cannot read the answer file {a.file}: {what}; write the JSON to a file, or pipe it in with `-`") from None
+        return X.submit_text(a.dir, a.unit_id, text, a.model or "", a.probe_seconds)
+    if c == "status":
+        return X.status_result(a.dir)
+    if c == "finish":
+        return X.finish_result(a.dir)
+    if c == "replay":
+        return X.replay_result(a.dir)
+    return X.refresh_result(a.dir)
+
+
 def cmd_ui(a):
     p = (Path(a.dir) / "keygraph.html").resolve()
     if not p.exists():
@@ -866,6 +961,37 @@ def main(argv=None) -> int:
     p = q_cmd("show", "one query fingerprint with its runs")
     p.add_argument("fp")
     q_cmd("stats", "runs, distinct queries, sources and unresolved tables")
+    pi = sub.add_parser("index", help="LLM indexing: your agent builds the meaning layer through a work queue "
+                                      "(start, next, submit, status, finish, replay, refresh)")
+    pi.set_defaults(fn=cmd_index)
+    ixs = pi.add_subparsers(dest="index_cmd", required=True)
+
+    def ix_cmd(name, help_):
+        p = ixs.add_parser(name, help=help_)
+        p.add_argument("--dir", "--out", dest="dir", default=DEFAULT_DIR, help="built keygraph output directory")
+        p.add_argument("--json", action="store_true")
+        return p
+
+    p = ix_cmd("start", "plan the units and create the job (or resume the open one); needs a built map")
+    p.add_argument("--budget", type=int, default=200_000, help="token budget for packets and answers (default 200000); a larger value raises an open job's budget")
+    p.add_argument("--tasks", action="append", metavar="KINDS",
+                   help="task kinds to ask for, comma-separated or repeated: relations,columns,tables,concepts,metrics,performance (default all)")
+    g_ = p.add_mutually_exclusive_group()
+    g_.add_argument("--url-env", metavar="NAME", help="NAME of an environment variable holding a database URL; probes read it at submit time")
+    g_.add_argument("--cmd-env", metavar="NAME", help="NAME of an environment variable holding a read-only command template with {sql}")
+    p.add_argument("--dialect", choices=dialects, help="SQL dialect of the probe source (quoting for --cmd-env); default: the map's source kind")
+    p.add_argument("--max-units", type=int, default=0, metavar="N", help="plan only the N best-ranked units; the rest are skipped and keep the deterministic map")
+    p.add_argument("--restart", action="store_true", help="abort the open job and start a new one with every unit pending")
+    ix_cmd("next", "the next unit: packet, instructions and answer schema (the same unit until it is submitted)")
+    p = ix_cmd("submit", "send your answer for one unit: validated, probe-checked and stored; accepted items are kept even when others are rejected")
+    p.add_argument("unit_id")
+    p.add_argument("file", metavar="FILE|-", help="the answer as a JSON object that follows the answer_schema from `index next` (a file, or - for stdin); after a partial or rejected reply send only the rejected items")
+    p.add_argument("--model", help="name of the model that wrote the answer (default: `model` in the JSON, else unknown)")
+    p.add_argument("--probe-seconds", type=float, default=60.0, help="wall-clock budget for probing one submit (default 60)")
+    ix_cmd("status", "progress, budget, accept and verify rates, failed units")
+    ix_cmd("finish", "replay the saved answers, re-render graph.json, pages and explorer, write index/summary.json")
+    ix_cmd("replay", "rebuild the meaning layer from index/answers/ (no model, no database access)")
+    ix_cmd("refresh", "re-plan after the map changed: only units whose packet changed, new tables and removed ones")
     a, extra = ap.parse_known_args(argv)
     if extra:
         # Python 3.11 argparse stops filling `path`/`fields` once an option (--kind) appears between
@@ -882,7 +1008,8 @@ def main(argv=None) -> int:
     try:
         _run(a)
     except (AmbiguousTable, UnknownTable, ValueError) as exc:
-        print(f"keygraph: {exc}", file=sys.stderr)
+        if not isinstance(exc, _Reported):
+            print(f"keygraph: {exc}", file=sys.stderr)
         return 2
     return 0
 
@@ -923,7 +1050,7 @@ _VALUE_FREE = {"path", "neighbors", "explain", "keys", "areas", "area", "doctor"
 
 
 def _command_name(a) -> str:
-    return " ".join(x for x in (a.command, getattr(a, "code_cmd", None), getattr(a, "q_cmd", None)) if x)
+    return " ".join(x for x in (a.command, getattr(a, "code_cmd", None), getattr(a, "q_cmd", None), getattr(a, "index_cmd", None)) if x)
 
 
 def _trace_name(a) -> str | None:
@@ -940,7 +1067,7 @@ def _run(a) -> None:
         a.fn(a)
         return
     name = _command_name(a)
-    args = {k: v for k, v in vars(a).items() if k not in ("fn", "dir", "command", "code_cmd", "q_cmd")}
+    args = {k: v for k, v in vars(a).items() if k not in ("fn", "dir", "command", "code_cmd", "q_cmd", "index_cmd")}
     real, tee, t0, ok, err, status, run_id, decisions = sys.stdout, None, time.perf_counter(), True, None, 0, None, None
     tn = _trace_name(a)
     try:
