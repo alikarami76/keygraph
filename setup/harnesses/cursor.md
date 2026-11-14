@@ -29,5 +29,5 @@ Cursor does not see your shell PATH, so `command` must be the absolute path. `do
 
 ## 3. Verify
 
-- Cursor Settings → MCP (or Tools & Integrations): `keygraph` shows a green dot and 15 tools (16 if dev mode is on). If it is red, click it to see the error. The usual cause is a non-absolute `command`.
+- Cursor Settings → MCP (or Tools & Integrations): `keygraph` shows a green dot and 20 tools (21 if dev mode is on). If it is red, click it to see the error. The usual cause is a non-absolute `command`.
 - Open a new Agent chat and do step 7.3 of SETUP.md.

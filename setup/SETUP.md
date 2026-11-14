@@ -138,6 +138,66 @@ keygraph render --dir "$OUT"
 
 Check: `keygraph doctor --dir "$OUT"` shows `ok    graph` and `ok    query` lines. If the build found 0 tables, the schema name or the database user's permissions are wrong: fix them before you go on.
 
+## Step 4b. Optional: index with yourself (LLM indexing)
+
+This adds a meaning layer (undeclared relations, what columns and status codes mean, what one row is, concepts, metrics, performance notes) on top of the map you just built, with you as the indexer. keygraph never calls a model. It gives you a packet of facts about a few tables, you write a JSON answer, and keygraph checks and stores it. It costs your own tokens, so do it only if the user says yes. If the user says no, skip to step 5; the map you built keeps working.
+
+**Ask first**, in one message: "I can also build a meaning layer with myself as the indexer. It uses my own tokens, capped at 200000 by default (I can use a smaller cap). It makes search and describe richer. Shall I do it?" Wait for the answer. If the user names a smaller number, use it as `--budget`.
+
+Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir "$OUT"` to every command, or `export KEYGRAPH_DIR="$OUT"`. Use `--json` and read the `status` field of every reply.
+
+1. Plan the work. For the demo, add `--max-units 3` so the run stays short; for a real database leave it out.
+
+   ```bash
+   keygraph index start --budget 200000 --dir "$OUT" --json            # demo: add --max-units 3
+   ```
+
+   Probes (optional, real databases only): keygraph can check your relations against the data with SELECT-only queries. The user must put a read-only connection URL in an environment variable, for example `KEYGRAPH_PROBE_URL`. Ask them to export it themselves. You pass only the variable's name: add `--url-env KEYGRAPH_PROBE_URL` to the start command (or `--cmd-env NAME` for a read-only command with `{sql}`). Never type a URL, password or command into a command line, a file or the chat. If `start` says the variable is not set, leave `--url-env` out. Without probes the answers are stored as unverified, which is fine. For the demo, leave probes out.
+
+2. Get a unit:
+
+   ```bash
+   keygraph index next --dir "$OUT" --json
+   ```
+
+   - `"status": "unit"`: read `instructions`, `packet` and `answer_schema`, and go to 3. Note the `unit_id`.
+   - `"status": "done"`: go to 5.
+   - `"status": "budget_exhausted"`: the budget is used up. Tell the user how much was spent and what is left (`keygraph index status`). Continue only if they say yes, with a larger number: `keygraph index start --budget <larger number> --dir "$OUT"`, then `next` again. If they say no, go to 5.
+   - `"status": "finished"`: the job is closed. Go to 5.
+
+3. Write the answer to a file, for example `"${TMPDIR:-/tmp}/keygraph-answer.json"`. It is one JSON object with a list for every kind named in `tasks`: `relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`. Use `[]` for a kind where the packet gives you nothing to say. Write tables as `schema.table`, as in the packet. Every item needs a `reason` and a `confidence` between 0 and 1. Use only tables and columns that appear in the packet. Never write personal values. The `instructions` text ends with one valid example item per kind: copy its shape. A short honest answer is better than a long guess. Example for a unit holding `shop.users`:
+
+   ```json
+   {"relations": [], "columns": [{"table": "shop.users", "column": "role", "meaning": "Staff role", "reason": "column name and table comment", "confidence": 0.6}], "tables": [{"table": "shop.users", "purpose": "Back-office staff accounts", "reason": "table comment", "confidence": 0.8}], "concepts": [], "metrics": [], "performance": []}
+   ```
+
+4. Submit it, using the `unit_id` from step 2, then read `status`:
+
+   ```bash
+   keygraph index submit <unit_id> "${TMPDIR:-/tmp}/keygraph-answer.json" --dir "$OUT" --json
+   ```
+
+   - `accepted`: go back to 2.
+   - `rejected`: nothing was stored and the unit stays pending. Read every entry of `rejected` (`item` and `reason`; item `$` means the whole answer, for example a missing list), fix the file, and run the same submit again with the same `unit_id`. You have three attempts per unit (`attempts_left` counts them down).
+   - `partially_accepted`: the accepted items are stored. Write a new file holding only the rejected items, fixed (you may leave out the kinds that had no problem), and submit it again for the same `unit_id`.
+   - `failed`: three attempts are used up. The unit keeps its deterministic entry and nothing more is needed. Go back to 2.
+   - An error (`"status": "error"`, exit code 2, for example "not valid JSON"): the file was not read and no attempt was used. Fix the file and submit again.
+   - `probe_failed` greater than 0: the data did not support that relation. This is not an error. Go back to 2.
+   - Never put a failing answer through again unchanged, and never edit `index/` files by hand.
+
+5. Finish, then show progress:
+
+   ```bash
+   keygraph index finish --dir "$OUT" --json
+   keygraph index status --dir "$OUT"
+   ```
+
+   `finish` rebuilds `graph.json`, the pages, the report and the explorer from all stored answers. If units are still pending the job stays open: run `keygraph index next` again, or tell the user how many are left. `status` shows the units done, failed and skipped, the budget used, and the accept and verify rates. If the map is rebuilt later after schema changes, run `keygraph index refresh --dir "$OUT"` to redo only what changed.
+
+If you already have the keygraph MCP server connected (step 5), you can run the same loop with the tools `index_start`, `index_next`, `index_submit` (the `answer` argument is the JSON object itself, not a file), `index_status` and `index_finish`. They return the same JSON as the commands. Probes work the same way: `index_start` takes the variable name in `url_env` or `cmd_env`, never the value.
+
+Record in `OUT/SETUP.md` that the map was indexed with yourself, the `--budget` you used and the units done and failed (counts only). If the user keeps the map in git, tell them to commit their context files (such as `keygraph-context.yaml`) next to `index/answers/`: replaying the answers from a fresh checkout gives the same result, but code-join and business-context evidence live in `keygraph.db` and the context files.
+
 ## Step 5. Connect the MCP server to yourself
 
 ```bash
@@ -198,7 +258,7 @@ Dev mode records how agents use keygraph, locally, and never database rows or se
 
 1. Run `keygraph dev on --dir "$OUT"`. (Alternative: set `KEYGRAPH_DEV=1` in the MCP server's environment, as your harness file shows.)
 2. Verify: `keygraph dev status --dir "$OUT" --json` must show `"enabled": true`. For the env var alternative, run `KEYGRAPH_DEV=1 keygraph dev status --dir "$OUT" --json` (a plain `status` shows it only when that shell has the variable set); `doctor` run by the server's environment shows it too.
-3. Restart the MCP server, because `dev_note` is listed only if dev mode was on when the server started. Then `keygraph doctor --dir "$OUT"` must print `dev_mode` as on and the MCP line as listing 16 tools.
+3. Restart the MCP server, because `dev_note` is listed only if dev mode was on when the server started. Then `keygraph doctor --dir "$OUT"` must print `dev_mode` as on and the MCP line as listing 21 tools.
 4. Tell the user: read it with `keygraph dev report --dir "$OUT"`, turn it off with `keygraph dev off --dir "$OUT"`.
 
 ## Keeping it current

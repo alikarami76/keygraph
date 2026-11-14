@@ -18,9 +18,30 @@ All query commands take `--json`. Table names resolve leniently: a bare name wor
 
 5. Code and past queries: `keygraph code where T.col` lists ORM declarations, SQL writes and reads and property uses with file, line and confidence; `keygraph code what path:line` (or `--symbol getStatus`) goes from code to tables. `keygraph queries for T`, `queries top --table T`, `queries slow` and `queries search "<question>"` show earlier queries with their business question and timing. After running a query, log it with `keygraph queries add --sql f.sql --source <db> --ms <ms> --context "<question>"`. Index code with `keygraph code index REPO --name NAME [--patterns code-patterns.yaml]`.
 
-MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`, `code_where`, `code_what`, `query_for`, `query_top`, `query_search`, `query_submit`) instead of the CLI; they return the same JSON as `--json`. All are read-only except `query_submit`, which only logs a query you ran. In dev mode the server also lists `dev_note`.
+MCP: if the keygraph MCP server is connected (`keygraph mcp --dir <out>`, see the README), call its tools (`search`, `describe`, `keys`, `explain`, `path`, `neighbors`, `areas`, `area`, `profile_summary`, `code_where`, `code_what`, `query_for`, `query_top`, `query_search`, `query_submit`, `index_start`, `index_next`, `index_submit`, `index_status`, `index_finish`) instead of the CLI; they return the same JSON as `--json`. All are read-only except `query_submit`, which only logs a query you ran, and the five `index_*` tools, which write only inside the output folder (see LLM indexing). In dev mode the server also lists `dev_note`.
 
 Dev mode (optional): if a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data. If it is not listed, do nothing. Without MCP, run `keygraph dev note --dir <out> "<question>" --json`. The report groups commands run within 10 minutes of each other into one session; for exact grouping prefix later commands with `KEYGRAPH_DEV_SESSION=<session>` (from the output), or `export` it if your shell keeps state; if it says dev mode is off, do nothing more. `keygraph dev on|off|status|report|export|clear` are for the person running keygraph; see docs/dev-mode.md. Dev mode never records database rows or secrets.
+
+## LLM indexing (you are the indexer)
+
+After a map is built, you can add a meaning layer yourself (undeclared relations, column and status-code meanings, grain, concepts, metrics, performance notes). keygraph never calls a model: it gives you a packet, you answer with JSON, it validates, probe-checks and stores it. It spends your tokens, so ask the user first and tell them the budget (`--budget`, default 200000). Use `--json` and read `status` in every reply.
+
+    keygraph index start --budget 200000 [--tasks relations,columns,tables,concepts,metrics,performance] [--url-env NAME | --cmd-env NAME] [--dialect D] [--max-units N] [--restart]
+    keygraph index next --json                     # status unit | done | budget_exhausted | finished
+    keygraph index submit UNIT_ID answer.json --json [--model NAME] [--probe-seconds 60]   # or FILE `-` for stdin
+    keygraph index status --json
+    keygraph index finish --json                   # rebuild graph, pages, report, explorer
+    keygraph index replay --json                   # same rebuild, no model, no database
+    keygraph index refresh --json                  # after the map changed (CLI only)
+
+MCP: `index_start`, `index_next`, `index_submit(unit_id, answer, model)` (`answer` is an object), `index_status`, `index_finish`; same JSON.
+
+Loop: `start`, then `next` and `submit` until `next` says `done`, then `finish`.
+- The answer is one JSON object with a list for every requested kind (`relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`); `[]` when you have nothing. Tables are `schema.table` as in the packet. Every item has `reason` and `confidence` (0 to 1). Never write personal values.
+- Attempts: three per unit. `rejected` stores nothing and the unit stays pending: fix the listed items (item `$` is the whole answer) and submit again for the same `unit_id`. `partially_accepted` stores the accepted items: resubmit only the rejected ones. The third rejected or partial submit gives `failed`: the unit keeps the deterministic map. An unparseable or unreadable file is an error (exit 2) and uses no attempt, for the first three per unit.
+- `budget_exhausted`: tell the user, and continue only with their yes: `keygraph index start --budget N` with a larger N (a second `start` resumes the open job). On a `finished` job use `refresh` (changed tables) or `start --restart` (everything).
+- Probes: the user puts a read-only database URL (or a `{sql}` command) in an environment variable, for example `KEYGRAPH_PROBE_URL`. Pass the variable's name with `--url-env` or `--cmd-env`. Never type a URL, password or command into a command line, a file or the chat. Without it the items are unverified. keygraph reads the variable when you submit and sends only SELECTs (at most 40 and 60 seconds per submit).
+- Output: `graph.json` can hold `source: "llm"` edges, `llm_boost` and `override_rejects`; `describe` gains `performance` and `provenance`. Commit the context files next to `index/answers/`.
 
 ## Read confidence honestly
 
@@ -56,7 +77,7 @@ Bulk: `keygraph context import <file-or-dir.yaml>` and `keygraph context import-
 
 ## Check and report
 
-`keygraph doctor --dir <out>` checks the install, the map and the MCP server (it lists 15 tools, or 16 with dev mode on), and prints the exact MCP launch command with absolute paths. Run it after a setup or when a tool misbehaves. If keygraph itself is at fault (a crash, a missing declared key, a JOIN on columns that do not exist), follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md: `keygraph doctor --report env.md` gives a redacted environment block. Never open an issue without the user's yes. Setting keygraph up for someone? Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md.
+`keygraph doctor --dir <out>` checks the install, the map and the MCP server (it lists 20 tools, or 21 with dev mode on), and prints the exact MCP launch command with absolute paths. Run it after a setup or when a tool misbehaves. If keygraph itself is at fault (a crash, a missing declared key, a JOIN on columns that do not exist), follow https://github.com/alikarami76/keygraph/blob/main/setup/BUG_REPORTS.md: `keygraph doctor --report env.md` gives a redacted environment block. Never open an issue without the user's yes. Setting keygraph up for someone? Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md.
 
 ## Explorer
 

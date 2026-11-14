@@ -16,6 +16,34 @@ Commands below assume a built output directory (default `keygraph-out`, set with
 6. See how the data is used and queried. If code was indexed, `keygraph code where <table[.column]> --json` lists where it is declared, written, read and used, and `keygraph code what <path[:line]> --json` goes from code to tables. If queries were logged, `keygraph queries for <table[.column]> --json` and `keygraph queries top --table <table> --json` show earlier queries with their business question and timing; reuse a proven query shape instead of inventing one.
 7. After you run a query, log it: `keygraph queries add --sql <file> --source <db> --ms <ms> --rows <n> --context "<the question>"`, or the MCP `query_submit` tool. Literals are masked before storing.
 
+## LLM indexing
+
+You can build the meaning layer yourself: undeclared relations, column and status-code meanings, table grain and pitfalls, concepts, metrics and performance notes. keygraph never calls a model. It gives you a packet of facts for a few tables, you answer with JSON, and it validates, probe-checks and stores the answer. Ask the user before you start: it spends your own tokens (`--budget`, default 200000). Needs a built map (`graph.json`).
+
+Commands (all take `--dir DIR`, alias `--out`, and `--json`; pass `--json`). MCP tools of the same name (`index_start`, `index_next`, `index_submit`, `index_status`, `index_finish`) return the same JSON; there is no MCP tool for `replay` or `refresh`.
+
+- `keygraph index start [--budget N] [--tasks relations,columns,tables,concepts,metrics,performance] [--url-env NAME | --cmd-env NAME] [--dialect D] [--max-units N] [--restart]` plans the work. A second `start` resumes the open job (a larger `--budget` raises it). On a finished job it refuses: use `refresh`, or `--restart` for a full new run (saved answers stay and count until their unit is submitted again).
+- `keygraph index next --json` returns `{"status": "unit", "unit_id", "tasks", "instructions", "packet", "answer_schema", "budget_left", "attempt"}`, or `done` (run `finish`), `budget_exhausted` (with `unit_id`, `needed` and `resume`), or `finished`. It returns the same unit until you submit it.
+- `keygraph index submit UNIT_ID FILE|- [--model NAME] [--probe-seconds 60] --json` sends the answer (MCP: `index_submit(unit_id, answer, model)` with `answer` as an object).
+- `keygraph index status --json`: units pending, done, failed and skipped, budget `used` and `left`, `accept_rate`, `verify_rate`, `failed_units`.
+- `keygraph index finish --json`: rebuilds `graph.json`, pages, report and explorer from all stored answers, writes `index/summary.json` and closes the job when nothing is pending.
+- `keygraph index replay --json`: the same rebuild with no model, no database access and no summary file. `keygraph index refresh --json` (CLI only) re-plans after the map changed: it puts back failed units and units whose packet changed, adds new ones and drops removed ones.
+
+The loop: `start`, then `next` and `submit` until `next` says `done`, then `finish`. Read `status` in every reply; the exit code is 0 for every protocol outcome (`rejected`, `budget_exhausted`) and 2 for an error (`keygraph: <message>` on stderr, `{"status": "error", "error": ...}` with `--json`).
+
+Answer rules:
+
+- One JSON object with a list for every requested kind (`relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`); use `[]` when you have nothing. Write tables as `schema.table`, exactly as in the packet. Every item needs a short `reason` and a `confidence` from 0 to 1. Use only tables and columns the packet names. Never write personal values.
+- A unit gets three attempts. A submit with a structure error, or with items rejected and none accepted, is `rejected`: nothing is stored, the unit stays pending, and the reply has `attempts_left`, `hint` and `next`. Fix the listed items (`rejected[].item` and `reason`; item `$` means the whole answer) and submit again for the same `unit_id`.
+- `partially_accepted`: the accepted items are stored, the unit stays pending, and you resubmit only the rejected items (other kinds may be left out). The third rejected or partial submit returns `failed`: the unit keeps the deterministic map and earlier accepted items stay stored. An all-empty answer counts as `accepted`.
+- A missing or unparseable answer file is an error and uses no attempt, for the first three per unit.
+- Budget: every submit costs its answer size plus the packet (charged once per unit), about characters divided by 4. Submit never refuses, but `next` returns `budget_exhausted` when the next packet does not fit. Continue with `keygraph index start --budget N` for a larger N.
+- Items that pass validation but fail a probe are counted in `accepted` and `probe_failed` and stay out of the graph.
+
+Probes: to let keygraph check relations against data, the user exports an environment variable that holds a read-only connection (a database URL, or a command with `{sql}`), for example `KEYGRAPH_PROBE_URL`. Pass only its name: `--url-env KEYGRAPH_PROBE_URL` (or `--cmd-env NAME`). Never write a URL, password or command into a command line, a file or the chat; the MCP tools take names only. keygraph reads the variable when `submit` runs and only runs single SELECT statements (at most 40 per submit and 60 seconds, then the rest stay unverified). `probe_source` in the reply is `none`, `unset`, `url`, `cmd` or `error`; with `none`, `unset` or `error` the items are unverified.
+
+Output: `graph.json` can hold edges with `source: "llm"`, `llm_boost` and `override_rejects`; `describe` gains `performance` and `provenance`. Files: `index/base_graph.json`, `index/ledger.json`, `index/answers/<unit_id>.json`, `index/summary.json`, and the job tables in `keygraph.db`. Commit the context files next to `index/answers/`: replay from a fresh checkout is deterministic, but code-join and business-context evidence live in `keygraph.db` and the context files. In dev mode each index call is logged with counts only (never answers, reasons or packets).
+
 ## Dev mode (optional)
 
 If a `dev_note` tool is listed, call it once per user question, before your first keygraph call for it, with the question in the user's words and no personal data. If it is not listed, do nothing. Without MCP, run `keygraph dev note --dir <out> "<question>" --json`. Commands from separate shells are grouped by time in the report; for exact grouping, put `KEYGRAPH_DEV_SESSION=<session from the output>` in front of each later command, or `export` it if your shell keeps state; if it says dev mode is off, do nothing more. Details: [docs/dev-mode.md](docs/dev-mode.md).
@@ -42,7 +70,7 @@ When you confirm what a table, column or status code means, save it so the next 
 
 ## Do not
 
-- Do not ask keygraph to run SQL. It has no tool that runs SQL. Run your own read-only query with your own database access; `query_submit` only records a query you already ran.
+- Do not ask keygraph to run SQL. It has no tool that runs SQL (the only queries it sends are the SELECT probes of LLM indexing, through the environment variable the user named). Run your own read-only query with your own database access; `query_submit` only records a query you already ran.
 - Do not write a multi-table join from column-name guesses when `path` can answer it.
 - Do not present an inferred relation below 0.6 as established.
 - Do not assume a profile represents every row.
