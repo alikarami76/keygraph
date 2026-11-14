@@ -112,7 +112,9 @@ def test_default_filter_selectivity(src, shop_graph):
 
 
 def test_filter_text_comes_from_the_strict_grammar_only():
-    q = lambda c: f'"{c}"'  # noqa: E731
+    def q(c):
+        return f'"{c}"'
+
     cols = {"status", "deleted_at", "kind"}
     assert P.parse_filter("status IN (1, 2) and deleted_at is null", cols, q) == ('"status" IN (1,2) AND "deleted_at" IS NULL',
                                                                                   {"status", "deleted_at"})
@@ -157,9 +159,9 @@ def test_sqlite_runner_returns_dicts_when_asked(shop_db):
 def test_cmd_runner_probes_through_the_command(shop_graph, shop_db, tmp_path, monkeypatch):
     script = tmp_path / "q.py"
     script.write_text("import sys, sqlite3, json\n"
-                      "con = sqlite3.connect('file:%s?mode=ro', uri=True)\ncur = con.execute(sys.argv[1])\n"
+                      f"con = sqlite3.connect('file:{shop_db}?mode=ro', uri=True)\ncur = con.execute(sys.argv[1])\n"
                       "names = [d[0] for d in cur.description]\n"
-                      "print('log line'); print(json.dumps([dict(zip(names, r)) for r in cur.fetchall()]))\n" % shop_db)
+                      "print('log line'); print(json.dumps([dict(zip(names, r)) for r in cur.fetchall()]))\n")
     monkeypatch.setenv("KG_TEST_SHOP_CMD", f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{sql}}")
     s = P.runner_from_env("", "KG_TEST_SHOP_CMD")
     assert s.quote == "`" and not s.bare

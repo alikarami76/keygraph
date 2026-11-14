@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Callable
 from decimal import Decimal
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 
 from .. import devlog
 from ..probe import SelectOnlyRunner, _lit
