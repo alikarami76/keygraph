@@ -27,10 +27,18 @@ _TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\
 def assert_select(sql: str) -> str:
     """The statement with comments removed, or UnsafeSQL. One left-to-right pass reads quoted text ('..', "..", `..`, [..])
     and comments; comments are cut only outside quotes. The checks run on a copy where every quoted text is a placeholder, so
-    keywords hidden after a quote or comment marker are still seen. Any `;` (even inside a quote) and any unterminated
+    keywords hidden after a quote or comment marker are still seen. Any backslash, dollar quote and E'..' string is
+    refused too (engines disagree on where such a string ends). Any `;` (even inside a quote) and any unterminated
     quote are refused: keygraph's own SQL never needs them."""
+    if "\\" in sql:  # MySQL reads a backslash as an escape, other engines do not: the two readings of a string can differ
+        raise UnsafeSQL("backslash not allowed")
+    if re.search(r"\$\w*\$", sql):
+        raise UnsafeSQL("dollar-quoted strings are not allowed")
     out, masked, pos = [], [], 0
     for m in _TOKENS.finditer(sql):
+        if m.group(1) and m.group(1)[0] == "'" and m.start() and sql[m.start() - 1] in "eE" \
+                and (m.start() < 2 or not (sql[m.start() - 2].isalnum() or sql[m.start() - 2] in "_$")):
+            raise UnsafeSQL("escape strings (E'..') are not allowed")
         out.append(sql[pos:m.start()])
         masked.append(sql[pos:m.start()])
         out.append(m.group(1) if m.group(1) is not None else " ")

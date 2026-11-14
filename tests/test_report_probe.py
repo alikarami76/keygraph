@@ -94,7 +94,39 @@ def test_assert_select_rejects_quote_confusion(sql):
 
 def test_assert_select_still_allows_quoted_markers_and_backslashes():
     assert assert_select("SELECT 'a -- b', '/* c */' FROM t") == "SELECT 'a -- b', '/* c */' FROM t"
-    assert assert_select("SELECT 'a\\' FROM t") == "SELECT 'a\\' FROM t"
     assert assert_select('SELECT "a--b", `c/*d` FROM t -- tail') == 'SELECT "a--b", `c/*d` FROM t'
     with pytest.raises(UnsafeSQL):
         assert_select('SELECT "x--y" FROM t; DELETE FROM t')
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT 'a\\' ' INTO OUTFILE '/tmp/x' -- '",
+    "SELECT 'a\\' ' FROM t UNION SELECT 1 INTO DUMPFILE '/tmp/y' -- '",
+    "SELECT 'a\\' FROM t",
+    "SELECT $$x$$",
+    "SELECT $a$ x $a$",
+    "SELECT E'a\\'b'",
+    "SELECT e'a' FROM t",
+    "SELECT 1 FROM t WHERE x = 'a' || E'b'",
+])
+def test_assert_select_refuses_backslashes_dollar_quotes_and_escape_strings(sql):
+    with pytest.raises(UnsafeSQL):
+        assert_select(sql)
+
+
+def test_assert_select_allows_words_ending_in_e_and_dollar_params():
+    assert assert_select("SELECT type FROM t WHERE name = 'e' AND x = 'type e' AND y = $1").endswith("$1")
+    assert assert_select("SELECT date 'x' FROM t") == "SELECT date 'x' FROM t"
+
+
+def test_table_chunking_sql_has_no_backslash():
+    from keygraph.adapters.fetch import fetch_metadata
+    seen = []
+
+    def run(sql):
+        seen.append(sql)
+        return [{}] * 3 if len(seen) < 3 else []
+
+    fetch_metadata(run, limit=3)
+    assert any("LIKE" in q for q in seen) and not any("\\" in q for q in seen)
+    assert all(assert_select(q) for q in seen)

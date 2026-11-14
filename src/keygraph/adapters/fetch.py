@@ -54,14 +54,14 @@ def _chunked(run_sql, template: str, schema_expr: str, limit: int, name_col: str
     out: Rows = []
 
     def go(prefix: str):
-        extra = f"AND {name_col} LIKE '{prefix}%'" if prefix else ""
+        extra = f"AND {name_col} LIKE '{prefix}%' ESCAPE '!'" if prefix else ""
         rows = run_sql(template.format(schema=schema_expr, extra=extra, limit=limit))
         if len(rows) < limit or len(prefix) >= 6:
             out.extend(rows)
             return
         alphabet = string.ascii_lowercase + string.digits + "_"
         for ch in alphabet:
-            go(prefix + ch.replace("_", "\\_"))
+            go(prefix + ch.replace("_", "!_"))
         # names starting with an uppercase letter match LIKE case-insensitively on most collations
 
     go("")
