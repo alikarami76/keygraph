@@ -13,7 +13,7 @@ from keygraph.cli import main
 
 NEXT = "index_next (CLI: keygraph index next)"
 FINISH = "index_finish (CLI: keygraph index finish)"
-ORDERS_UNIT = "949700962b66"
+ORDERS_UNIT = "fd93b4e21eea"
 MARKER = "MARKER_ZEBRA_7731"
 TRUE_REL = {"from_table": "billing.payments", "from_columns": ["order_id"], "to_table": "shop.orders", "to_columns": ["id"],
             "cardinality": "many-to-one", "reason": f"payments point at the order they pay {MARKER}", "confidence": 0.9}
@@ -36,7 +36,7 @@ def _answer(unit: str, tasks: list[str], attempt: int) -> dict:
         if attempt > 1:
             ans["columns"] = [{"table": "shop.orders", "column": "currency", "meaning": f"Currency of the total {MARKER}",
                                "codes": {"EUR": "euro"}, "reason": MARKER, "confidence": 0.8}]
-            ans["tables"] = [{"table": "shop.sellers", "purpose": f"Marketplace sellers {MARKER}", "reason": MARKER, "confidence": 0.7}]
+            ans["tables"] = [{"table": "shop.product_variants", "purpose": f"Sellable variants of a product {MARKER}", "reason": MARKER, "confidence": 0.7}]
             ans["concepts"] = [{"name": "checkout", "definition": "A customer buys", "synonyms": ["purchase"],
                                 "tables": ["shop.orders"], "reason": MARKER, "confidence": 0.7}]
     return ans
@@ -72,7 +72,7 @@ def test_fake_agent_indexes_the_shop_end_to_end(built, tmp_path, monkeypatch, ca
 
     base_graph = json.loads((out / "graph.json").read_text())
     started = cli("index", "start", "--url-env", "SHOP_PROBE_URL", "--dialect", "sqlite")
-    assert started["units"] == 18 and started["url_env"] == "SHOP_PROBE_URL"
+    assert started["units"] == 17 and started["url_env"] == "SHOP_PROBE_URL"
     assert "sqlite:" not in json.dumps(started)  # only the name is stored
     results = {}
     while True:
@@ -90,11 +90,11 @@ def test_fake_agent_indexes_the_shop_end_to_end(built, tmp_path, monkeypatch, ca
     assert second["verified"] >= 1 and second["codes_seen"] == 1 and second["probe_failed"] == 1  # the true relation passed, the codes were only seen; the planted one failed
     assert all(r[0]["status"] == "accepted" for u, r in results.items() if u != ORDERS_UNIT)
     st = cli("index", "status")
-    assert st["units"] == {"pending": 0, "done": 18, "failed": 0, "skipped": 0} and st["accept_rate"] is not None
+    assert st["units"] == {"pending": 0, "done": 17, "failed": 0, "skipped": 0} and st["accept_rate"] is not None
     assert st["codes_seen"] == 1 and st["verified"] >= 1 and st["verify_rate"] == round(st["verified"] / st["accepted"], 3)  # seen is not verified
 
     fin = cli("index", "finish")
-    assert fin["units"] == 18 and fin["llm_edges"] >= 0 and fin["relations"] == {"rejected": 1, "verified": 1}
+    assert fin["units"] == 17 and fin["llm_edges"] >= 0 and fin["relations"] == {"rejected": 1, "verified": 1}
     assert fin["codes_seen_facts"] == 1 and fin["verified_facts"] == 1  # the verified one is the relation
     after = _tree(out)
     graph = json.loads(after["graph.json"])

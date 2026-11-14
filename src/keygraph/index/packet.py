@@ -11,6 +11,7 @@ import sqlite3
 
 from keygraph.code.refs import mask_secrets
 from keygraph.graph import Graph
+from keygraph.index import plan as PL
 from keygraph.index.pii import looks_pii, mask_keywords, scrub
 from keygraph.index.schema import canonical
 from keygraph.profile import is_pii_name
@@ -20,11 +21,12 @@ DEFAULT_CAP = 6000
 SLACK = 40  # tokens kept free for the `trimmed` note added while trimming
 # Sections are trimmed in this order (first to last) until the estimate fits; then indexes, then trailing columns.
 # Context holds the most trustworthy facts (human notes, earlier answers), so it goes last.
-TRIM_ORDER = ("queries", "code_refs", "profiles", "neighbours", "column_details", "candidate_relations", "context")
+TRIM_ORDER = ("queries", "code_refs", "profiles", "neighbours", "column_details", "candidate_relations", "copies", "context")
 PII_PROFILE_KEYS = ("sample_size", "null_rate", "distinct_in_sample", "distinct_ratio", "pattern", "length")
 PLAIN_PROFILE_KEYS = (*PII_PROFILE_KEYS, "numeric", "dates", "values_complete")
 MIN_CONFIDENCE = 0.6
 MAX_ENUM_DISTINCT, MAX_ENUM_LEN = 20, 30
+MAX_COPIES = 10
 MAX_CODE_REFS, MAX_QUERIES, MAX_NEIGHBOURS, MAX_EVIDENCE, MAX_TOP_VALUES = 5, 3, 8, 3, 8
 
 
@@ -175,6 +177,16 @@ def _context(ctx, units: list[str]) -> list[dict]:
     return out
 
 
+def _copies(g: Graph, ctx, units: list[str]) -> list[dict]:
+    """Family copies of the unit's tables: near-duplicates (same columns, same data) that get no unit of their own."""
+    fams, out = PL.families(g, ctx), []
+    for t in units:
+        if t in fams:
+            out.append({"table": t, "copies": fams[t][:MAX_COPIES], **({"more": len(fams[t]) - MAX_COPIES} if len(fams[t]) > MAX_COPIES else {}),
+                        "note": "these tables have the same columns and overlapping data as this one; they are not indexed separately"})
+    return out
+
+
 def _note(p: dict, what: str) -> None:
     if what not in p["trimmed"]:
         p["trimmed"].append(what)
@@ -244,7 +256,7 @@ def _fit(p: dict, limit: int) -> None:
             if _drop_details(p):
                 _note(p, sec)
             continue
-        while estimate(p) > limit and p[sec]:
+        while estimate(p) > limit and p.get(sec):
             _pop_one(p, sec)
             _note(p, sec)
     _drop_indexes(p, limit)
@@ -261,6 +273,9 @@ def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> di
                "candidate_relations": _relations(g, set(units)), "neighbours": _neighbours(g, set(units)),
                "profiles": _profiles(g, ctx, units), "code_refs": _code_refs(ctx, units), "queries": _queries(ctx, units),
                "context": _context(ctx, units), "trimmed": [], "cap": int(cap)}
+    copies = _copies(g, ctx, units)
+    if copies:
+        p["copies"] = copies
     _fit(p, cap - SLACK)
     if estimate(p) > cap:  # the notes added while trimming may have used the slack
         _fit(p, cap)

@@ -693,15 +693,16 @@ class _Reported(ValueError):
 def cmd_index(a):
     """keygraph index start|next|submit|status|finish|replay|refresh: the work-queue protocol for LLM indexing."""
     from .index import cli_api as X
+    from .index import reply as RY
     c = a.index_cmd
     try:
         r = _index_run(X, a, c)
     except (ValueError, OSError) as exc:
         if not getattr(a, "json", False):
             raise ValueError(str(exc)) from None
-        print(json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=1))
+        print(RY.dumps({"status": "error", "error": str(exc)}))
         raise _Reported(str(exc)) from None
-    _emit(a, r, _index_text(c if c != "finish" else "replay", r))
+    print(RY.dumps(r) if getattr(a, "json", False) else _index_text(c if c != "finish" else "replay", r))
 
 
 def _index_run(X, a, c: str) -> dict:

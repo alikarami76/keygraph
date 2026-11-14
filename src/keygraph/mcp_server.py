@@ -27,6 +27,7 @@ from .context import ContextDB
 from .docs_out import table_file
 from .graph import Graph
 from .index import cli_api as IX
+from .index import reply as IXR
 
 INSTRUCTIONS = """keygraph maps the keys of a database and the relations between its tables. It is deterministic and
 answers from a prebuilt graph. The query tools are read-only and never query the database; only `query_submit` and the `index_*` tools write (see below).
@@ -84,18 +85,28 @@ class _DevServer(MCPServer):
         self._rec.client = _client(context) or self._rec.client
         return self._rec
 
+    async def _call(self, name, arguments, context):
+        """The tool call; index_* results are rewritten as compact JSON (the text the CLI prints with --json, byte for byte)."""
+        res = await super().call_tool(name, arguments, context)
+        if name.startswith("index_") and not getattr(res, "is_error", False):
+            for block in res.content:
+                if getattr(block, "type", "") == "text":
+                    with contextlib.suppress(ValueError):
+                        block.text = IXR.dumps(json.loads(block.text))
+        return res
+
     async def call_tool(self, name, arguments, context=None):
         if name == "dev_note":
             if devlog.enabled(self.out):
                 with contextlib.suppress(Exception):
                     self._recorder(context)  # learn the client before the note is written
-            return await super().call_tool(name, arguments, context)
+            return await self._call(name, arguments, context)
         if not devlog.enabled(self.out):
-            return await super().call_tool(name, arguments, context)
+            return await self._call(name, arguments, context)
         t0, res, exc = time.perf_counter(), None, None
         with devlog.collecting() as decisions:
             try:
-                res = await super().call_tool(name, arguments, context)
+                res = await self._call(name, arguments, context)
             except BaseException as e:  # noqa: BLE001  (recorded, then re-raised unchanged)
                 exc = e
         try:

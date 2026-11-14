@@ -34,7 +34,7 @@ After a map is built, you can add a meaning layer yourself (undeclared relations
     keygraph index replay --json                   # same rebuild, no model, no database
     keygraph index refresh --json                  # after the map changed (CLI only)
 
-MCP: `index_start`, `index_next`, `index_submit(unit_id, answer, model, probe_seconds)` (`answer` is an object), `index_status`, `index_finish`; same JSON.
+MCP: `index_start`, `index_next`, `index_submit(unit_id, answer, model, probe_seconds)` (`answer` is an object), `index_status`, `index_finish`; same JSON, compact and under 40,000 characters (a `truncated` note says what a packet lost). The plan puts query-log, code and context tables first, then bigger and better-connected ones; empty or tiny tables go last and near-duplicate copies (same columns) get no unit (`index/families.json`, `packet.copies`): run `keygraph profile` first for row counts.
 
 Loop: `start`, then `next` and `submit` until `next` says `done`, then `finish`.
 - The answer is one JSON object with a list for every requested kind (`relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`); `[]` when you have nothing. Tables are `schema.table` as in the packet. Every item has `reason` and `confidence` (0 to 1). Never write personal values.

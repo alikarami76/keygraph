@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import sqlite3
 
 from keygraph.graph import Graph
 
-WEIGHTS = {"hub": 3.0, "queries": 2.0, "code": 1.5, "context": 1.0, "area": 1.0}
+# The first five are the strong signals (declared and inferred relations, the query log, code references, documented
+# context, area centrality). `rows`, `degree` and `presence` are weak generic warehouse signals: how much data a table
+# holds (log-scaled), how many relations touch it, and a penalty for tables known to be empty or tiny. They never
+# outweigh a table that people query or code uses.
+WEIGHTS = {"hub": 3.0, "queries": 2.0, "code": 1.5, "context": 1.0, "area": 1.0, "rows": 0.6, "degree": 0.4, "presence": 1.0}
 MAX_TABLES = 5
+TINY_ROWS = 10  # fewer rows than this (but known) ranks lower; zero rows ranks lowest
+PRESENCE = {"empty": -1.0, "tiny": -0.5}
+MIN_FAMILY_COLUMNS = 3  # a 2-column shape (id, name) is too generic to call two tables copies of each other
+MAX_FAMILY_LIST = 50
 
 
 def _counts(ctx, sql: str) -> dict[str, int]:
@@ -35,10 +45,126 @@ def _real_edges(g: Graph) -> list[dict]:
             and not e.get("rejected")]
 
 
-def rank_tables(g: Graph, ctx) -> list[dict]:
-    """Rank every table except mirror and copy-schema ones: hub score (incoming relations), query-log hits, code refs, context mentions, area centrality.
-    Returns [{"table", "score", "parts"}] best first; ties broken by table id. Same inputs give the same list."""
+def _degree(g: Graph) -> dict[str, int]:
+    """table_id -> number of distinct related tables (edges in either direction)."""
+    nbrs: dict[str, set[str]] = {}
+    for e in _real_edges(g):
+        nbrs.setdefault(e["from"], set()).add(e["to"])
+        nbrs.setdefault(e["to"], set()).add(e["from"])
+    return {t: len(n) for t, n in nbrs.items()}
+
+
+def _rows(g: Graph, ctx) -> dict[str, int]:
+    """table_id -> known row count: the adapter's estimate, or the largest profile sample (a lower bound). Unknown tables are absent."""
+    out: dict[str, int] = {}
+    for t, n in g.nodes.items():
+        est = (n.get("info") or {}).get("rows_estimate")
+        if isinstance(est, (int, float)) and est >= 0:
+            out[t] = int(est)
+    for t, n in _counts(ctx, "SELECT table_id, MAX(sample_size) FROM column_profile GROUP BY table_id").items():
+        out[t] = max(out.get(t, 0), n)
+    return out
+
+
+def _signature(node: dict) -> tuple:
+    """Column names and types, order-insensitive."""
+    return tuple(sorted((c["name"].lower(), " ".join(str(c["type"]).lower().split())) for c in node["columns"]))
+
+
+def _profiles_of(ctx, tid: str) -> dict[str, dict]:
+    out = {}
+    try:
+        for r in ctx.db.execute("SELECT col, profile FROM column_profile WHERE table_id=? ORDER BY col", (tid,)):
+            try:
+                out[r[0]] = json.loads(r[1])
+            except ValueError:
+                pass
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _range_overlap(a: dict | None, b: dict | None) -> bool | None:
+    if not a or "min" not in a or "max" not in a or not b or "min" not in b or "max" not in b:
+        return None
+    try:
+        return a["min"] <= b["max"] and b["min"] <= a["max"]
+    except TypeError:
+        return None
+
+
+def _col_overlap(pa: dict, pb: dict) -> bool | None:
+    """True/False when two column profiles share/cannot share values, None when they say nothing comparable."""
+    verdicts = [_range_overlap(pa.get("numeric"), pb.get("numeric")), _range_overlap(pa.get("dates"), pb.get("dates"))]
+    ta, tb = pa.get("top_values"), pb.get("top_values")
+    if ta and tb:
+        shared = {v for v, _ in ta} & {v for v, _ in tb}
+        both_complete = pa.get("values_complete") is True and pb.get("values_complete") is True
+        verdicts.append(True if shared else (False if both_complete else None))
+    known = [v for v in verdicts if v is not None]
+    return None if not known else any(known)
+
+
+def _same_data(ctx, a: str, b: str, key_cols: list[str], cache: dict) -> bool:
+    """False only when profiles of both tables exist and every comparable column (the key columns first) shows the two hold
+    different values. Without comparable profiles the shape alone decides (True)."""
+    for t in (a, b):
+        if t not in cache:
+            cache[t] = _profiles_of(ctx, t)
+    pa, pb = cache[a], cache[b]
+    shared = sorted(set(pa) & set(pb))
+    for cols in ([c for c in key_cols if c in shared], shared):
+        verdicts = [v for v in (_col_overlap(pa[c], pb[c]) for c in cols) if v is not None]
+        if verdicts:
+            return any(verdicts)
+    return True
+
+
+def families(g: Graph, ctx) -> dict[str, list[str]]:
+    """Near-duplicate families: tables with the same column signature (names and types, any order, at least 3 columns) that,
+    when profiles exist, still share key or column values. Returns {representative: [copies]} (copies sorted), only for
+    families of two or more. The representative has the most rows, else the most relations, else the smallest table id.
+    Copies get no unit of their own: their only note is "copy of <representative>" (index/families.json and the
+    representative's packet). Deterministic: same map and profiles, same families."""
     skip = skipped_tables(g)
+    rows, deg = _rows(g, ctx), _degree(g)
+    groups: dict[tuple, list[str]] = {}
+    for t in sorted(g.nodes):
+        n = g.nodes[t]
+        if t not in skip and len(n["columns"]) >= MIN_FAMILY_COLUMNS:
+            groups.setdefault(_signature(n), []).append(t)
+    cache: dict[str, dict] = {}
+    out: dict[str, list[str]] = {}
+    for sig, members in sorted(groups.items(), key=lambda kv: kv[1][0]):
+        if len(members) < 2:
+            continue
+        clusters: list[list[str]] = []
+        for t in members:  # sorted: each table joins the first cluster whose first member holds the same data
+            key_cols = g.nodes[t]["primary_key"]
+            for cl in clusters:
+                if _same_data(ctx, cl[0], t, key_cols, cache):
+                    cl.append(t)
+                    break
+            else:
+                clusters.append([t])
+        for cl in clusters:
+            if len(cl) > 1:
+                rep = min(cl, key=lambda t: (-rows.get(t, -1), -deg.get(t, 0), t))
+                out[rep] = sorted(set(cl) - {rep})
+    return dict(sorted(out.items()))
+
+
+def copy_of(fams: dict[str, list[str]]) -> dict[str, str]:
+    """copy table -> representative."""
+    return {c: rep for rep, cs in fams.items() for c in cs}
+
+
+def rank_tables(g: Graph, ctx) -> list[dict]:
+    """Rank every table except mirror, copy-schema and family-copy ones. Strong signals: hub score (incoming relations),
+    query-log hits, code refs, context mentions, area centrality. Weak generic signals: row count (log-scaled), relation
+    degree, and a penalty for tables with zero or fewer than 10 rows (known only from the adapter's estimate or profiles).
+    Returns [{"table", "score", "parts"}] best first; ties broken by table id. Same inputs give the same list."""
+    skip = skipped_tables(g) | set(copy_of(families(g, ctx)))
     ids = sorted(t for t in g.nodes if t not in skip)
     incoming: dict[str, int] = {}
     for e in _real_edges(g):
@@ -59,8 +185,13 @@ def rank_tables(g: Graph, ctx) -> list[dict]:
         if area_of.get(e["from"]) and area_of.get(e["from"]) == area_of.get(e["to"]):
             for t in (e["from"], e["to"]):
                 inside[t] = inside.get(t, 0) + 1
+    nrows = _rows(g, ctx)
+    logrows = {t: math.log1p(n) for t, n in nrows.items()}
+    presence = {t: PRESENCE["empty"] if nrows.get(t) == 0 else PRESENCE["tiny"] if t in nrows and nrows[t] < TINY_ROWS else 0.0
+                for t in ids}
     comps = {"hub": _norm(incoming, ids), "queries": _norm(qhits, ids), "code": _norm(code, ids),
-             "context": _norm(mentions, ids), "area": _norm(inside, ids)}
+             "context": _norm(mentions, ids), "area": _norm(inside, ids), "rows": _norm(logrows, ids),
+             "degree": _norm(_degree(g), ids), "presence": presence}
     rows = []
     for t in ids:
         parts = {k: round(comps[k][t], 6) for k in WEIGHTS}

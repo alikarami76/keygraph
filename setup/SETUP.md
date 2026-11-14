@@ -163,7 +163,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
    KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db" keygraph index start --budget 200000 --max-units 3 --url-env KEYGRAPH_PROBE_URL --dir "$OUT" --json
    ```
 
-   The reply is `{"job_id", "units", "budget", "used", "pending", "skipped", "tasks", "url_env", "cmd_env", "dialect", "resumed", "next"}`. Running `start` again resumes the open job.
+   The reply is `{"job_id", "units", "budget", "used", "pending", "skipped", "tasks", "url_env", "cmd_env", "dialect", "resumed", "next", "families", "copies_without_unit"}`. Units are ranked best first (query log, code and context, then row count and relations; empty, tiny and near-duplicate tables last or without a unit, see `index/families.json`). Running `start` again resumes the open job. Every reply is compact JSON under 40,000 characters; when a packet was cut, the reply has a `truncated` note.
 
 2. Get a unit:
 

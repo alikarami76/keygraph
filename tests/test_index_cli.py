@@ -13,7 +13,7 @@ from keygraph.index import jobs
 
 NEXT = "index_next (CLI: keygraph index next)"
 FINISH = "index_finish (CLI: keygraph index finish)"
-ORDERS_UNIT = "949700962b66"  # payments, customers, order_items, orders, sellers
+ORDERS_UNIT = "fd93b4e21eea"  # payments, customers, order_items, orders, product_variants
 EMPTY = {"relations": []}
 BAD = {"relations": [{"from_table": "nope.nothing", "from_columns": ["x"], "to_table": "shop.orders", "to_columns": ["id"],
                       "reason": "made up", "confidence": 0.5}]}
@@ -69,7 +69,7 @@ def test_unset_env_var_error_names_only_the_variable(work, capsys, monkeypatch):
 
 def test_start_next_and_idempotence(work, capsys):
     r = run(capsys, work, "index", "start")
-    assert r["job_id"] == "job-0001" and r["units"] == 18 and r["budget"] == 200000 and r["next"] == NEXT
+    assert r["job_id"] == "job-0001" and r["units"] == 17 and r["budget"] == 200000 and r["next"] == NEXT
     assert (work / "index" / "base_graph.json").exists()
     a, b = run(capsys, work, "index", "next"), run(capsys, work, "index", "next")
     assert a == b and a["status"] == "unit" and a["unit_id"] == ORDERS_UNIT and a["attempt"] == 1
@@ -160,7 +160,7 @@ def test_done_when_every_unit_is_submitted_and_finish_closes_the_job(work, capsy
     n = run(capsys, work, "index", "next")
     assert n == {"status": "done", "finish": FINISH}
     st = run(capsys, work, "index", "status")
-    assert st["units"]["skipped"] == 16 and st["units"]["done"] == 2 and st["next"] == FINISH
+    assert st["units"]["skipped"] == 15 and st["units"]["done"] == 2 and st["next"] == FINISH
     fin = run(capsys, work, "index", "finish")
     assert fin["units"] == 2 and (work / "index" / "summary.json").exists()
     assert run(capsys, work, "index", "status")["status"] == "done"
@@ -182,13 +182,13 @@ def test_refresh_marks_only_changed_units(work, capsys, tmp_path):
         done.append(u)
     assert ORDERS_UNIT in done
     nothing = run(capsys, work, "index", "refresh")
-    assert nothing["changed"] == [] and nothing["new"] == [] and nothing["dropped"] == [] and nothing["unchanged"] == 18
+    assert nothing["changed"] == [] and nothing["new"] == [] and nothing["dropped"] == [] and nothing["unchanged"] == 17
     # a real change to the orders note changes that unit's packet only
     assert main(["context", "add", "--kind", "table", "table=shop.orders", "grain=one row per checkout", "--verified",
                  "--dir", str(work)]) == 0
     capsys.readouterr()
     r = run(capsys, work, "index", "refresh")
-    assert r["changed"] == [ORDERS_UNIT] and r["new"] == [] and r["dropped"] == [] and r["unchanged"] == 17
+    assert r["changed"] == [ORDERS_UNIT] and r["new"] == [] and r["dropped"] == [] and r["unchanged"] == 16
     after = _units(work)
     assert after[ORDERS_UNIT]["status"] == "pending" and after[ORDERS_UNIT]["attempts"] == 0
     assert [u for u in done if u != ORDERS_UNIT and after[u]["status"] == "done"] == [u for u in done if u != ORDERS_UNIT]

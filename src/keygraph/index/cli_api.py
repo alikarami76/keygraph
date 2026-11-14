@@ -28,6 +28,7 @@ from . import packet as PK
 from . import plan as PL
 from . import probe as PR
 from . import replay as RP
+from . import reply as RY
 from . import schema as SC
 from . import store as ST
 from . import validate as VL
@@ -40,6 +41,7 @@ FINISH = "index_finish (CLI: keygraph index finish)"
 FREE_PARSE_ERRORS = 3
 DIALECTS = ("mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite")
 LEDGER = "ledger.json"
+FAMILIES = "families.json"
 REASONS_KEPT = 20
 
 
@@ -106,6 +108,21 @@ def _save_ledger(out: Path, d: dict) -> None:
     p.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
 
 
+def _save_families(out: Path, fams: dict) -> None:
+    """index/families.json: {representative: [copies]}. Copies get no unit; this file is their "copy of" note."""
+    p = out / "index" / FAMILIES
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(fams, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+
+
+def _families_view(out: Path) -> dict:
+    try:
+        fams = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fams = {}
+    return {"families": len(fams), "copies_without_unit": sum(len(v) for v in fams.values())}
+
+
 def _entry(led: dict, uid: str) -> dict:
     return led.setdefault(uid, {"accepted": 0, "attempts": 0, "probe_failed": 0, "reasons": [], "rejected": 0, "unverified": 0,
                                 "verified": 0, "codes_seen": 0})
@@ -153,6 +170,7 @@ def _job_view(ctx, job: dict, resumed: bool) -> dict:
 
 # --- start -----------------------------------------------------------------------------------------------------
 
+@RY.capped
 def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "", cmd_env: str = "", dialect: str = "",
                  max_units: int = 0, restart: bool = False) -> dict:
     """Plan the units and create the job, or resume the open one. Needs a built map in `dir`.
@@ -179,7 +197,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
                 ignored = ["tasks"] if tasks and want != job["tasks"] else []
                 job = jobs.update_job(ctx, job["job_id"], budget=max(budget, job["budget"]),
                                       url_env=url_env or None, cmd_env=cmd_env or None, dialect=dialect or None)
-                res = _job_view(ctx, job, True)
+                res = {**_job_view(ctx, job, True), **_families_view(out)}
                 if ignored:
                     res["ignored"] = ignored
                 devlog.decide("index_start", job_id=job["job_id"], resumed=True, units=res["units"], budget=res["budget"],
@@ -191,11 +209,13 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
             jobs.close_job(ctx, job["job_id"], "aborted")
         RP.snapshot_base(out)
         g = _base(out)
-        units = PL.make_units(g, PL.rank_tables(g, _pre_llm(ctx)))
+        pre = _pre_llm(ctx)
+        units = PL.make_units(g, PL.rank_tables(g, pre))
+        _save_families(out, PL.families(g, pre))
         job_id = jobs.create_job(ctx, units, budget=budget, tasks=want, url_env=url_env or "", cmd_env=cmd_env or "",
                                  dialect=dialect, skip_after=max_units if max_units > 0 else None)
         _save_ledger(out, {})
-        res = _job_view(ctx, jobs.get_job(ctx, job_id), False)
+        res = {**_job_view(ctx, jobs.get_job(ctx, job_id), False), **_families_view(out)}
     devlog.decide("index_start", job_id=job_id, resumed=False, units=res["units"], budget=res["budget"], skipped=res["skipped"],
                   tasks=len(want), probe=("url_env" if url_env else "cmd_env" if cmd_env else "none"))
     return res
@@ -203,6 +223,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
 
 # --- next ------------------------------------------------------------------------------------------------------
 
+@RY.capped
 def next_result(dir) -> dict:
     """The best pending unit with its packet, or budget_exhausted, or done. The same unit comes back until it is submitted
     (or fails after three rejections)."""
@@ -251,6 +272,7 @@ def _source(job: dict, g) -> tuple[PR.Source | None, str]:
     return src, "url" if job["url_env"] else "cmd"
 
 
+@RY.capped
 def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET) -> dict:
     """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt, for the first
     three times per unit; after that each one is a rejection like any other."""
@@ -267,6 +289,7 @@ def _resubmit(unit_id: str) -> str:
     return f"index_submit unit_id={unit_id} (CLI: keygraph index submit {unit_id} FILE|-)"
 
 
+@RY.capped
 def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *,
                   _parse_error: str | None = None, _answer_tokens: int | None = None) -> dict:
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
@@ -395,6 +418,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
 
 # --- status, finish, replay, refresh ---------------------------------------------------------------------------
 
+@RY.capped
 def status_result(dir) -> dict:
     """Progress, budget, accept and verify rates (null before any submission) and the failed units with their reasons."""
     out = Path(dir)
@@ -422,6 +446,7 @@ def status_result(dir) -> dict:
             "next": NEXT if prog["units"]["pending"] else FINISH}
 
 
+@RY.capped
 def finish_result(dir) -> dict:
     """Replay the saved answers onto the base graph, write index/summary.json and close the job when nothing is pending.
     Returns the summary (counts only), the same dict `replay` returns."""
@@ -444,6 +469,7 @@ def finish_result(dir) -> dict:
     return res
 
 
+@RY.capped
 def replay_result(dir) -> dict:
     """Rebuild the meaning layer from index/answers/ alone: no model, no environment variable, no source database."""
     out = Path(dir)
@@ -453,6 +479,7 @@ def replay_result(dir) -> dict:
     return res
 
 
+@RY.capped
 def refresh_result(dir) -> dict:
     """Re-plan on the current map. Failed units, and done units whose packet hash changed, go back to pending (retried and changed), tables
     that no unit covers get new pending units, and units that are no longer planned are dropped with their saved answers.
@@ -474,6 +501,7 @@ def refresh_result(dir) -> dict:
         job_id = job["job_id"]
         pre = _pre_llm(ctx)
         new = PL.make_units(g, PL.rank_tables(g, pre))
+        _save_families(out, PL.families(g, pre))
         old = {u["unit_id"]: u for u in jobs.list_units(ctx, job_id)}
         for u in new:
             o = old.get(u["unit_id"])
