@@ -21,7 +21,7 @@ class UnsafeSQL(ValueError):
     pass
 
 
-_TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`)|/\*.*?\*/|--[^\n]*""", re.S)
+_TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`)|/\*.*?\*/|--[^\n]*""", re.DOTALL)
 
 
 def assert_select(sql: str) -> str:
