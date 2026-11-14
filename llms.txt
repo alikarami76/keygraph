@@ -4,7 +4,9 @@
 
 ## Start here
 
-- [README](https://github.com/alikarami76/keygraph/blob/main/README.md): what keygraph is, when to use it, quickstart in three commands.
+- [README](https://github.com/alikarami76/keygraph/blob/main/README.md): what keygraph is (the schema map that stops your SQL agent from double-counting), a three-command demo quickstart, and when to use it.
+- [What your agent gets](https://github.com/alikarami76/keygraph/blob/main/README.md#what-your-agent-gets): join paths with fan-out warnings, grain, status codes, keys, business search and labelled guesses.
+- [Works with DBHub and MCP Toolbox](https://github.com/alikarami76/keygraph/blob/main/README.md#works-with-dbhub-and-mcp-toolbox): keygraph never runs SQL; pair it with a database MCP server that does.
 - [Why a prebuilt map](https://github.com/alikarami76/keygraph/blob/main/README.md#why-a-prebuilt-map-beats-no-context-or-context-made-on-the-fly): why a deterministic, curated schema map gives agents more correct SQL than no context or context they explore and generate in each session.
 - [When to use keygraph](https://github.com/alikarami76/keygraph/blob/main/README.md#when-to-use-keygraph): join paths, missing foreign keys, ER diagrams, schema context for text-to-SQL, status codes.
 - [Supported sources](https://github.com/alikarami76/keygraph/blob/main/README.md#supported-sources): what each database source reads and the read-only guarantee.
@@ -32,7 +34,7 @@
 - [How relations are inferred](https://github.com/alikarami76/keygraph/blob/main/README.md#how-relations-are-inferred): confidence, evidence, hubs, areas, path penalties, mirrors.
 - [Business context and value profiles](https://github.com/alikarami76/keygraph/blob/main/README.md#business-context-and-value-profiles): concepts, status codes, metrics, sampled profiles and the PII rule.
 - [Code index and query log](https://github.com/alikarami76/keygraph/blob/main/README.md#code-index-and-query-log): link source code (ORM declarations, SQL, property uses) to tables and columns, and log the queries people and agents ran with timing and business question.
-- [Comparison](https://github.com/alikarami76/keygraph/blob/main/README.md#comparison): keygraph next to SchemaSpy, dbdocs, DataHub, OpenMetadata, database IDE diagrams, dbdiagram and schema linking.
+- [Comparison](https://github.com/alikarami76/keygraph/blob/main/README.md#comparison): keygraph next to SchemaSpy, dbdocs, DataHub, OpenMetadata, database IDE diagrams, dbdiagram, semantic layers, dbt, database MCP servers (DBHub, MCP Toolbox), graphify and schema linking.
 - [FAQ](https://github.com/alikarami76/keygraph/blob/main/README.md#faq): common questions about join paths, foreign keys, safety and MCP setup.
 
 ## Examples and docs
