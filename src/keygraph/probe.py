@@ -47,7 +47,7 @@ def assert_select(sql: str) -> str:
         raise UnsafeSQL("only one statement is allowed")
     if re.search(r"['\"`]", stripped):
         raise UnsafeSQL("unterminated quote")
-    if not re.match(r"select\b", stripped, re.I):
+    if not re.match(r"select\b", stripped, re.IGNORECASE):
         raise UnsafeSQL("only SELECT statements are allowed")
     m = _BAD.search(stripped)
     if m:
