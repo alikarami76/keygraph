@@ -55,7 +55,7 @@ Wait for the answers. Write them down; you will save them in step 8.
 
 ## Step 3. Install
 
-Pick the first method that is available. Add the driver (optional: `--with <driver>`, or the pip package name) only when the table below names one; for SQLite or the demo, leave it out. Install the extras that match the answers: `live` (a live connection), `mcp` (always), `yaml` (context or docs files), `code` (code index or query log).
+Pick the first method that is available. Add the driver (optional: `--with <driver>`, or the pip package name) only when the table below names one; for SQLite or the demo, leave it out. Install the extras that match the answers: `live` (a live connection), `mcp` (always), `yaml` (context or docs files; always include it when question 5, the starter context, is yes, because `keygraph context import` on a YAML file fails with "needs PyYAML" without it), `code` (code index or query log).
 
 ```bash
 # uv (preferred: a persistent tool with a stable path that GUI agents can start)
@@ -64,9 +64,9 @@ uv tool install 'keygraph[live,mcp,yaml,code]' [--with <driver>]   # --with only
 pipx install 'keygraph[live,mcp,yaml,code]'    # then, only if a driver is needed: pipx inject keygraph <driver>
 # plain pip (inside a virtual environment)
 python3 -m pip install 'keygraph[live,mcp,yaml,code]' [<driver>]
-# an unreleased version from a clone (this may update the clone's uv.lock)
-python3 -m pip install -e '/path/to/keygraph[live,mcp,yaml,code]'
-# in zsh, set CLONE to the clone's path and quote the whole thing so the brackets are not a glob: pip install -e "${CLONE}[live,mcp,yaml,code]"
+# an unreleased version from a clone (this may update the clone's uv.lock); quote the whole spec so zsh does not treat the brackets as a glob
+CLONE=/path/to/clone
+python3 -m pip install -e "${CLONE}[live,mcp,yaml,code]"
 ```
 
 Database drivers for a live connection:
@@ -100,13 +100,14 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 # (c) a read-only command template that prints JSON rows for {sql}
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
-# (d) demo: copy examples/shop (keep a copy of the whole folder) and run the copy's build.sh. keygraph must be on PATH:
-# for a virtual environment run `export PATH="<path to that venv>/bin:$PATH"` first (or call <venv>/bin/keygraph).
-# build.sh changes into its own folder, so give it an absolute OUT. It imports the demo's context, code index, query
-# log and profiles, and renders. After it run only the starter-context import (question 5, below) and a final
-# `keygraph render`; skip the whole extras block that follows (`code index .` would index the wrong folder).
-# Without an argument it writes next to the script.
-OUT="$(pwd)/keygraph-out" && sh <path to your copy of examples/shop>/build.sh "$OUT"
+# (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no extras, no clone). It needs a keygraph whose
+# `keygraph --help` lists `demo` (check this, not the version number); otherwise use option (a), (b) or (c). Call keygraph by its full path (`<venv>/bin/keygraph`) in every command when it is in a virtual environment: a PATH export does not last across commands in some harnesses.
+# It loads the demo's context, code index, query log and profiles, and renders. OUT must be new or empty. After it run only
+# the starter-context import (question 5, below) and a final `keygraph render`; skip the whole extras block that follows
+# (`code index .` would index the wrong folder).
+OUT="$(pwd)/keygraph-out" && keygraph demo --dir "$OUT" --no-open --json
+# Ignore the `uvx ...` lines in the reply's `next` list: they would start a PyPI build, not this install. Use `mcp_launch` from `keygraph doctor --json`.
+# The JSON reply has a `database` field: the path of the packaged demo SQLite file. Keep it for the probe source in the LLM indexing step.
 ```
 
 Then, in this order, only the extras the user said yes to:
@@ -121,11 +122,11 @@ keygraph code index . --name <repo-name> --dir "$OUT"
 keygraph queries import queries.jsonl --dir "$OUT"
 # value profiles (an EXAMPLE for a real Postgres database; use your engine for --source). Bounded sampled reads, PII values never stored. Start with the most connected tables
 ( set -a; . ./.env; set +a; keygraph profile --source postgres --url "${DATABASE_URL}" --top-hubs 20 --with-context --dir "$OUT" )
-# refresh the report, the explorer and the agent pages (add --queries if you imported a query log; the demo's build.sh renders with --queries)
+# refresh the report, the explorer and the agent pages (add --queries if you imported a query log; `keygraph demo` already renders with --queries)
 keygraph render --dir "$OUT"
 ```
 
-**Starter business context (question 5).** Do these in order. (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`. Pick a table the demo context does not cover yet, such as `billing.payments`, or add nothing: every fact the demo already stores for `shop.orders` is verified, so it adds nothing.)
+**Starter business context (question 5).** Do these in order. (For the demo, the starter file is the one you write here, for example `keygraph-context.yaml`. Every fact the demo already stores for `shop.orders` is verified, so writing it again adds nothing. Pick a table the demo context does not cover yet, such as `billing.payment_methods` (no notes in the demo context; the packaged demo code `keygraph/demo/app/sql/reports.sql` joins it on `pm.id = p.method_id`, so you can cite that), ideally with one fact you can point to in that code; or, if the table you picked has no code in `keygraph/demo/app/`, import an empty starter file and tell the user so.)
 
 1. Look up first, before you write any entry: for each table, column, concept, metric and relation you plan to add, run `keygraph describe <table> --brief --dir "$OUT"` (it shows the notes and codes already stored, with `(llm)` after every field the indexer wrote; on a small table it may still list every column). To see which stored entries are verified, run `keygraph describe <table> --dir "$OUT"` (without `--brief`) or `keygraph search "<name>" --dir "$OUT"`. Leave out every fact that is already stored and verified.
 2. Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table.
@@ -149,7 +150,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
 1. Plan the work.
 
    - Probe source. keygraph can check your claims against the data with SELECT-only queries (it never shows you a row). The connection must be a **read-only** connection held in an environment variable; you pass only the variable's name, never its value. For a real database, never type a URL, password or command into a command line, a file or the chat: use a variable the user has already exported (for example `KEYGRAPH_PROBE_URL`), and add `--url-env KEYGRAPH_PROBE_URL` (or `--cmd-env NAME` for a read-only command with `{sql}`). If the variable is not set in your shell, tell the user; do not make one up. If `start` says the variable is not set, leave `--url-env` out: without probes everything is stored as unverified, which is fine. The only exception is the demo below, because its probe source is a local SQLite file with no secret in it.
-   - For the demo, use a copy of the demo database as the probe source: `cp <path to your copy of examples/shop>/shop.db "$OUT/../shop-probe.db"`. Its URL is `sqlite:///` plus the absolute path of that copy. Put the variable in front of every `start` and every `submit`, for example `KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db" keygraph index submit ...`. (Demo only: you may type this local `sqlite:///` path. Never type any other URL.)
+   - For the demo, use a copy of the demo database as the probe source: `cp "<database from keygraph demo --json>" "$OUT/../shop-probe.db"` (the `database` field of the step 4 reply; it works for a PyPI install, which has no `examples/shop`). Its URL is `sqlite:///` plus the absolute path of that copy. Put the variable in front of every `start` and every `submit`, for example `KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db" keygraph index submit ...`. (Demo only: you may type this local `sqlite:///` path. Never type any other URL.)
    - Start. Set the probe variable on the same command line (see above). Without a probe source leave `--url-env` out.
 
    ```bash
@@ -178,7 +179,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
 3. Write the answer to any scratch file you can read back, for example a file in your project's scratch folder (the commands below call it `ANSWER.json`).
    - It is one JSON object with a list for every kind named in `tasks`: `relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`. Use `[]` for a kind where the packet gives you nothing to say.
    - Use only tables listed in `packet.unit_tables` as the `table` of a columns, tables, performance, concepts or metrics item, and only columns that appear in the packet. Write tables as `schema.table`, as in the packet. A table outside the unit is rejected and costs an attempt.
-   - A relation needs at least one end in `packet.unit_tables`. The other end is another unit table or a neighbour listed in `packet.neighbours` (keygraph accepts any table of the map there, but you only know the ones the packet shows).
+   - A relation item uses the keys `from_table`, `from_columns` (a list), `to_table`, `to_columns` (a list), `reason` and `confidence` (`cardinality` is optional), and needs at least one end in `packet.unit_tables`. The other end is another unit table or a neighbour listed in `packet.neighbours` (keygraph accepts any table of the map there, but you only know the ones the packet shows).
    - Every item needs a `reason` and a `confidence` between 0 and 1. Never write personal values.
    - Before you answer for a column or table, check what is stored: `keygraph describe <table> --brief --dir "$OUT"`. A verified note is never replaced, and an item that tries to is rejected.
    - Do not repeat relations that the packet already lists as declared or inferred (`candidate_relations`). A declared one is rejected; an inferred one is accepted but adds evidence only, and the reply counts it in `confirmed_existing`. Propose relations only when the columns suggest a link the map does not have.
@@ -220,7 +221,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
    ```
 
    - `finish` rebuilds `graph.json`, the pages, the report and the explorer from all stored answers, and returns `{"units", "kept", "filled", "probe_failed", "facts", "verified_facts", "codes_seen_facts", "relations", "llm_edges"}`: `units` is the number of saved answers used; `facts` counts stored facts by kind; `verified_facts` how many of them a probe confirmed (relation overlap, grain, filters); `codes_seen_facts` how many columns facts only had their code values seen in the data; `relations` counts proposed relations by status (verified, unverified, rejected); `llm_edges` is the number of new edges your relations added to `graph.json` (a relation that repeats an existing edge adds evidence only, so it is not counted); `filled` is the number of empty fields of existing notes that your facts filled; `kept` is the number of your facts that were not used because a stored note already says something else. Neither `kept` nor `filled` is a problem. If units are still pending the job stays open: run `keygraph index next` again, or tell the user how many are left.
-   - `status` shows the units pending, done, failed and skipped, the budget used and left, the accept rate (accepted items out of all items submitted; `accepted` counts items that passed validation, even when a probe then failed them) and the verify rate (items a probe verified out of accepted items; 0% when no probes ran, empty until something was submitted). `status` also shows `codes_seen` apart: those items had their code values found in the data, which does not count as verified.
+   - `status` shows the units pending, done, failed and skipped, the budget used and left, the accept rate (accepted items out of all items submitted; `accepted` counts items that passed validation, even when a probe then failed them) and the verify rate (items a probe verified out of accepted items; it is 0% when no probes ran, and also when probes ran (`probe_source` "url") but no claim could be tested by a probe: codes count as seen, not verified, so 0% does not mean the probes failed; empty until something was submitted). `status` also shows `codes_seen` apart: those items had their code values found in the data, which does not count as verified.
    - After a rebuild of the map (schema changes), run `keygraph index refresh --dir "$OUT" --json`. It returns `{"job_id", "changed", "retried", "new", "dropped", "unchanged", "pending", "next"}`: it redoes only units whose tables changed (`changed`), puts failed units back (`retried`), adds new units and drops removed ones, then run `next` again. `keygraph index replay` rebuilds the same result as `finish` from the saved answers with no model and no database, and does not close the job.
 
 If you already have the keygraph MCP server connected (step 5), you can run the same loop with the tools `index_start`, `index_next`, `index_submit` (the `answer` argument is the JSON object itself, not a file), `index_status` and `index_finish`. They return the same JSON as the commands. Probes work the same way: `index_start` takes the variable name in `url_env` or `cmd_env`, never the value.
@@ -249,12 +250,12 @@ Use `mcp_launch.command` and `mcp_launch.args` from that output exactly. Both ar
 
 Each harness file says where these go. Do both:
 
-1. **Usage skill:** copy `skills/keygraph/SKILL.md` into your harness's skills folder (Cursor has no skills folder: save it as a `.cursor/rules/keygraph-guide.mdc` rule, see `harnesses/cursor.md`). It tells an agent when to use each tool and how to read confidence.
+1. **Usage skill:** copy `skills/keygraph/SKILL.md` into your harness's skills folder, only if it has one you can confirm; if you cannot confirm the skills folder, skip the skill and say so in `OUT/SETUP.md` (each harness file says: `harnesses/claude-code.md`, `codex.md`, `opencode.md`, `unsloth-studio.md`, `zcode.md` section 2, `other.md`; Cursor has no skills folder: save it as a `.cursor/rules/keygraph-guide.mdc` rule, see `harnesses/cursor.md`). It tells an agent when to use each tool and how to read confidence.
 2. **Standing instructions:** add the block in `setup/templates/agent-instructions.md` to the instruction file of the project the map serves (if that is the keygraph repository itself, ask the user first) (`AGENTS.md`, `CLAUDE.md`, or a Cursor rule). Replace `{OUT}` with the output folder, and copy only the lines from `<!-- keygraph:start` to `<!-- keygraph:end -->` (the comment above the start marker is a note for maintainers, not part of the block). Keep the `<!-- keygraph:start -->` and `<!-- keygraph:end -->` markers so a later setup can replace the block in place. Small and local models follow standing instructions far better than a skill they have to choose, so never skip this.
 
 ## Step 7. Verify, end to end
 
-1. `keygraph doctor --dir "$OUT"` must print `OK` or only `warn` lines (warnings are optional extras). Fix every `fail`.
+1. `keygraph doctor --dir "$OUT"` must show no `fail` line. Its header reads `OK`, or `WARN` when only optional extras are missing. Fix every `fail`.
 2. Reload your harness's MCP servers as the harness file says (often a restart). If you cannot restart yourself, tell the user exactly what to click or run, and give them this check to paste into the new session: *"Use keygraph: search for <a business word>, then show the join path between <table A> and <table B>."*
 3. Through the MCP tools (not the CLI), call `search` with a business word that fits this database, then `path` between two tables that should be related. Both must return results. Pick the words from what the build found, for example two tables joined by a declared foreign key (`keygraph describe <table> --dir "$OUT"` lists its relations; declared ones have confidence 1.00).
 
@@ -292,7 +293,7 @@ Dev mode records how agents use keygraph, locally, and never database rows or se
 
 ## Keeping it current
 
-- Rebuild after migrations: rerun the build command from `OUT/SETUP.md`, then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like the demo's build.sh, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
+- Rebuild after migrations: rerun the build command from `OUT/SETUP.md` (for the demo: `keygraph demo --dir OUT --no-open`), then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like `keygraph demo`, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
 - When you confirm what a table, column or status code means while working, save it with (a fact the user told you that you cannot check: leave out `verified=true` and add `source="user, <date>"`) `keygraph context add --kind column --author "<your agent name>" table=<schema.table> column=<column> meaning="..." verified=true --dir "$OUT"` (`--kind` is required: table, column, concept, relation, metric or link; `context add` merges: fields you leave out keep their values, `codes=` merges code by code, `field=` empty clears one; `verified=true` only for what you checked against data or code), as the skill describes (or set `KEYGRAPH_AUTHOR` once for the session; without either the source label is `context-add`) (`keygraph context history` shows what a later write replaced or refused). If the output says `kept` or "unverified write ... ignored", a verified note already exists and yours was not stored; either leave it, or, if you checked it yourself, repeat the command with `verified=true`.
 - After you run a query that answered a business question, log it with `query_submit`. The next agent can then reuse a proven query.
 - If keygraph is wrong or breaks, follow `setup/BUG_REPORTS.md`.

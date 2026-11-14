@@ -92,9 +92,10 @@ The agent detects your database and its own harness, then asks you up to six que
 **By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
 
 ```bash
+uvx keygraph demo                # (keygraph 0.4.0+) builds the bundled fictional webshop and opens the explorer; no database, no extras
 pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
 keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
-keygraph ui                                                          # opens keygraph-out/keygraph.html
+keygraph ui                                                          # opens keygraph-out/keygraph.html (for the demo: keygraph ui --dir keygraph-demo)
 keygraph doctor                                                      # checks the install, the map and the MCP server
 keygraph dev on                                                      # optional: record how agents use keygraph (see Dev mode)
 ```
@@ -111,7 +112,7 @@ keygraph search "monthly revenue"        # which tables hold this
 keygraph keys orders                     # primary key, unique keys, indexes in column order
 ```
 
-To try it without a database, clone the repository and build the bundled fictional webshop (35 tables, three schemas):
+`keygraph demo [--dir DIR] [--no-open] [--json]` builds the bundled fictional webshop (35 tables, three schemas) into `./keygraph-demo` (or `--dir`) with the core install only, opens `keygraph.html` and prints three commands to try next (`--json` also gives `database`, the path of the packaged read-only SQLite sample; `path`, `describe`, `mcp`; `mcp` needs `keygraph[mcp]`). It refuses a folder that is not empty and not an earlier demo, and a rerun gives byte-identical files. Where an extra would improve a step, the demo uses a simpler built-in reader and prints a note naming the extra (SQL parsing in the code index and query log: `keygraph[code]`). To build the same demo from a clone of the repository instead:
 
 ```bash
 git clone https://github.com/alikarami76/keygraph && cd keygraph

@@ -50,6 +50,8 @@ Any agent that can run shell commands can use keygraph. Every query command take
 | `index_status` / `index_finish` | `keygraph index status --json` (accept, verify and `codes_seen` counts), `keygraph index finish --json` (CLI only: `index replay`, `index refresh`) |
 | `dev_note` (dev mode only) | `keygraph dev note --json --dir OUT "<question>"` (put `--` before text starting with `-`), the report groups commands within 10 minutes into one session; for exact grouping put `KEYGRAPH_DEV_SESSION=<session>` in front of later commands |
 
+No database yet? `keygraph demo --dir OUT --no-open --json` builds the bundled demo webshop (core install, no extras) and prints three commands to try (the JSON `database` field is the packaged sample SQLite file).
+
 Set `KEYGRAPH_DIR=OUT` in the agent's environment so you can leave out `--dir`. For step 7.3 of SETUP.md, the CLI version of `search` and `path` counts as the check.
 
 Agents that can only read files can use the markdown pages: `OUT/areas/index.md`, `OUT/areas/<area>.md` and `OUT/tables/<schema.table>.md`.

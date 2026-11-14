@@ -632,6 +632,11 @@ def cmd_queries(a):
         _emit(a, r, T.format_stats(r))
 
 
+def cmd_demo(a):
+    from . import demo
+    demo.run(a.dir, open_browser=not a.no_open, as_json=a.json)
+
+
 def _index_text(cmd: str, r: dict) -> str:
     """Plain text for `keygraph index ...` without --json (agents should pass --json)."""
     if cmd == "start":
@@ -750,6 +755,11 @@ def main(argv=None) -> int:
         p.add_argument("--snippets", action="store_true", help="include code snippets in keygraph.html (default: locations only)")
         p.add_argument("--queries", action="store_true", help="include the query log in keygraph.html and the table pages")
 
+    p = add("demo", cmd_demo, "build the bundled fictional webshop (35 tables) and open the explorer; no database, no extras")
+    p.set_defaults(dir="keygraph-demo")
+    next(x for x in p._actions if x.dest == "dir").help = "folder to build the demo in (default keygraph-demo; must be new, empty or an earlier demo)"
+    p.add_argument("--no-open", action="store_true", help="do not open keygraph.html in a browser")
+    p.add_argument("--json", action="store_true", help="print the result as JSON ({dir, explorer, tables, relations, skipped, next, database})")
     p = add("scan", cmd_scan, "scan a live database (metadata only; MySQL, Postgres, SQL Server and ClickHouse use their own adapter)")
     p.add_argument("--url", required=True)
     p.add_argument("--schema", action="append")
