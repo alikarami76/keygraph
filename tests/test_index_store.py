@@ -322,7 +322,7 @@ def oenv(tmp_path):
 
 
 def test_graph_json_has_no_override_rejects_key_and_rejects_still_hold_after_a_reload(oenv):
-    out, g, ctx = oenv
+    out, _, _ = oenv
     assert "override_rejects" not in json.loads((out / "graph.json").read_text())
     g2 = Graph.load(out / "graph.json")  # a fresh graph: the rejects come from the overrides saved in keygraph.db
     with ContextDB(out / "keygraph.db", g2) as ctx2:

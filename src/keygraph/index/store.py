@@ -14,8 +14,8 @@ from keygraph.code.refs import mask_secrets
 from keygraph.graph import Graph, edge_id
 from keygraph.index.jobs import now as _now
 from keygraph.index.pii import mask_keywords, scrub
-from keygraph.overrides import reject_pairs
 from keygraph.index.schema import ITEMS, SCHEMA_VERSION
+from keygraph.overrides import reject_pairs
 
 LLM = "llm"
 CAP_UNVERIFIED, CAP_VERIFIED = 0.75, 0.9
