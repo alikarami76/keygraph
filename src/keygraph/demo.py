@@ -116,7 +116,8 @@ def run(directory: str, open_browser: bool = True, as_json: bool = False) -> dic
     g = Graph.load(out / "graph.json")
     explorer = Path(os.path.abspath(out / "keygraph.html"))
     result = {"dir": str(out), "explorer": str(explorer), "tables": len(g.nodes), "relations": len(g.edges),
-              "skipped": skipped, "next": next_commands(out)}
+              "skipped": skipped, "next": next_commands(out),
+              "database": str(DATA / "shop.db")}
     if as_json:
         print(json.dumps(result, indent=1))
     else:

@@ -50,7 +50,7 @@ Declared foreign keys have confidence 1.0. Inferred edges are guesses from names
 
 ## Building the graph
 
-- Demo, no database: `keygraph demo --dir <folder> [--no-open] [--json]` builds the bundled 35-table webshop with the core install (steps an extra would improve use a simpler reader and print a note) and prints three commands to try. It refuses a non-empty folder that is not an earlier demo.
+- Demo, no database: `keygraph demo --dir <folder> [--no-open] [--json]` builds the bundled 35-table webshop with the core install (steps an extra would improve use a simpler reader and print a note) and prints three commands to try (`--json` adds `database`, the path of the packaged sample SQLite file). It refuses a non-empty folder that is not an earlier demo.
 - Live database: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas] [--generic]` (needs `keygraph[live]`; reads metadata only; MySQL, PostgreSQL, SQL Server and ClickHouse URLs use their own adapter and keep comments, enums, row counts and partitions, `--generic` forces the plain inspector).
 - Dumps: `keygraph load --columns columns.jsonl [--statistics s.jsonl] [--key-columns k.jsonl] [--columns-map '{"TABLE_SCHEMA":"db"}'] [--flatten raw] [--where field=value]`. Without statistics it falls back to COLUMN_KEY and marks indexes approximate.
 - Fetch statistics and key usage with any read-only command: `keygraph fetch --cmd 'mytool --sql {sql}' --out dir`.

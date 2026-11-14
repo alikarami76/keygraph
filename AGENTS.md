@@ -88,6 +88,6 @@ When you confirm what a table, column or status code means, save it so the next 
 
 ## Build the graph
 
-No database to hand, or the user wants to see keygraph first: `keygraph demo --dir <folder> [--no-open] [--json]` builds the bundled 35-table webshop (core install, no extras; `--json` gives `{dir, explorer, tables, relations, skipped, next}`). It refuses a non-empty folder that is not an earlier demo.
+No database to hand, or the user wants to see keygraph first: `keygraph demo --dir <folder> [--no-open] [--json]` builds the bundled 35-table webshop (core install, no extras; `--json` gives `{dir, explorer, tables, relations, skipped, next, database}`; `database` is the packaged sample SQLite file, usable as a demo probe source). It refuses a non-empty folder that is not an earlier demo.
 
 If no output directory exists: `keygraph scan --url <sqlalchemy-url> [--schema S] [--all-schemas] [--generic]` (needs `keygraph[live]`; MySQL, PostgreSQL, SQL Server and ClickHouse URLs keep comments, enums, row counts and partitions via their own adapter; `--generic` forces the plain inspector) or `keygraph load --columns columns.json ...` from `information_schema` dumps. Setup for MCP clients is in the README: https://github.com/alikarami76/keygraph#mcp

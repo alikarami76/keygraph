@@ -106,7 +106,8 @@ keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the d
 # It loads the demo's context, code index, query log and profiles, and renders. OUT must be new or empty. After it run only
 # the starter-context import (question 5, below) and a final `keygraph render`; skip the whole extras block that follows
 # (`code index .` would index the wrong folder).
-OUT="$(pwd)/keygraph-out" && keygraph demo --dir "$OUT" --no-open
+OUT="$(pwd)/keygraph-out" && keygraph demo --dir "$OUT" --no-open --json
+# The JSON reply has a `database` field: the path of the packaged demo SQLite file. Keep it for the probe source in the LLM indexing step.
 ```
 
 Then, in this order, only the extras the user said yes to:
@@ -149,7 +150,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
 1. Plan the work.
 
    - Probe source. keygraph can check your claims against the data with SELECT-only queries (it never shows you a row). The connection must be a **read-only** connection held in an environment variable; you pass only the variable's name, never its value. For a real database, never type a URL, password or command into a command line, a file or the chat: use a variable the user has already exported (for example `KEYGRAPH_PROBE_URL`), and add `--url-env KEYGRAPH_PROBE_URL` (or `--cmd-env NAME` for a read-only command with `{sql}`). If the variable is not set in your shell, tell the user; do not make one up. If `start` says the variable is not set, leave `--url-env` out: without probes everything is stored as unverified, which is fine. The only exception is the demo below, because its probe source is a local SQLite file with no secret in it.
-   - For the demo, use a copy of the demo database as the probe source: `cp <path to your copy of examples/shop>/shop.db "$OUT/../shop-probe.db"`. Its URL is `sqlite:///` plus the absolute path of that copy. Put the variable in front of every `start` and every `submit`, for example `KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db" keygraph index submit ...`. (Demo only: you may type this local `sqlite:///` path. Never type any other URL.)
+   - For the demo, use a copy of the demo database as the probe source: `cp "<database from keygraph demo --json>" "$OUT/../shop-probe.db"` (the `database` field of the step 4 reply; it works for a PyPI install, which has no `examples/shop`). Its URL is `sqlite:///` plus the absolute path of that copy. Put the variable in front of every `start` and every `submit`, for example `KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db" keygraph index submit ...`. (Demo only: you may type this local `sqlite:///` path. Never type any other URL.)
    - Start. Set the probe variable on the same command line (see above). Without a probe source leave `--url-env` out.
 
    ```bash

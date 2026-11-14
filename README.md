@@ -112,7 +112,7 @@ keygraph search "monthly revenue"        # which tables hold this
 keygraph keys orders                     # primary key, unique keys, indexes in column order
 ```
 
-`keygraph demo [--dir DIR] [--no-open] [--json]` builds the bundled fictional webshop (35 tables, three schemas) into `./keygraph-demo` (or `--dir`) with the core install only, opens `keygraph.html` and prints three commands to try next (`path`, `describe`, `mcp`; `mcp` needs `keygraph[mcp]`). It refuses a folder that is not empty and not an earlier demo, and a rerun gives byte-identical files. Where an extra would improve a step, the demo uses a simpler built-in reader and prints a note naming the extra (SQL parsing in the code index and query log: `keygraph[code]`). To build the same demo from a clone of the repository instead:
+`keygraph demo [--dir DIR] [--no-open] [--json]` builds the bundled fictional webshop (35 tables, three schemas) into `./keygraph-demo` (or `--dir`) with the core install only, opens `keygraph.html` and prints three commands to try next (`--json` also gives `database`, the path of the packaged read-only SQLite sample; `path`, `describe`, `mcp`; `mcp` needs `keygraph[mcp]`). It refuses a folder that is not empty and not an earlier demo, and a rerun gives byte-identical files. Where an extra would improve a step, the demo uses a simpler built-in reader and prints a note naming the extra (SQL parsing in the code index and query log: `keygraph[code]`). To build the same demo from a clone of the repository instead:
 
 ```bash
 git clone https://github.com/alikarami76/keygraph && cd keygraph

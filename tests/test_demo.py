@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from keygraph import demo
 from keygraph.cli import main
 
 SHOP = Path(__file__).resolve().parents[1] / "examples" / "shop"
@@ -40,6 +41,8 @@ def test_demo_builds_explorer_and_graph(tmp_path, capsys):
     assert r["dir"] == str(d) and r["explorer"] == str(d / "keygraph.html")
     assert r["tables"] >= 30 and r["relations"] > 0 and isinstance(r["skipped"], list)
     assert len(r["next"]) == 3
+    db = Path(r["database"])
+    assert db.is_absolute() and db.name == "shop.db" and db.is_file() and db == Path(demo.DATA / "shop.db")
 
 
 def test_demo_no_open_never_touches_the_browser(tmp_path, capsys, no_browser):
