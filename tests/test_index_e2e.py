@@ -87,13 +87,15 @@ def test_fake_agent_indexes_the_shop_end_to_end(built, tmp_path, monkeypatch, ca
     assert first["status"] == "rejected" and first["attempts_left"] == 2 and first["accepted"] == 0
     assert second["status"] == "accepted" and second["rejected"] == [] and "attempts_left" not in second
     assert second["probe_source"] == "url"
-    assert second["verified"] >= 2 and second["probe_failed"] == 1  # the true relation and the codes passed; the planted one did not
+    assert second["verified"] >= 1 and second["codes_seen"] == 1 and second["probe_failed"] == 1  # the true relation passed, the codes were only seen; the planted one failed
     assert all(r[0]["status"] == "accepted" for u, r in results.items() if u != ORDERS_UNIT)
     st = cli("index", "status")
     assert st["units"] == {"pending": 0, "done": 18, "failed": 0, "skipped": 0} and st["accept_rate"] is not None
+    assert st["codes_seen"] == 1 and st["verified"] >= 1 and st["verify_rate"] == round(st["verified"] / st["accepted"], 3)  # seen is not verified
 
     fin = cli("index", "finish")
     assert fin["units"] == 18 and fin["llm_edges"] >= 0 and fin["relations"] == {"rejected": 1, "verified": 1}
+    assert fin["codes_seen_facts"] == 1 and fin["verified_facts"] == 1  # the verified one is the relation
     after = _tree(out)
     graph = json.loads(after["graph.json"])
     ev = [e for e in graph["edges"] if e["from"] == "billing.payments" and e["from_columns"] == ["order_id"] and e["to"] == "shop.orders"]

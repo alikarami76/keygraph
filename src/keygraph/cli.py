@@ -654,7 +654,8 @@ def _index_text(cmd: str, r: dict) -> str:
             return (f"budget exhausted: this answer needs about {r['needed']} tokens and {r['budget_left']} are left. {r['hint']}\n"
                     f"continue with: {r['resume']}")
         left = f", {r['attempts_left']} attempts left" if "attempts_left" in r else ""
-        lines = [(f"{r['status']}: {r['accepted']} accepted ({r['verified']} verified, {r['unverified']} unverified, "
+        lines = [(f"{r['status']}: {r['accepted']} accepted ({r['verified']} verified by probe, {r['codes_seen']} codes seen in data, "
+                  f"{r['unverified']} unverified, "
                   f"{r['probe_failed']} failed a probe), {len(r['rejected'])} rejected{left}, {r['budget_left']} tokens left")]
         lines += [f"  rejected {x['item']}: {x['reason']}" for x in r["rejected"]]
         lines += [f"{r['hint']}"] if r.get("hint") else []
@@ -666,7 +667,9 @@ def _index_text(cmd: str, r: dict) -> str:
             return "n/a" if v is None else f"{v:.0%}"
 
         lines = [(f"{r['job_id']} ({r['status']}): {u['done']} done, {u['pending']} pending, {u['failed']} failed, {u['skipped']} skipped; "
-                  f"budget {r['used']}/{r['budget']} tokens"), f"accept rate {rate(r['accept_rate'])}, verify rate {rate(r['verify_rate'])}"]
+                  f"budget {r['used']}/{r['budget']} tokens"),
+                 (f"accept rate {rate(r['accept_rate'])}, verify rate {rate(r['verify_rate'])} "
+                  f"({r['verified']} verified by probe; {r['codes_seen']} more had code values seen in data, which is not verification)")]
         for f in r["failed_units"]:
             lines.append(f"  failed {f['unit_id']} ({', '.join(f['tables'])}): "
                          + ("; ".join(f"{x['item']}: {x['reason']}" for x in f["reasons"][:3]) or "no reason kept"))
@@ -674,7 +677,8 @@ def _index_text(cmd: str, r: dict) -> str:
     if cmd == "refresh":
         return (f"{r['job_id']}: {len(r['changed'])} changed, {len(r['retried'])} failed units retried, {len(r['new'])} new, {len(r['dropped'])} dropped, "
                 f"{r['unchanged']} unchanged; {r['pending']} pending\nnext: {r['next']}")
-    return f"{r['units']} units replayed; {r['llm_edges']} llm edges, {r['filled']} fields filled, {r['probe_failed']} probe failures"
+    return (f"{r['units']} units replayed; {r['llm_edges']} llm edges, {r['filled']} fields filled, {r['probe_failed']} probe failures; "
+            f"{r['verified_facts']} facts verified by probe, {r['codes_seen_facts']} with code values seen in data")
 
 
 class _Reported(ValueError):

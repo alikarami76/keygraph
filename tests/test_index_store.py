@@ -457,3 +457,47 @@ def test_verdict_keys_are_whitelisted_and_answers_hold_only_accepted_fields(env)
     body = json.loads(p.read_text())
     assert "extra" not in body["answer"]["relations"][0] and "bogus" not in body["answer"]
     assert set(body["verdicts"][0]) <= {"kind", "index", "verified", "check", "rate", "n", "error", "skipped"}
+
+
+# --- polish round: honest confidence ---------------------------------------------------------------------------------
+
+SEEN = {"kind": "columns", "index": 0, "verified": None, "check": "codes_present", "rate": 1.0, "n": 1, "seen": True,
+        "why": "the code values occur in the data; what they mean is not checked"}
+
+
+def test_codes_seen_in_data_is_not_verified_by_probe_in_describe_and_search(env):
+    out, g, ctx = env
+    tbl = {"table": "shop.carts", "purpose": "A basket", "grain": "one row per cart", "reason": "r", "confidence": 0.7}
+    _store(env, {"columns": [_col(codes={"1": ""})], "tables": [tbl]}, [SEEN])
+    p = _row(ctx, "fact_provenance", kind="column", ref="shop.carts.customer_id")
+    assert p["verified"] == 0 and p["verified_by"].startswith("seen:")
+    d = describe_result(out, g, "shop.carts", min_confidence=0)
+    assert d["provenance"]["columns"]["customer_id"] == "llm, codes seen in data"
+    from keygraph.search import format_describe, search
+    text = format_describe(d)
+    assert "(llm, codes seen in data)" in text and "verified by probe" not in text
+    assert "grain: one row per cart (llm)" in text and "summary: A basket (llm)" in text and "codes: 1 (llm" in text  # a code with an empty meaning shows bare
+    brief = format_describe(describe_result(out, g, "shop.carts", brief=True))
+    assert "grain: one row per cart (llm)" in brief and "summary: A basket (llm)" in brief and "(llm, codes seen in data)" in brief
+    r = next(t for t in search(g, ctx, "carts")["tables"] if t["table"] == "shop.carts")
+    assert r["provenance"] == "llm" and r["verified"] is False
+    assert "verified by probe" not in json.dumps(search(g, ctx, "carts")) + json.dumps(d)
+
+
+def test_a_claim_tested_by_the_probe_still_says_verified_by_probe(env):
+    out, g, ctx = env
+    grain = {"kind": "tables", "index": 0, "verified": True, "check": "grain_sample_unique", "rate": 1.0, "n": 10}
+    _store(env, {"tables": [{"table": "shop.carts", "purpose": "A basket", "grain": "one row per cart", "grain_columns": ["customer_id"],
+                             "reason": "r", "confidence": 0.7}]}, [grain])
+    d = describe_result(out, g, "shop.carts", min_confidence=0)
+    assert d["provenance"]["notes"] == "llm, verified by probe"
+    from keygraph.search import search
+    assert next(t for t in search(g, ctx, "carts")["tables"] if t["table"] == "shop.carts")["provenance"] == "llm, verified by probe"
+
+
+def test_old_answer_files_with_verified_codes_present_count_as_seen_only(env):
+    _, _, ctx = env
+    old = {"kind": "columns", "index": 0, "verified": True, "check": "codes_present", "rate": 1.0, "n": 1}
+    assert ST.seen_only(old) and not ST.passed(old) and ST.passed({"verified": True, "check": "relation_overlap"})
+    _store(env, {"columns": [_col(codes={"1": "open"})]}, [old])
+    assert _row(ctx, "fact_provenance", kind="column", ref="shop.carts.customer_id")["verified"] == 0

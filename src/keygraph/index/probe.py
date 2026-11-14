@@ -2,7 +2,10 @@
 
 `probe_items` takes the accepted items of `validate` and returns one verdict per item:
 `{"kind", "index", "verified": true | false | null, "check", "rate", "n"}` (plus `"error": <type name>` when a query
-failed and `"skipped": "query_cap"` when the per-submit cap ran out). `null` means unverified. Only rates and counts leave
+failed and `"skipped": "query_cap"` when the per-submit cap ran out). `null` means unverified, and every null verdict
+carries a fixed-phrase `why`. A codes check that finds every claimed value in the data returns `verified: null` with
+`seen: true`: the values occur, which says nothing about whether the labels are right. Only relation overlap, grain
+uniqueness and filter selectivity test the claim itself and can return `verified: true`. Only rates and counts leave
 this module, never values. Every statement goes through `SelectOnlyRunner`, which applies `assert_select`. Filter text
 is built only from validated column names and literal values that parse with a strict grammar; anything else stays
 unverified."""
@@ -22,6 +25,7 @@ from ..probe import SelectOnlyRunner, _lit
 QUERY_CAP = 40
 REL_SAMPLE, CODE_SAMPLE, GRAIN_SAMPLE, FILTER_SAMPLE = 200, 200, 1000, 1000
 REL_PASS = 0.8
+SEEN_WHY = "the code values occur in the data; what they mean is not checked"
 
 
 def quote_for(kind: str | None) -> str:
@@ -197,7 +201,7 @@ class _Prober:
         if len(it["from_columns"]) != 1:
             return self.verdict("relation_overlap_multi_column", None, why="multi-column relations are not probed")
         if not self.cap.take(2):
-            return self.verdict(c, None, skipped="query_cap")
+            return self.verdict(c, None, skipped="query_cap", why="the per-submit query cap was spent")
         fc, tc, q = it["from_columns"][0], it["to_columns"][0], self.q
         vals = [r[0] for r in self.run.run(f"SELECT DISTINCT {q(fc)} FROM {self.t(it['from_table'])} "
                                            f"WHERE {q(fc)} IS NOT NULL LIMIT {REL_SAMPLE}")]
@@ -213,14 +217,18 @@ class _Prober:
     def codes(self, it: dict) -> dict:
         c = "codes_present"
         if not it.get("codes"):
-            return self.verdict("none", None)
+            return self.verdict("none", None, why="no codes to check")
         if not self.cap.take(1):
-            return self.verdict(c, None, skipped="query_cap")
+            return self.verdict(c, None, skipped="query_cap", why="the per-submit query cap was spent")
         col, q = it["column"], self.q
         rows = self.run.run(f"SELECT DISTINCT {q(col)} FROM {self.t(it['table'])} WHERE {q(col)} IS NOT NULL LIMIT {CODE_SAMPLE + 1}")
         have, claimed = {_norm(r[0]) for r in rows}, {str(k).strip() for k in it["codes"]}
         rate = len(claimed & have) / len(claimed)
-        return self.verdict(c, True if rate == 1 else (False if len(rows) <= CODE_SAMPLE else None), rate, len(claimed))
+        if rate == 1:  # the values occur; whether the labels are right is not something data can say
+            return self.verdict(c, None, rate, len(claimed), seen=True, why=SEEN_WHY)
+        if len(rows) <= CODE_SAMPLE:
+            return self.verdict(c, False, rate, len(claimed))
+        return self.verdict(c, None, rate, len(claimed), why="the column has more distinct values than the probe sampled")
 
     def grain(self, it: dict) -> dict:
         """Sample-based: the first rows of the table only, so a pass is a signal and never a proof. Claimed columns that
@@ -232,7 +240,7 @@ class _Prober:
             return self.verdict("grain_pk_trivial", None, why="the grain columns are a primary or unique key, or none were named")
         c = "grain_sample_unique"
         if not self.cap.take(2):
-            return self.verdict(c, None, skipped="query_cap")
+            return self.verdict(c, None, skipped="query_cap", why="the per-submit query cap was spent")
         cols = ",".join(self.q(k) for k in key)
         inner = f"(SELECT {cols} FROM {self.t(it['table'])} LIMIT {GRAIN_SAMPLE}) s"
         total = _int(self.run.run(f"SELECT COUNT(*) FROM {inner}"))
@@ -245,7 +253,7 @@ class _Prober:
         c = "default_filter_selectivity"
         texts = it.get("default_filters") or []
         if not texts:
-            return self.verdict("none", None)
+            return self.verdict("none", None, why="no default filters to check")
         cols = {x["name"] for x in self.g.nodes[it["table"]]["columns"]}
         built = [parse_filter(t, cols, self.q) for t in texts]
         ok = [b for b in built if b]
@@ -254,7 +262,7 @@ class _Prober:
         rates, total, fails = [], 0, 0
         for sql, used in ok:
             if not self.cap.take(1):
-                return self.verdict(c, None, skipped="query_cap")
+                return self.verdict(c, None, skipped="query_cap", why="the per-submit query cap was spent")
             inner = f"(SELECT {','.join(self.q(x) for x in sorted(used))} FROM {self.t(it['table'])} LIMIT {FILTER_SAMPLE}) s"
             rows = self.run.run(f"SELECT COUNT(*), SUM(CASE WHEN {sql} THEN 1 ELSE 0 END) FROM {inner}")
             total, kept = _int(rows), _int(rows, 1)
@@ -262,7 +270,9 @@ class _Prober:
                 return self.verdict(c, None, why="the table has no rows")
             rates.append(kept / total)
             fails += kept == 0
-        return self.verdict(c, False if fails else (True if len(ok) == len(built) else None), min(rates), total)
+        whole = len(ok) == len(built)
+        return self.verdict(c, False if fails else (True if whole else None), min(rates), total,
+                            why="" if fails or whole else "some filter texts are not simple column filters")
 
 
 def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: str | None = None, *, bare: bool = False,
@@ -279,7 +289,7 @@ def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: st
     for ent in items:
         kind, it = ent["kind"], ent["item"]
         checks = {"relations": ["relation"], "columns": ["codes"], "tables": ["grain", "filters"]}.get(kind, [])
-        v = {"verified": None, "check": "none", "rate": None, "n": 0}
+        v = {"verified": None, "check": "none", "rate": None, "n": 0, "why": "this kind of item is not probed" if not checks else "nothing to check"}
         spent = spent or bool(pr and checks and deadline is not None and time.monotonic() >= deadline)
         if pr is None and checks:
             v = {"verified": None, "check": "no_source", "rate": None, "n": 0, "why": "no probe source"}
@@ -297,15 +307,20 @@ def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: st
                     vs = []
                     break
                 except Exception as exc:  # noqa: BLE001  (the message can hold values; keep the type only)
-                    vs.append(pr.verdict(name, None, error=type(exc).__name__))
+                    vs.append(pr.verdict(name, None, error=type(exc).__name__, why="the probe query failed"))
             vs = [x for x in vs if x["check"] != "none"] or [v]
             if spent:
-                vs = [{"verified": None, "check": "time_budget", "rate": None, "n": 0}]
+                vs = [{"verified": None, "check": "time_budget", "rate": None, "n": 0, "why": "the probe time budget was spent"}]
             # several checks on one item: false if any fails, true only if every check passed
-            v = vs[0] if len(vs) == 1 else {
-                "verified": False if any(x["verified"] is False for x in vs) else (True if all(x["verified"] for x in vs) else None),
-                "check": "+".join(x["check"] for x in vs), "rate": min((x["rate"] for x in vs if x["rate"] is not None), default=None),
-                "n": min(x["n"] for x in vs), **({"error": next(x["error"] for x in vs if "error" in x)} if any("error" in x for x in vs) else {})}
+            if len(vs) == 1:
+                v = vs[0]
+            else:
+                verified = False if any(x["verified"] is False for x in vs) else (True if all(x["verified"] for x in vs) else None)
+                v = {"verified": verified, "check": "+".join(x["check"] for x in vs),
+                     "rate": min((x["rate"] for x in vs if x["rate"] is not None), default=None), "n": min(x["n"] for x in vs),
+                     **({"error": next(x["error"] for x in vs if "error" in x)} if any("error" in x for x in vs) else {})}
+                if verified is None:
+                    v["why"] = next((x["why"] for x in vs if x.get("why")), "some checks could not run")
         out.append({"kind": kind, "index": ent["index"], **v})
         devlog.trace("index.probe", task=kind, index=ent["index"], check=v["check"], verified=v["verified"], rate=v["rate"], n=v["n"])
     return out

@@ -39,7 +39,7 @@ ITEMS = {
                         "cardinality": {"type": "string", "enum": ["many-to-one", "one-to-one", "one-to-many", "many-to-many"]}},
                        ["from_table", "from_columns", "to_table", "to_columns"]),
     "columns": _item({"table": _s(NAME_MAX), "column": _s(NAME_MAX), "meaning": _s(), "unit": _s(NAME_MAX),
-                      "codes": {"type": "object", "additionalProperties": _s(NAME_MAX), "maxItems": 60},
+                      "codes": {"type": "object", "additionalProperties": _s(NAME_MAX, 0), "maxItems": 60},
                       "null_meaning": _s(REASON_MAX)}, ["table", "column", "meaning"]),
     "tables": _item({"table": _s(NAME_MAX), "purpose": _s(), "grain": _s(REASON_MAX), "grain_columns": _list(_s(NAME_MAX), 6),
                      "pitfalls": _list(_s(REASON_MAX), 10),
@@ -56,11 +56,13 @@ ITEMS = {
 }
 
 INSTRUCTIONS = {
-    "relations": "relations: list foreign-key style links the schema does not declare, from a table of this unit to a unit "
-                 "table or to a neighbour listed in the packet. Give from/to table and columns, the reason (what in the packet supports it), "
+    "relations": "relations: list foreign-key style links the schema does not declare. At least one end must be a table in "
+                 "unit_tables; the other end is a unit table or a neighbour listed in the packet. Give from/to table and columns, the reason (what in the packet supports it), "
                  "and your confidence. Do not repeat relations the packet already lists as declared or inferred (a repeat adds evidence only).",
     "columns": "columns: give the business meaning of columns whose name alone does not say it: unit, code-to-meaning map for "
-               "enum or status columns, and what NULL means. Skip obvious columns.",
+               "enum or status columns, and what NULL means. Skip obvious columns. Give a meaning for a code only when the packet "
+               "supports it (enum members, column comments, code references, context notes); never invent labels. Without such "
+               "support, send the code with an empty meaning \"\", or leave the codes out.",
     "tables": "tables: for each table give its purpose, its grain (what one row is, and optionally `grain_columns`, the columns that identify a row), pitfalls, default filters, how "
               "soft delete works and how fresh the data is, when the packet shows it.",
     "concepts": "concepts: name the business terms this unit holds, with a definition, synonyms in any language, and the "

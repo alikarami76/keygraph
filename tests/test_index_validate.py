@@ -133,10 +133,11 @@ def test_confidence_outside_the_range_is_rejected_per_item(env):
 
 
 def test_malformed_codes_are_rejected(env):
-    for codes in ({"": "empty code"}, {"x" * 41: "too long"}, {"1": "a", " 1": "b"}, {"1": ""}, {"1\n2": "control"}, {"1": 5}):
+    for codes in ({"": "empty code"}, {"x" * 41: "too long"}, {"1": "a", " 1": "b"}, {"1\n2": "control"}, {"1": 5}):
         res = _check(env, columns=[_col(codes=codes)])
         assert len(res["rejected"]) == 1, codes
         assert "codes" in res["rejected"][0]["reason"]
+    assert not _check(env, columns=[_col(codes={"1": ""})])["rejected"]  # an empty meaning is allowed: never invent a label
     assert _check(env, columns=[_col(codes=[1, 2])])["rejected"][0]["reason"].startswith("codes")
 
 

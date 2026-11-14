@@ -553,3 +553,42 @@ def test_submit_says_plainly_when_the_probe_variable_is_not_set_in_this_shell(wo
     assert r["probe_source"] == "missing: KEYGRAPH_PROBE_URL is not set in this shell; items stored unverified"
     sub = next(kw for name, kw in events if name == "index_submit")
     assert sub["probe_source"] == "missing" and sub["probe_env"] == "KEYGRAPH_PROBE_URL"
+
+
+def test_start_on_a_map_from_an_older_keygraph_refuses_before_touching_the_database(work, capsys):
+    import sqlite3
+    db = work / "keygraph.db"
+    con = sqlite3.connect(db)
+    con.execute("DROP TABLE override_rejects")
+    con.commit()
+    con.close()
+    assert main(["index", "start", "--dir", str(work)]) == 2
+    err = capsys.readouterr().err
+    assert "built by an older keygraph" in err and "rebuild it" in err and "keygraph build" in err
+    con = sqlite3.connect(db)
+    names = {r[0] for r in con.execute("SELECT name FROM sqlite_master")}
+    con.close()
+    assert "override_rejects" not in names  # the schema was not applied
+    assert main(["index", "status", "--dir", str(work)]) == 2  # nor by another command
+
+
+def test_codes_seen_is_reported_apart_from_verified_and_null_verdicts_carry_why(work, capsys, tmp_path, monkeypatch):
+    from test_example_shop import SHOP
+    probe = tmp_path / "probe.db"
+    shutil.copy(SHOP / "shop.db", probe)
+    monkeypatch.setenv("KEYGRAPH_PROBE_URL", f"sqlite:///{probe}")
+    run(capsys, work, "index", "start", "--tasks", "columns,tables", "--url-env", "KEYGRAPH_PROBE_URL")
+    unit = next(u["unit_id"] for u in _units(work).values() if "billing.payments" in u["tables"])
+    ans = {"columns": [{"table": "billing.payments", "column": "method_id", "meaning": "How the customer paid", "codes": {"1": "", "2": ""},
+                        "reason": "values 1 and 2 in the profile", "confidence": 0.6}],
+           "tables": [{"table": "billing.payments", "purpose": "Payments taken for orders", "reason": "name", "confidence": 0.6}]}
+    r = submit(capsys, work, tmp_path, unit, ans)
+    assert (r["accepted"], r["verified"], r["codes_seen"], r["unverified"], r["probe_failed"]) == (2, 0, 1, 1, 0), r
+    st = run(capsys, work, "index", "status")
+    assert st["codes_seen"] == 1 and st["verified"] == 0 and st["verify_rate"] == 0.0
+    verdicts = json.loads((work / "index" / "answers" / f"{unit}.json").read_text())["verdicts"]
+    assert all(v.get("why") for v in verdicts if v["verified"] is None), verdicts
+    capsys.readouterr()
+    main(["index", "status", "--dir", str(work)])
+    text = capsys.readouterr().out
+    assert "0 verified by probe" in text and "1 more had code values seen in data" in text

@@ -78,7 +78,8 @@ def test_present_codes_pass_and_invented_code_fails(src, shop_graph):
                                                      _codes({"1": "placed", "77": "invented"}),
                                                      _ent("columns", {"table": "shop.orders", "column": "status", "meaning": "m",
                                                                       "reason": "r", "confidence": 0.5})])
-    assert ok["verified"] is True and ok["rate"] == 1.0 and ok["n"] == 3
+    assert ok["verified"] is None and ok["seen"] is True and ok["rate"] == 1.0 and ok["n"] == 3  # values occur: not a verification
+    assert "labels" not in ok["why"] and "not checked" in ok["why"]
     assert bad["verified"] is False and bad["rate"] == 0.0
     assert partial["verified"] is False and partial["rate"] == 0.5
     assert none["verified"] is None and none["check"] == "none"
@@ -86,7 +87,7 @@ def test_present_codes_pass_and_invented_code_fails(src, shop_graph):
 
 def test_text_codes_are_matched_as_text(src, shop_graph):
     ok, bad = _run(src, shop_graph, [_codes({"EUR": "euro"}, "currency"), _codes({"XXX": "none"}, "currency")])
-    assert ok["verified"] is True and bad["verified"] is False
+    assert ok["verified"] is None and ok["seen"] is True and bad["verified"] is False and "seen" not in bad
 
 
 def _table(**kw):
@@ -194,7 +195,7 @@ def test_cmd_runner_probes_through_the_command(shop_graph, shop_db, tmp_path, mo
     with pytest.raises(UnsafeSQL):
         s.runner.run("DELETE FROM orders")
     ok = P.probe_items([_codes({"1": "placed"}, table="shop.orders")], shop_graph, s.runner, '"', bare=True)  # `bare` as sqlite ids
-    assert ok[0]["verified"] is True
+    assert ok[0]["seen"] is True
 
 
 def test_probe_output_holds_rates_and_counts_never_values(src, shop_graph):
@@ -212,13 +213,13 @@ def test_probe_output_holds_rates_and_counts_never_values(src, shop_graph):
     text = json.dumps(out)
     assert any(s == "EUR" for s in seen) and "EUR" not in text
     assert all(s not in text for s in seen if len(s) >= 3 and not s.isdigit())
-    assert set(out[0]) == {"kind", "index", "verified", "check", "rate", "n"}
+    assert set(out[0]) == {"kind", "index", "verified", "check", "rate", "n", "seen", "why"}
 
 
 def test_query_cap_leaves_the_rest_unverified(src, shop_graph):
     ents = [_rel("billing.payments", ["order_id"], "shop.orders", ["id"]), _codes({"1": "placed"}), _codes({"2": "paid"})]
     a, b, c = _run(src, shop_graph, ents, cap=3)
-    assert a["verified"] is True and b["verified"] is True and c["verified"] is None and c["skipped"] == "query_cap"
+    assert a["verified"] is True and b["seen"] is True and c["verified"] is None and c["skipped"] == "query_cap" and c["why"]
     assert P.QUERY_CAP == 40
 
 
@@ -267,3 +268,20 @@ def test_a_verdict_that_checked_nothing_says_why(src, shop_graph):
     assert trivial["verified"] is None and trivial["n"] == 0 and "primary or unique key" in trivial["why"]
     (nosrc,) = P.probe_items([_rel("shop.orders", ["id"], "shop.customers", ["id"])], shop_graph, None, '"')
     assert nosrc["why"] == "no probe source"
+
+
+def test_every_null_verdict_carries_a_why(src, shop_graph):
+    ents = [_codes({"1": "x"}), _codes({}), _table(), _table(default_filters=["status = 77 AND"]),
+            _table(grain="g", grain_columns=["id"]), _ent("concepts", {"name": "c", "definition": "d", "tables": [], "reason": "r", "confidence": 0.5}),
+            _rel("billing.payments", ["order_id", "id"], "shop.orders", ["id", "id"])]
+    out = _run(src, shop_graph, ents, cap=1)
+    out += _run(src, shop_graph, ents, cap=40)
+    out += P.probe_items(ents, shop_graph, None)
+    out += P.probe_items(ents, shop_graph, src.runner, '"', bare=True, time_budget=0.0)
+
+    def boom(sql):
+        raise RuntimeError("x")
+
+    out += P.probe_items([_codes({"1": "x"}), _table(grain="g", grain_columns=["customer_id"])], shop_graph, SelectOnlyRunner(boom), '"')
+    nulls = [v for v in out if v["verified"] is None]
+    assert nulls and all(v.get("why") for v in nulls), [v for v in nulls if not v.get("why")]

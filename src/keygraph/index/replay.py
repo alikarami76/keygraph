@@ -78,9 +78,10 @@ def load_base(out: Path) -> Graph:
 
 
 def _facts(ctx) -> dict:
-    prov = ctx.db.execute("SELECT kind, COUNT(*) n, SUM(verified) v FROM fact_provenance GROUP BY kind ORDER BY kind").fetchall()
+    prov = ctx.db.execute("SELECT kind, COUNT(*) n, SUM(verified) v, SUM(verified_by LIKE 'seen:%') s FROM fact_provenance GROUP BY kind ORDER BY kind").fetchall()
     rel = ctx.db.execute("SELECT status, COUNT(*) FROM index_relations GROUP BY status ORDER BY status").fetchall()
     return {"facts": {r["kind"]: r["n"] for r in prov}, "verified_facts": sum(r["v"] or 0 for r in prov),
+            "codes_seen_facts": sum(r["s"] or 0 for r in prov),
             "relations": {r[0]: r[1] for r in rel}}
 
 

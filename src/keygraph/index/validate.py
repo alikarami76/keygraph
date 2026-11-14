@@ -78,8 +78,8 @@ def _codes_problem(codes) -> str | None:
     for k, v in codes.items():
         if not str(k).strip() or len(str(k)) > CODE_KEY_MAX or re.search(r"[\x00-\x1f]", str(k)):
             return f"codes: a code must be 1 to {CODE_KEY_MAX} visible characters"
-        if not isinstance(v, str) or not v.strip():
-            return "codes: every code needs a short meaning text"
+        if not isinstance(v, str):
+            return "codes: a meaning must be text (an empty one is allowed when the packet does not say what the code means)"
         if str(k).strip() in seen:
             return "codes: the same code is listed twice"
         seen.add(str(k).strip())

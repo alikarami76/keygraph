@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 from collections import Counter
 from pathlib import Path
 
@@ -48,6 +49,24 @@ def _need_map(out: Path) -> None:
     if not (out / "graph.json").exists():
         raise ValueError(f"no map in {out}: build one first with `keygraph build` (information_schema dumps) or "
                          f"`keygraph scan --url ...` (live database); the demo builds with examples/shop/build.sh")
+    _need_current_db(out)
+
+
+def _need_current_db(out: Path) -> None:
+    """Refuse a keygraph.db built by an older keygraph (no override_rejects table), before ContextDB adds the table with
+    nothing in it: without the rejected pairs an indexed relation could bring back a pair a person rejected."""
+    db = out / "keygraph.db"
+    if not db.exists():
+        return
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    except sqlite3.DatabaseError:
+        return
+    finally:
+        con.close()
+    if names and "override_rejects" not in names:
+        raise ValueError("this map was built by an older keygraph; rebuild it (`keygraph build`/`scan`/`load` ...) before indexing")
 
 
 def _base(out: Path):
@@ -89,7 +108,7 @@ def _save_ledger(out: Path, d: dict) -> None:
 
 def _entry(led: dict, uid: str) -> dict:
     return led.setdefault(uid, {"accepted": 0, "attempts": 0, "probe_failed": 0, "reasons": [], "rejected": 0, "unverified": 0,
-                                "verified": 0})
+                                "verified": 0, "codes_seen": 0})
 
 
 RESUBMIT_HINT = "resubmit only the rejected items for this unit_id; accepted items are already stored"
@@ -324,7 +343,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             devlog.decide("index_submit", unit_id=unit_id, status="failed" if failed else "rejected", attempt=attempts,
                           tokens_est=est, answer_tokens=atoks, accepted=0, rejected=len(rejected), errors=len(val["errors"]))
             res = {"status": "failed" if failed else "rejected", "accepted": 0, "rejected": rejected, "unverified": 0,
-                   "verified": 0, "probe_failed": 0, "attempts_left": MAX_ATTEMPTS - attempts if not failed else 0,
+                   "verified": 0, "codes_seen": 0, "probe_failed": 0, "attempts_left": MAX_ATTEMPTS - attempts if not failed else 0,
                    "budget_left": left, "probe_source": "none"}
             if failed:
                 return {**res, "hint": FAILED_HINT, "next": NEXT}
@@ -346,11 +365,12 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         ST.store_unit(ctx, g, job_id, unit, acc, model, prompt, verds)
         jobs.update_unit(ctx, job_id, unit_id, status="failed" if failed else "done" if not rejected else None, attempts=attempts,
                          tokens_est=est, packet_hash=ph)
-        n_ok = sum(1 for v in verds if v["verified"] is True)
+        n_ok = sum(1 for v in verds if ST.passed(v))
+        n_seen = sum(1 for v in verds if ST.seen_only(v))
         n_bad = sum(1 for v in verds if v["verified"] is False)
-        n_unk = len(verds) - n_ok - n_bad
+        n_unk = len(verds) - n_ok - n_seen - n_bad
         ent.update(attempts=attempts, accepted=ent["accepted"] + len(val["accepted"]), rejected=ent["rejected"] + len(rejected),
-                   verified=ent["verified"] + n_ok, unverified=ent["unverified"] + n_unk,
+                   verified=ent["verified"] + n_ok, codes_seen=ent.get("codes_seen", 0) + n_seen, unverified=ent["unverified"] + n_unk,
                    probe_failed=ent["probe_failed"] + n_bad, reasons=rejected[:REASONS_KEPT])
         if rejected and not failed:
             ent["partial"] = True
@@ -359,11 +379,11 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         _save_ledger(out, led)
         status = "failed" if failed else "partially_accepted" if rejected else "accepted"
         devlog.decide("index_submit", unit_id=unit_id, status=status, attempt=attempts, tokens_est=est, answer_tokens=atoks,
-                      accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, unverified=n_unk,
+                      accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, codes_seen=n_seen, unverified=n_unk,
                       probe_failed=n_bad, probe_source=label.split(":")[0],
                       probe_env=(job["url_env"] or job["cmd_env"] or ""), checks=dict(sorted(Counter(v["check"] for v in verds).items())))
         res = {"status": status, "accepted": len(val["accepted"]), "rejected": rejected, "unverified": n_unk, "verified": n_ok,
-               "probe_failed": n_bad, "confirmed_existing": ST.count_existing(g, acc, verds), "budget_left": left,
+               "codes_seen": n_seen, "probe_failed": n_bad, "confirmed_existing": ST.count_existing(g, acc, verds), "budget_left": left,
                "probe_source": label}
         if status == "accepted":
             return {**res, "next": NEXT}
@@ -389,12 +409,12 @@ def status_result(dir) -> dict:
     mine = {u["unit_id"]: led.get(u["unit_id"], {}) for u in failed}
     tot = Counter()
     for e in led.values():
-        tot.update({f: e.get(f, 0) for f in ("accepted", "rejected", "verified", "unverified", "probe_failed")})
+        tot.update({f: e.get(f, 0) for f in ("accepted", "rejected", "verified", "codes_seen", "unverified", "probe_failed")})
     judged = tot["accepted"] + tot["rejected"]
     return {"job_id": job["job_id"], "status": job["status"], "units": prog["units"], "total": sum(prog["units"].values()),
             "budget": job["budget"], "used": job["used"], "left": prog["left"],
             "accepted": tot["accepted"], "rejected": tot["rejected"], "verified": tot["verified"],
-            "unverified": tot["unverified"], "probe_failed": tot["probe_failed"],
+            "codes_seen": tot["codes_seen"], "unverified": tot["unverified"], "probe_failed": tot["probe_failed"],
             "accept_rate": round(tot["accepted"] / judged, 3) if judged else None,
             "verify_rate": round(tot["verified"] / tot["accepted"], 3) if tot["accepted"] else None,
             "failed_units": [{"unit_id": u["unit_id"], "tables": u["tables"], "attempts": u["attempts"],

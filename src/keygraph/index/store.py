@@ -20,7 +20,7 @@ from keygraph.overrides import reject_pairs
 LLM = "llm"
 CAP_UNVERIFIED, CAP_VERIFIED = 0.75, 0.9
 ANSWERS = "answers"
-VERDICT_KEYS = ("verified", "check", "rate", "n", "error", "skipped", "why")
+VERDICT_KEYS = ("verified", "check", "rate", "n", "error", "skipped", "why", "seen")
 _PERF_LISTS = ("common_filters", "slow_patterns", "index_friendly_filters", "hints")
 
 
@@ -64,6 +64,17 @@ def accepted_answer(validation: dict, verdicts: list[dict]) -> tuple[dict, list[
     return answer, out
 
 
+def seen_only(v: dict | None) -> bool:
+    """True for a codes verdict that found every claimed value in the data: the values exist, the labels are unchecked.
+    Answer files saved before `seen` existed hold `verified: true` with check `codes_present`; they count the same."""
+    return bool(v and (v.get("seen") is True or (v.get("check") == "codes_present" and v.get("verified") is True)))
+
+
+def passed(v: dict | None) -> bool:
+    """True only when a probe tested the claim itself and it held (not a codes-seen verdict)."""
+    return bool(v and v.get("verified") is True and not seen_only(v))
+
+
 def _verdict(v: dict | None, keep=VERDICT_KEYS) -> dict:
     """Only the documented verdict keys, strings cleaned: nothing else an agent or a probe returned is stored."""
     return {k: (clean(v[k], 80) if isinstance(v[k], str) else v[k]) for k in sorted(keep) if v and k in v}
@@ -95,10 +106,10 @@ def _prov(ctx, kind: str, ref: str, meta: dict, conf: float, verdict: dict | Non
             filled = {**filled, "fields": {**old.get("fields", {}), **filled["fields"]},
                       "old": {**filled["old"], **old.get("old", {})}}
         probe["filled"] = filled
-    ok = bool(verdict and verdict.get("verified") is True)
+    ok, seen = passed(verdict), seen_only(verdict)
     ctx.db.execute("INSERT OR REPLACE INTO fact_provenance VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                    (kind, ref, LLM, meta["model"], meta["prompt_hash"], meta["job_id"], meta["unit_id"], round(conf, 2),
-                    1 if ok else 0, f"probe:{verdict.get('check')}" if ok else "", json.dumps(probe, ensure_ascii=False, sort_keys=True),
+                    1 if ok else 0, f"probe:{verdict.get('check')}" if ok else f"seen:{verdict.get('check')}" if seen else "", json.dumps(probe, ensure_ascii=False, sort_keys=True),
                     meta["now"]))
 
 
@@ -154,7 +165,7 @@ def store_unit(ctx, g: Graph, job_id: str, unit: dict, answer: dict, model: str,
             continue
         fc, tc = list(it["from_columns"]), list(it["to_columns"])
         rel = f"{ft}({','.join(fc)})->{tt}({','.join(tc)})"
-        ok, bad = bool(v and v.get("verified") is True), bool(v and v.get("verified") is False)
+        ok, bad = passed(v), bool(v and v.get("verified") is False)
         reason = clean(it.get("reason", ""), 240)
         ctx.db.execute("INSERT OR REPLACE INTO index_relations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (rel, unit["unit_id"], ft, json.dumps(fc), tt, json.dumps(tc), _clamp(it.get("confidence")), reason,

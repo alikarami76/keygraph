@@ -104,6 +104,7 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
     for t in top:
         c = ctx.table_context(t)
         notes = c["notes"] or {}
+        prov_rows = _fact_rows(ctx, t)
         llm_fields = sorted(filled_fields(ctx, t).get("notes", {}))
         node = graph.nodes[t]
         out_tables.append({
@@ -111,6 +112,7 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
             "summary": notes.get("summary", ""), "primary_key": node["primary_key"],
             "filter_columns": filter_columns(node, notes), "concepts": sorted({l["concept"] for l in c["concepts"]}),
             "pitfalls": notes.get("pitfalls", ""), "llm_fields": llm_fields,
+            "provenance": fact_label(c["notes"]["source"], c["notes"]["verified"], prov_rows.get(("table", t))) if c["notes"] else "",
             "verified": bool(notes.get("verified")) and not llm_fields})
     paths = []
     if with_paths and len(top) >= 2:
@@ -131,7 +133,8 @@ def format_search(r: dict) -> str:
     if not r["tables"]:
         out.append("  no matching tables")
     for i, t in enumerate(r["tables"], 1):
-        out.append(f"{i}. {t['table']}  (score {t['score']}{', verified' if t['verified'] else ''})")
+        out.append(f"{i}. {t['table']}  (score {t['score']}{', verified' if t['verified'] else ''}"
+                   f"{', ' + t['provenance'] if t['provenance'].startswith('llm') else ''})")
         if t["grain"] or t["summary"]:
             out.append(f"     grain/summary: {t['grain'] or t['summary']}"[:260])
         out.append(f"     pk: {', '.join(t['primary_key']) or 'none'}   filter on: {', '.join(t['filter_columns']) or 'n/a'}")
@@ -145,9 +148,13 @@ def format_search(r: dict) -> str:
 
 
 def fact_label(source, verified, prov: dict | None) -> str:
-    """Provenance label of a context fact: llm, "llm, verified by probe", verified (human) or declared (human, unverified)."""
+    """Provenance label of a context fact: llm, "llm, verified by probe" (a probe tested the claim itself),
+    "llm, codes seen in data" (the code values occur in the data; their labels are unchecked), verified (human) or
+    declared (human, unverified)."""
     if source == "llm":
-        return "llm, verified by probe" if prov and prov.get("verified") else "llm"
+        if prov and prov.get("verified"):
+            return "llm, verified by probe"
+        return "llm, codes seen in data" if prov and str(prov.get("verified_by") or "").startswith("seen:") else "llm"
     return "verified" if verified else "declared"
 
 
@@ -264,30 +271,52 @@ def _perf_lines(d: dict) -> list[str]:
     return out
 
 
+_NOTE_FIELDS = ("grain", "summary", "freshness", "soft_delete", "date_column", "pitfalls")
+
+
+def _llm_note_fields(d: dict) -> set[str]:
+    """Table note fields written by the indexing agent: all of them when the whole row is llm, else the fields it filled."""
+    n = d["context"]["notes"] or {}
+    if n.get("source") == "llm":
+        return set(_NOTE_FIELDS)
+    return set(((d.get("provenance") or {}).get("filled") or {}).get("notes", {}))
+
+
+def _llm_col_mark(d: dict, name: str) -> str:
+    """` (llm...)` for a column whose stored semantics the indexing agent wrote or filled, else an empty string."""
+    prov = d.get("provenance") or {}
+    lab = (prov.get("columns") or {}).get(name)
+    if lab and lab.startswith("llm"):
+        return f" ({lab})"
+    f = (prov.get("filled") or {}).get("columns", {}).get(name)
+    return " (llm: " + ", ".join(f) + ")" if f else ""
+
+
 def format_describe(d: dict) -> str:
     from .query import format_keys
     out = [format_keys(d["keys"])]
     if d.get("brief"):
         n = d["context"]["notes"]
         if n:
-            out.append(f"  grain: {n['grain']}")
+            llm = _llm_note_fields(d)
+            out.append(f"  grain: {n['grain']}" + (" (llm)" if "grain" in llm else ""))
             for k in ("summary", "pitfalls"):
                 if n.get(k):
-                    out.append(f"  {k}: {n[k]}")
+                    out.append(f"  {k}: {n[k]}" + (" (llm)" if k in llm else ""))
         out.append("  efficient filters: " + (", ".join(d["filter_columns"]) or "n/a"))
         out += _perf_lines(d)
         out.append("  columns:")
         for c in d["columns"]:
-            codes = " codes: " + ", ".join(f"{k}={v}" for k, v in c["codes"].items()) if c.get("codes") else ""
-            out.append(f"    {c['name']} {c['type']}{' ' + c['key'] if c.get('key') else ''}{codes}")
+            codes = " codes: " + ", ".join((f"{k}={v}" if v else str(k)) for k, v in c["codes"].items()) if c.get("codes") else ""
+            out.append(f"    {c['name']} {c['type']}{' ' + c['key'] if c.get('key') else ''}{codes}{_llm_col_mark(d, c['name']) if codes else ''}")
         return "\n".join(out)
     n = d["context"]["notes"]
     if n:
-        out.append(f"  grain: {n['grain']}")
-        fl = (d.get("provenance") or {}).get("filled", {})
+        llm = _llm_note_fields(d)
+        out.append(f"  grain: {n['grain']}" + (" (llm)" if "grain" in llm else ""))
         for k in ("summary", "freshness", "soft_delete", "date_column", "pitfalls"):
             if n.get(k):
-                out.append(f"  {k}: {n[k]}" + (" (llm)" if k in fl.get("notes", {}) else ""))
+                out.append(f"  {k}: {n[k]}" + (" (llm)" if k in llm else ""))
         out.append(f"  context source: {safe_source(n['source'])}  verified: {bool(n['verified'])}"
                    + (f"  provenance: {d['provenance']['notes']}" if d.get("provenance", {}).get("notes") else ""))
     out.append("  efficient filters: " + (", ".join(d["filter_columns"]) or "n/a"))
@@ -304,14 +333,11 @@ def format_describe(d: dict) -> str:
         if s and s["unit"]:
             extra += f" [{s['unit']}]"
         if s and s["codes"]:
-            extra += " codes: " + ", ".join(f"{k}={v}" for k, v in s["codes"].items())
+            extra += " codes: " + ", ".join((f"{k}={v}" if v else str(k)) for k, v in s["codes"].items())
         if s and s["pii"]:
             extra += " [PII]"
-        lab = (d.get("provenance") or {}).get("columns", {}).get(c["name"])
-        if s and lab and lab.startswith("llm"):
-            extra += f" ({lab})"
-        elif s and c["name"] in (d.get("provenance") or {}).get("filled", {}).get("columns", {}):
-            extra += " (llm: " + ", ".join(d["provenance"]["filled"]["columns"][c["name"]]) + ")"
+        if s:
+            extra += _llm_col_mark(d, c["name"])
         pf = c.get("profile")
         if pf:
             from .profile import summarize
