@@ -21,20 +21,33 @@ class UnsafeSQL(ValueError):
     pass
 
 
-_TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`)|/\*.*?\*/|--[^\n]*""", re.DOTALL)
+_TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\])|(/\*.*?\*/|--[^\n]*)""", re.DOTALL)
 
 
 def assert_select(sql: str) -> str:
-    # string literals and quoted names are kept as they are, so `--` or `/*` inside one does not change the query
-    s = _TOKENS.sub(lambda m: m.group(1) or " ", sql).strip()
+    """The statement with comments removed, or UnsafeSQL. One left-to-right pass reads quoted text ('..', "..", `..`, [..])
+    and comments; comments are cut only outside quotes. The checks run on a copy where every quoted text is a placeholder, so
+    keywords hidden after a quote or comment marker are still seen. Any `;` (even inside a quote) and any unterminated
+    quote are refused: keygraph's own SQL never needs them."""
+    out, masked, pos = [], [], 0
+    for m in _TOKENS.finditer(sql):
+        out.append(sql[pos:m.start()])
+        masked.append(sql[pos:m.start()])
+        out.append(m.group(1) if m.group(1) is not None else " ")
+        masked.append(" 0 " if m.group(1) is not None else " ")
+        pos = m.end()
+    out.append(sql[pos:])
+    masked.append(sql[pos:])
+    s, stripped = "".join(out).strip(), "".join(masked).strip()
     if s.endswith(";"):
-        s = s[:-1].strip()
+        s, stripped = s[:-1].strip(), stripped[:-1].strip()
     if not s:
         raise UnsafeSQL("empty statement")
-    stripped = re.sub(r"'(?:[^']|'')*'", "''", s)
-    if ";" in stripped:
+    if ";" in s or ";" in stripped:
         raise UnsafeSQL("only one statement is allowed")
-    if not re.match(r"select\b", s, re.I):
+    if re.search(r"['\"`]", stripped):
+        raise UnsafeSQL("unterminated quote")
+    if not re.match(r"select\b", stripped, re.I):
         raise UnsafeSQL("only SELECT statements are allowed")
     m = _BAD.search(stripped)
     if m:

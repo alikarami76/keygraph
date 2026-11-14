@@ -73,3 +73,28 @@ def test_sqlite_memory_url_is_a_clean_error(tmp_path, capsys):
     with pytest.raises(SystemExit) as e:
         main(["probe", "--dir", str(tmp_path), "--url", "sqlite://"])
     assert "sqlite URL needs a file path" in str(e.value.code)
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT \"a'b\" ; DROP TABLE t; SELECT 'c'",
+    "SELECT `a'b` FROM t; DELETE FROM t WHERE x='1'",
+    "SELECT 1 FROM t WHERE c=\"x'\" ; DELETE FROM t; SELECT '1'",
+    "SELECT 'a' FROM t WHERE b = 'unterminated",
+    "SELECT \"a FROM t",
+    "SELECT `a FROM t",
+    "SELECT \"--\" FROM t WHERE x = 1 DELETE FROM t",
+    "SELECT \"a -- b\" FROM t WHERE 1=1 /* \" */ UNION SELECT 1; DROP TABLE t",
+    "SELECT 'a;b' FROM t",
+    "SELECT [a'b] FROM t; DROP TABLE t; SELECT '1'",
+])
+def test_assert_select_rejects_quote_confusion(sql):
+    with pytest.raises(UnsafeSQL):
+        assert_select(sql)
+
+
+def test_assert_select_still_allows_quoted_markers_and_backslashes():
+    assert assert_select("SELECT 'a -- b', '/* c */' FROM t") == "SELECT 'a -- b', '/* c */' FROM t"
+    assert assert_select("SELECT 'a\\' FROM t") == "SELECT 'a\\' FROM t"
+    assert assert_select('SELECT "a--b", `c/*d` FROM t -- tail') == 'SELECT "a--b", `c/*d` FROM t'
+    with pytest.raises(UnsafeSQL):
+        assert_select('SELECT "x--y" FROM t; DELETE FROM t')
