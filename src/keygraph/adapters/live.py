@@ -34,11 +34,11 @@ def _sqlite_rows(engine, sch: Schema, row_seconds: float) -> None:
                 continue
             quoted = '"' + t.name.replace('"', '""') + '"'
             deadline = time.monotonic() + row_seconds
-            raw.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 1000)
+            raw.set_progress_handler(lambda d=deadline: 1 if time.monotonic() > d else 0, 1000)
             try:
                 if time.monotonic() > deadline:
                     raise TimeoutError
-                n = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {quoted}").scalar()  # noqa: S608
+                n = conn.exec_driver_sql(f"SELECT COUNT(*) FROM {quoted}").scalar()
                 t.info["rows_estimate"] = int(n)
                 method["count"] += 1
             except Exception:  # noqa: BLE001  (interrupted by the cap, or unreadable)
