@@ -73,3 +73,35 @@ def test_budget_and_progress_have_no_timestamps(tmp_path):
         assert p == {"job_id": jid, "status": "open", "units": {"pending": 1, "done": 0, "failed": 1, "skipped": 0},
                      "budget": 1000, "used": 1100, "left": 0}
         assert not {"started_at", "finished_at", "submitted_at"} & (set(J.get_job(ctx, jid)) | set(J.get_unit(ctx, jid, "aaa")))
+
+
+def test_budget_tasks_and_empty_units_validated(tmp_path):
+    with ContextDB(tmp_path / "k.db") as ctx:
+        for b in (0, -5):
+            with pytest.raises(ValueError, match="budget"):
+                J.create_job(ctx, UNITS, budget=b)
+        with pytest.raises(ValueError, match="tasks is empty"):
+            J.create_job(ctx, UNITS, budget=1, tasks=[])
+        with pytest.raises(ValueError, match="unknown task"):
+            J.create_job(ctx, UNITS, budget=1, tasks=["relations", "bogus"])
+        assert J.list_units(ctx, J.create_job(ctx, [], budget=1)) == []
+        for t in J.TASKS:
+            J.create_job(ctx, UNITS, budget=1, tasks=[t])
+
+
+def test_open_job_orders_by_creation_not_string(tmp_path):
+    with ContextDB(tmp_path / "k.db") as ctx:
+        ctx.db.execute("INSERT INTO index_jobs VALUES('job-9999','', NULL, 1, 0, '[]', 'v', '1', 'open', '', '')")
+        jid = J.create_job(ctx, UNITS, budget=1)
+        assert jid == "job-0002"  # one past the highest row; the open job is the newest row
+        assert J.open_job(ctx)["job_id"] == jid
+        ctx.db.execute("INSERT INTO index_jobs VALUES('job-10000','', NULL, 1, 0, '[]', 'v', '1', 'open', '', '')")
+        assert J.open_job(ctx)["job_id"] == "job-10000"  # a string sort would pick job-9999
+
+
+def test_has_budget_gates_a_unit(tmp_path):
+    with ContextDB(tmp_path / "k.db") as ctx:
+        jid = J.create_job(ctx, UNITS, budget=1000)
+        assert J.has_budget(ctx, jid, 1000) and not J.has_budget(ctx, jid, 1001)
+        J.add_used(ctx, jid, 600)
+        assert J.has_budget(ctx, jid, 400) and not J.has_budget(ctx, jid, 401)

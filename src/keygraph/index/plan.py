@@ -24,16 +24,22 @@ def _norm(raw: dict[str, float], ids: list[str]) -> dict[str, float]:
     return {t: (raw.get(t, 0) / top if top else 0.0) for t in ids}
 
 
+def skipped_tables(g: Graph) -> set[str]:
+    """Mirror and copy-schema tables: planning leaves them out, they keep the deterministic map."""
+    return {t for t, n in g.nodes.items() if n.get("mirror_of") or g._is_mirror_or_copy(n["schema"])}
+
+
 def _real_edges(g: Graph) -> list[dict]:
-    mirrors = {t for t, n in g.nodes.items() if n.get("mirror_of")}
-    return [e for e in g.edges if e["from"] != e["to"] and e["from"] not in mirrors and e["to"] not in mirrors
+    skip = skipped_tables(g)
+    return [e for e in g.edges if e["from"] != e["to"] and e["from"] not in skip and e["to"] not in skip
             and not e.get("rejected")]
 
 
 def rank_tables(g: Graph, ctx) -> list[dict]:
-    """Rank every table: hub score (incoming relations), query-log hits, code refs, context mentions, area centrality.
+    """Rank every table except mirror and copy-schema ones: hub score (incoming relations), query-log hits, code refs, context mentions, area centrality.
     Returns [{"table", "score", "parts"}] best first; ties broken by table id. Same inputs give the same list."""
-    ids = sorted(g.nodes)
+    skip = skipped_tables(g)
+    ids = sorted(t for t in g.nodes if t not in skip)
     incoming: dict[str, int] = {}
     for e in _real_edges(g):
         incoming[e["to"]] = incoming.get(e["to"], 0) + 1

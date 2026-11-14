@@ -40,13 +40,18 @@ def _unit(r) -> dict:
 def create_job(ctx, units: list[dict], *, budget: int, tasks=TASKS, url_env: str = "", cmd_env: str = "",
                schema_version: int | str = 1) -> str:
     """Create an open job with its pending units and return the job id (job-0001, job-0002, ...)."""
+    if int(budget) <= 0:
+        raise ValueError("budget must be a positive number of tokens, for example --budget 200000")
+    tasks = list(tasks)
+    if not tasks:
+        raise ValueError(f"tasks is empty; pass at least one of: {', '.join(TASKS)}")
     bad = [t for t in tasks if t not in TASKS]
     if bad:
         raise ValueError(f"unknown task kind: {', '.join(bad)}")
     if url_env and cmd_env:
         raise ValueError("use url_env or cmd_env, not both")
     url_env, cmd_env = _env_name("url_env", url_env), _env_name("cmd_env", cmd_env)
-    n = ctx.db.execute("SELECT COUNT(*) FROM index_jobs").fetchone()[0]
+    n = ctx.db.execute("SELECT COALESCE(MAX(rowid), 0) FROM index_jobs").fetchone()[0]
     job_id = f"job-{n + 1:04d}"
     tasks = [t for t in TASKS if t in tasks]
     ctx.db.execute("INSERT INTO index_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -66,7 +71,7 @@ def get_job(ctx, job_id: str) -> dict | None:
 
 def open_job(ctx) -> dict | None:
     """The open job to resume (the latest one still open), or None."""
-    r = ctx.db.execute("SELECT * FROM index_jobs WHERE status='open' ORDER BY job_id DESC LIMIT 1").fetchone()
+    r = ctx.db.execute("SELECT * FROM index_jobs WHERE status='open' ORDER BY rowid DESC LIMIT 1").fetchone()
     return _job(r) if r else None
 
 
@@ -116,6 +121,11 @@ def add_used(ctx, job_id: str, tokens: int) -> int:
 def budget_left(ctx, job_id: str) -> int:
     j = get_job(ctx, job_id)
     return max(0, j["budget"] - j["used"])
+
+
+def has_budget(ctx, job_id: str, estimate: int) -> bool:
+    """True when a unit costing `estimate` tokens still fits in what is left; hand out no unit otherwise."""
+    return budget_left(ctx, job_id) >= int(estimate)
 
 
 def close_job(ctx, job_id: str, status: str = "done") -> dict:
