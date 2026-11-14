@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `server.json` for the official MCP registry (`io.github.alikarami76/keygraph`, PyPI package run as `uvx --from keygraph[mcp]==<version> keygraph mcp --dir <folder>`), with the `mcp-name` ownership marker in the README; a test keeps its versions equal to the package version. The registry reads the marker from the README on PyPI, so the listing can be published from the next release on.
 - README top rewritten for launch: the headline "The schema map that stops your SQL agent from double-counting.", an animated hero (`design/visuals/hero.gif`, real keygraph and sqlite3 output on the demo shop) in place of the old banner, the measured FK-recovery number with method and date, a three-command demo quickstart on `uvx keygraph demo`, "What your agent gets", "Works with DBHub and MCP Toolbox", the "Why a prebuilt map" essay shortened and moved below, comparison rows for semantic layers, dbt, database MCP servers and graphify, and CI and downloads badges. A new test runs every `keygraph` query command in the README's code blocks on the demo (`uvx keygraph ...` lines included), and fails when a README command is neither run nor listed with a reason. AGENTS.md and llms.txt follow the new README, and the skill's Explorer section now describes the current explorer (it still described sliders and CSV export removed in 0.2.0). Docs only; no output changes.
 
 ## 0.4.0 - 2026-11-14

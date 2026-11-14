@@ -1,5 +1,7 @@
 # keygraph
 
+<!-- mcp-name: io.github.alikarami76/keygraph -->
+
 **The schema map that stops your SQL agent from double-counting.**
 
 Join paths, keys, grain and status codes for any agent, over MCP. Deterministic, no LLM calls.
