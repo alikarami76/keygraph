@@ -58,7 +58,9 @@ def test_pii_columns_have_no_raw_values(shop):
     prof = K.build_packet(g, ctx, ["shop.customers"])["profiles"]
     assert prof["shop.customers.email"]["pii"] is True and "top_values" not in prof["shop.customers.email"]
     assert prof["shop.customers.email"]["pattern"] == "email"
-    assert "top_values" in prof["shop.customers.id"]
+    assert "top_values" not in prof["shop.customers.id"]  # 60 distinct values: not an enum
+    orders = K.build_packet(g, ctx, ["shop.orders"])["profiles"]
+    assert "top_values" in orders["shop.orders.status"]  # a small complete enum keeps them
 
 
 def test_pii_profile_with_planted_values_is_dropped(shop, tmp_path):
@@ -127,8 +129,9 @@ def test_sections_trim_in_fixed_order(shop):
     assert full["trimmed"] == []
     size = K.estimate(full)
     mid = K.build_packet(g, ctx, ["shop.orders", "shop.order_items"], cap=size - 150)
-    assert mid["trimmed"][0] == "context" and K.estimate(mid) <= size - 150
-    assert len(mid["tables"]) == 2 and len(mid["profiles"]) == len(full["profiles"])
+    assert mid["trimmed"][0] == "queries" and K.estimate(mid) <= size - 150
+    assert len(mid["tables"]) == 2 and len(mid["context"]) == len(full["context"])
+    assert mid["trimmed"] == [x for x in K.TRIM_ORDER if x in mid["trimmed"]]
     assert mid == K.build_packet(g, ctx, ["shop.orders", "shop.order_items"], cap=size - 150)
 
 
@@ -154,3 +157,110 @@ def test_every_planned_unit_fits_the_cap(shop):
     g, ctx = _load(shop)
     for u in P.make_units(g, P.rank_tables(g, ctx)):
         assert K.estimate(K.build_packet(g, ctx, u["tables"])) <= K.DEFAULT_CAP
+
+
+def test_over_cap_is_explicit_when_required_tables_do_not_fit(tmp_path):
+    g = _wide(60)
+    with ContextDB(tmp_path / "k.db", g) as ctx:
+        p = K.build_packet(g, ctx, ["app.wide", "app.parent"], cap=10)
+        assert p["over_cap"] is True and p["estimate"] == K.estimate(p) > 10
+        assert [x for x in ("indexes", "columns") if x in p["trimmed"]]
+        ok = K.build_packet(g, ctx, ["app.wide", "app.parent"])
+        assert "over_cap" not in ok and K.estimate(ok) <= K.DEFAULT_CAP
+
+
+def test_indexes_are_trimmed_before_key_columns(tmp_path):
+    s = Schema()
+    ixs = [Index("PRIMARY", ["id"], True, True)] + [Index(f"ix_{i}", [f"c{i}"], False, False) for i in range(60)]
+    s.add(Table("app", "t", [Column("id", "int")] + [Column(f"c{i}", "int") for i in range(60)], ixs))
+    g = build_graph(s)
+    with ContextDB(tmp_path / "k.db", g) as ctx:
+        full = K.build_packet(g, ctx, ["app.t"], cap=100000)
+        p = K.build_packet(g, ctx, ["app.t"], cap=K.estimate(full) - 400)
+        assert p["trimmed"] == ["indexes"] and K.estimate(p) <= K.estimate(full) - 400 and len(p["tables"][0]["indexes"]) < 60
+        assert len(p["tables"][0]["columns"]) == 61
+
+
+def test_trimmed_lists_only_what_was_dropped(shop):
+    g, ctx = _load(shop)
+    p = K.build_packet(g, ctx, ["shop.customers"], cap=100000)
+    assert p["trimmed"] == []
+    size = K.estimate(K.build_packet(g, ctx, ["shop.orders"], cap=100000))
+    q = K.build_packet(g, ctx, ["shop.orders"], cap=size - 100)
+    for sec in q["trimmed"]:
+        assert sec in K.TRIM_ORDER or sec in ("indexes", "columns")
+    assert "column_details" not in q["trimmed"] or any(
+        "comment" in c or "values" in c for t in K.build_packet(g, ctx, ["shop.orders"], cap=100000)["tables"] for c in t["columns"])
+
+
+def test_context_trims_last_and_round_robin(shop):
+    g, ctx = _load(shop)
+    units = ["shop.orders", "shop.order_items", "shop.customers"]
+    full = K.build_packet(g, ctx, units, cap=100000)
+    p = K.build_packet(g, ctx, units, cap=K.estimate(full) - 120)
+    assert "context" not in p["trimmed"] or all(not p[x] for x in ("queries", "code_refs", "profiles", "neighbours", "candidate_relations"))
+
+
+def _plant(shop, tmp_path, sql: str, *args):
+    import shutil
+    d = tmp_path / "plant"
+    shutil.copytree(shop, d)
+    con = sqlite3.connect(d / "keygraph.db")
+    con.execute(sql, args)
+    con.commit()
+    con.close()
+    return _load(d)
+
+
+def test_pii_looking_values_in_a_non_pii_profile_never_reach_the_packet(shop, tmp_path):
+    bad = {"sample_size": 9, "values_complete": True, "distinct_in_sample": 3, "pattern": "uuid",
+           "top_values": [["09121234567", 3], ["4111111111111111", 3], ["0012345678", 3]],
+           "numeric": {"min": 9121234567, "max": 9129999999, "p50": 9125555555}}
+    g, ctx = _plant(shop, tmp_path, "UPDATE column_profile SET profile=? WHERE table_id='shop.orders' AND col='status'", json.dumps(bad))
+    text = S.canonical(K.build_packet(g, ctx, ["shop.orders"]))
+    for leak in ("09121234567", "4111111111111111", "0012345678", "9121234567", "9129999999", "9125555555"):
+        assert leak not in text
+    prof = K.build_packet(g, ctx, ["shop.orders"])["profiles"]["shop.orders.status"]
+    assert "top_values" not in prof and "numeric" not in prof and prof["sample_size"] == 9
+
+
+def test_big_or_long_value_lists_are_not_sent(shop, tmp_path):
+    many = {"sample_size": 50, "values_complete": True, "distinct_in_sample": 25, "top_values": [[f"v{i}", 1] for i in range(25)]}
+    long_ = {"sample_size": 50, "values_complete": True, "distinct_in_sample": 2, "top_values": [["x" * 40, 1], ["b", 1]]}
+    incomplete = {"sample_size": 50, "values_complete": False, "distinct_in_sample": 5, "top_values": [["a", 1]]}
+    for prof in (many, long_, incomplete):
+        g, ctx = _plant(shop, tmp_path / str(id(prof)), "UPDATE column_profile SET profile=? WHERE table_id='shop.orders' AND col='status'",
+                        json.dumps(prof))
+        assert "top_values" not in K.build_packet(g, ctx, ["shop.orders"])["profiles"]["shop.orders.status"]
+
+
+def test_pii_flagged_column_drops_comment_and_enum_members(tmp_path):
+    s = Schema()
+    s.add(Table("app", "t", [Column("id", "int"), Column("email", "enum('a@b.co','c@d.co')", comment="main contact, e.g. a@b.co",
+                                                          values=["a@b.co", "c@d.co"]),
+                             Column("kind", "enum('x','y')", comment="kind of thing", values=["x", "y"])],
+                [Index("PRIMARY", ["id"], True, True)]))
+    g = build_graph(s)
+    with ContextDB(tmp_path / "k.db", g) as ctx:
+        cols = {c["name"]: c for c in K.build_packet(g, ctx, ["app.t"])["tables"][0]["columns"]}
+    assert cols["email"].get("pii") and "comment" not in cols["email"] and "values" not in cols["email"]
+    assert cols["kind"]["values"] == ["x", "y"] and cols["kind"]["comment"]
+
+
+def test_space_separated_secrets_and_ids_in_snippets_and_queries_are_masked(shop, tmp_path):
+    import shutil
+    d = tmp_path / "plant2"
+    shutil.copytree(shop, d)
+    con = sqlite3.connect(d / "keygraph.db")
+    con.execute("UPDATE code_refs SET snippet='run secret hunter2 then national_id=1234567890 mobile: +989121234567' "
+                "WHERE table_id='shop.orders'")
+    con.execute("UPDATE code_refs SET symbol='PGPASSWORD hunter2' WHERE table_id='shop.orders'")
+    con.execute("UPDATE query_fingerprints SET normalized_sql=\"select * from shop.orders where phone = '09121234567' and "
+                "national_id = 1234567890 and secret hunter2\"")
+    con.commit()
+    con.close()
+    g, ctx = _load(d)
+    text = S.canonical(K.build_packet(g, ctx, ["shop.orders"]))
+    for leak in ("hunter2", "1234567890", "09121234567", "989121234567"):
+        assert leak not in text
+    assert "select * from shop.orders where phone = ?" in text  # literals re-masked even if stored with --keep-literals

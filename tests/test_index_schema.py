@@ -82,3 +82,34 @@ def test_job_default_schema_version(tmp_path):
     with ContextDB(tmp_path / "k.db") as ctx:
         jid = J.create_job(ctx, [], budget=1)
         assert J.get_job(ctx, jid)["schema_version"] == str(S.SCHEMA_VERSION)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_numbers_are_rejected(bad):
+    a = copy.deepcopy(_answer(["relations"]))
+    a["relations"][0]["confidence"] = bad
+    assert any("finite" in e for e in S.validate_answer(a, ["relations"]))
+    import json
+    parsed = json.loads('{"relations": [{"from_table": "a.b", "from_columns": ["x"], "to_table": "a.c", "to_columns": ["id"], '
+                        '"reason": "r", "confidence": NaN}]}')
+    assert S.validate_answer(parsed, ["relations"])
+
+
+def test_lists_are_capped_at_fifty_items():
+    a = _answer(["relations"])
+    a["relations"] = [a["relations"][0]] * 51
+    assert S.validate_answer(a, ["relations"]) == ["$.relations: more than 50 items"]
+    a["relations"] = a["relations"][:50]
+    assert S.validate_answer(a, ["relations"]) == []
+
+
+def test_examples_are_in_the_instructions_and_so_in_the_hash():
+    ins = S.instructions(["relations"])
+    assert S.canonical(S.EXAMPLES["relations"]) in ins and "schema.table" in ins
+    old = S.EXAMPLES["relations"]
+    try:
+        S.EXAMPLES["relations"] = {**old, "reason": "changed"}
+        assert S.prompt_hash(S.instructions(["relations"]), S.answer_schema(["relations"]), {}) != \
+            S.prompt_hash(ins, S.answer_schema(["relations"]), {})
+    finally:
+        S.EXAMPLES["relations"] = old

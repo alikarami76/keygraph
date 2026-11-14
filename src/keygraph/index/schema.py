@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 
 SCHEMA_VERSION = 1
 TASKS = ("relations", "columns", "tables", "concepts", "metrics", "performance")
 
-REASON_MAX, TEXT_MAX, NAME_MAX, LIST_MAX = 240, 400, 120, 20
+REASON_MAX, TEXT_MAX, NAME_MAX, LIST_MAX, MAX_ITEMS = 240, 400, 120, 20, 50
 
 
 def _s(n: int = TEXT_MAX, min_len: int = 1) -> dict:
@@ -54,8 +55,8 @@ ITEMS = {
 }
 
 INSTRUCTIONS = {
-    "relations": "relations: list foreign-key style links between tables of this unit and any table in the packet that "
-                 "the schema does not declare. Give from/to table and columns, the reason (what in the packet supports it), "
+    "relations": "relations: list foreign-key style links the schema does not declare, from a table of this unit to a unit "
+                 "table or to a neighbour listed in the packet. Write tables as schema.table. Give from/to table and columns, the reason (what in the packet supports it), "
                  "and your confidence. Do not repeat declared relations.",
     "columns": "columns: give the business meaning of columns whose name alone does not say it: unit, code-to-meaning map for "
                "enum or status columns, and what NULL means. Skip obvious columns.",
@@ -98,17 +99,19 @@ def kinds_of(tasks) -> list[str]:
 def answer_schema(tasks=TASKS) -> dict:
     """JSON Schema of an answer for the given task kinds: {"model"?: str, "<kind>": [items]} with a list per kind."""
     kinds = kinds_of(tasks)
-    return {"type": "object", "properties": {"model": _s(NAME_MAX), **{k: _list(ITEMS[k], 200) for k in kinds}},
+    return {"type": "object", "properties": {"model": _s(NAME_MAX), **{k: _list(ITEMS[k], MAX_ITEMS) for k in kinds}},
             "required": kinds, "additionalProperties": False, "schema_version": SCHEMA_VERSION}
 
 
 def instructions(tasks=TASKS) -> str:
     """The task text an agent reads with a packet."""
     kinds = kinds_of(tasks)
-    return ("Answer with one JSON object holding a list for each of: " + ", ".join(kinds) + ". Use only tables and columns "
-            "named in the packet. Every item needs a short `reason` and a `confidence` from 0 to 1. Never write personal "
+    return ("Answer with one JSON object holding a list for each of: " + ", ".join(kinds) + ". Use only the tables and "
+            "columns the packet names (unit tables, their columns, and listed neighbours). Every item needs a short `reason` and a `confidence` from 0 to 1. Never write personal "
             "values (emails, phone numbers, card or national ids). Leave a list empty when the packet gives no support. "
-            "Optional top-level `model` names the model you are.\n" + "\n".join(INSTRUCTIONS[k] for k in kinds))
+            "Optional top-level `model` names the model you are.\n" + "\n".join(INSTRUCTIONS[k] for k in kinds)
+            + "\nOne valid item per kind (the examples are part of the prompt hash):\n"
+            + "\n".join(f"{k}: {canonical(EXAMPLES[k])}" for k in kinds))
 
 
 def examples(tasks=TASKS) -> dict:
@@ -140,6 +143,8 @@ def check(value, schema: dict, path: str = "$") -> list[str]:
     if "enum" in schema and value not in schema["enum"]:
         errs.append(f"{path}: must be one of {', '.join(map(str, schema['enum']))}")
     if t == "number":
+        if not math.isfinite(value):
+            return [f"{path}: must be a finite number"]
         if "minimum" in schema and value < schema["minimum"] or "maximum" in schema and value > schema["maximum"]:
             errs.append(f"{path}: must be between {schema.get('minimum')} and {schema.get('maximum')}")
     elif t == "string":
