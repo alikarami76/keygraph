@@ -3,9 +3,9 @@ import re
 import shutil
 
 import pytest
-from test_example_shop import _build
+from test_example_shop import SHOP, _build
 
-from keygraph.cli import describe_result
+from keygraph.cli import describe_result, main
 from keygraph.context import ContextDB
 from keygraph.graph import Graph
 from keygraph.index import store as ST
@@ -238,3 +238,158 @@ def test_describe_shows_performance_notes_and_provenance_labels(env):
     assert "When the customer paid" in text and "(llm)" in text
     brief = describe_result(out, g, "shop.orders", brief=True)
     assert brief["performance"]["default_filters"] == ["status = 2"]
+
+
+# --- fix round 1 ---------------------------------------------------------------------------------------------------
+
+OVERRIDES = {"reject": [{"from": "billing.invoices.customer_id", "to": "shop.customers.id"},
+                        {"from": "shop.orders.created_by_id"}],
+             "confirm": [{"from": "shop.reviews.customer_id", "to": "shop.customers.id", "note": "checked"}],
+             "add": [{"from": "shop.carts.id", "to": "shop.orders_shadow.id"}]}
+
+
+def build_with_overrides(out):
+    pytest.importorskip("yaml")
+    out.mkdir(parents=True, exist_ok=True)
+    (out.parent / f"{out.name}-ov.json").write_text(json.dumps(OVERRIDES))
+    d = SHOP / "dumps"
+    assert main(["load", "--dir", str(out), "--columns", str(d / "columns.json"), "--statistics", str(d / "statistics.json"),
+                 "--key-columns", str(d / "key_columns.json"), "--tables", str(d / "tables.json"),
+                 "--context", str(SHOP / "context.yaml"), "--overrides", str(out.parent / f"{out.name}-ov.json")]) == 0
+
+
+@pytest.fixture()
+def oenv(tmp_path):
+    out = tmp_path / "ov"
+    build_with_overrides(out)
+    g = Graph.load(out / "graph.json")
+    ctx = ContextDB(out / "keygraph.db", g)
+    yield out, g, ctx
+    ctx.close()
+
+
+def test_a_rejected_pair_is_never_re_added(oenv):
+    _, g, ctx = oenv
+    assert _edge(g, "billing.invoices", ["customer_id"], "shop.customers", ["id"]) is None
+    _store(oenv, {"relations": [
+        _rel(from_table="billing.invoices", from_columns=["customer_id"], to_table="shop.customers", to_columns=["id"]),
+        _rel(from_table="shop.customers", from_columns=["id"], to_table="billing.invoices", to_columns=["customer_id"]),
+        _rel(from_table="shop.orders", from_columns=["created_by_id"], to_table="shop.users", to_columns=["id"]),
+        _rel(from_table="shop.orders", from_columns=["created_by_id"], to_table="shop.sellers", to_columns=["id"])]})
+    res = ST.apply_index_relations(g, ctx)
+    assert res["added"] == 0 and res["human_rejected"] == 4
+    assert _edge(g, "billing.invoices", ["customer_id"], "shop.customers", ["id"]) is None
+    assert not [e for e in g.edges if e.get("source") == "llm"]
+
+
+def test_confirmed_and_added_edges_are_untouched(oenv):
+    _, g, ctx = oenv
+    conf = _edge(g, "shop.reviews", ["customer_id"], "shop.customers", ["id"])
+    added = _edge(g, "shop.carts", ["id"], "shop.orders_shadow", ["id"])
+    assert (conf["status"], added["status"]) == ("confirmed", "added")
+    snap = json.dumps([conf, added], sort_keys=True)
+    _store(oenv, {"relations": [
+        _rel(from_table="shop.reviews", from_columns=["customer_id"], to_table="shop.customers", to_columns=["id"], confidence=0.99),
+        _rel(from_table="shop.carts", from_columns=["id"], to_table="shop.orders_shadow", to_columns=["id"], confidence=0.99)]})
+    res = ST.apply_index_relations(g, ctx)
+    assert res["unchanged"] == 2 and res["merged"] == 0 and res["added"] == 0
+    assert json.dumps([conf, added], sort_keys=True) == snap
+
+
+def _prov_conf(ctx, ref):
+    return _row(ctx, "fact_provenance", kind="relation", ref=ref)["confidence"]
+
+
+def test_provenance_confidence_is_capped_and_verified_is_exactly_point_nine(env):
+    _, g, ctx = env
+    r1 = _rel()
+    r2 = _rel(from_table="shop.carts", from_columns=["id"], confidence=0.3)
+    r3 = _rel(from_table="shop.cart_items", from_columns=["cart_id"], confidence=0.99)
+    ok = {"verified": True, "check": "relation_overlap", "rate": 0.9, "n": 10}
+    _store(env, {"relations": [r1, r2, r3]}, [{"kind": "relations", "index": 1, **ok}, {"kind": "relations", "index": 2, **ok}])
+    assert _prov_conf(ctx, "shop.returns(order_id)->shop.orders_shadow(id)") == 0.75
+    assert _prov_conf(ctx, "shop.carts(id)->shop.orders_shadow(id)") == 0.9
+    assert _prov_conf(ctx, "shop.cart_items(cart_id)->shop.orders_shadow(id)") == 0.9
+    ST.apply_index_relations(g, ctx)
+    assert _edge(g, "shop.carts", ["id"], "shop.orders_shadow", ["id"])["confidence"] == 0.9  # not tied to the answer's 0.3
+    assert _edge(g, "shop.cart_items", ["cart_id"], "shop.orders_shadow", ["id"])["confidence"] == 0.9
+
+
+def test_clear_llm_deletes_provenance_and_relations(env):
+    _, _, ctx = env
+    _store(env, {"relations": [_rel()], "columns": [_col()]})
+    assert ctx.db.execute("SELECT COUNT(*) FROM fact_provenance").fetchone()[0] == 2
+    ST.clear_llm(ctx)
+    for t in ("fact_provenance", "index_relations", "column_semantics WHERE source='llm'"):
+        assert ctx.db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] == 0, t
+
+
+def test_relations_on_mirror_tables_are_skipped(env):
+    _, g, ctx = env
+    assert g.nodes["reporting.orders"].get("mirror_of")
+    _store(env, {"relations": [_rel(from_table="reporting.orders", from_columns=["customer_id"], to_table="shop.customers", to_columns=["id"]),
+                               _rel(from_table="shop.returns", from_columns=["order_id"], to_table="reporting.orders", to_columns=["id"])]})
+    res = ST.apply_index_relations(g, ctx)
+    assert res["stale"] == 2 and res["added"] == 0
+
+
+def test_strip_removes_mirror_copies_of_llm_edges_only(env):
+    _, g, _ = env
+    llm = {"kind": "inferred", "status": "inferred", "source": "llm", "from": "a.x", "from_columns": ["p"], "to": "a.y", "to_columns": ["id"],
+           "confidence": 0.7, "cardinality": "many-to-one", "ambiguous": False, "evidence": ["llm: r"], "id": "a.x(p)->a.y(id)"}
+    copy = {**llm, "source": "mirror", "from": "m.x", "to": "m.y", "id": "m.x(p)->m.y(id)",
+            "evidence": ["copy of a.x(p) -> a.y(id) in the original schema"]}
+    other = {**copy, "from": "m.z", "id": "m.z(p)->m.y(id)", "evidence": ["copy of a.z(p) -> a.y(id) in the original schema"]}
+    g.data["edges"] += [llm, copy, other]
+    ST.strip_llm(g)
+    ids = {e["id"] for e in g.edges}
+    assert "a.x(p)->a.y(id)" not in ids and "m.x(p)->m.y(id)" not in ids and "m.z(p)->m.y(id)" in ids
+
+
+def test_clear_llm_restores_null_and_whole_rows(env):
+    _, _, ctx = env
+    ctx.db.execute("UPDATE column_semantics SET null_meaning=NULL, unit=NULL WHERE table_id='shop.orders' AND col='total'")
+    ctx.db.execute("UPDATE table_notes SET freshness=NULL WHERE table_id='shop.orders'")
+    ctx.db.commit()
+    before = [dict(r) for r in ctx.db.execute("SELECT * FROM column_semantics ORDER BY table_id, col")]
+    nbefore = [dict(r) for r in ctx.db.execute("SELECT * FROM table_notes ORDER BY table_id")]
+    _store(env, {"columns": [_col("shop.orders", "total", meaning="x", null_meaning="never null", unit="eur")],
+                 "tables": [{"table": "shop.orders", "purpose": "p", "freshness": "hourly", "reason": "r", "confidence": 0.5}]})
+    assert _row(ctx, "column_semantics", table_id="shop.orders", col="total")["unit"] == "eur"
+    ST.clear_llm(ctx)
+    assert [dict(r) for r in ctx.db.execute("SELECT * FROM column_semantics ORDER BY table_id, col")] == before
+    assert [dict(r) for r in ctx.db.execute("SELECT * FROM table_notes ORDER BY table_id")] == nbefore
+
+
+def test_an_old_index_relations_table_gains_cardinality_on_write_open(tmp_path):
+    import sqlite3
+    db = tmp_path / "k.db"
+    ContextDB(db).close()
+    con = sqlite3.connect(db)
+    con.execute("DROP TABLE index_relations")
+    con.execute("CREATE TABLE index_relations(rel_id TEXT PRIMARY KEY, unit_id TEXT, from_table TEXT, from_columns TEXT, to_table TEXT, "
+                "to_columns TEXT, confidence REAL, reason TEXT, status TEXT, probe TEXT, model TEXT, job_id TEXT, at TEXT)")
+    con.commit()
+    con.close()
+    raw = db.read_bytes()
+    ro = ContextDB(db, readonly=True)
+    assert ro.db.execute("SELECT COUNT(*) FROM index_relations").fetchone()[0] == 0
+    ro.close()
+    assert db.read_bytes() == raw  # a read-only open never alters the file
+    ContextDB(db).close()
+    cols = [r[1] for r in sqlite3.connect(db).execute("PRAGMA table_info(index_relations)")]
+    assert cols[-1] == "cardinality"
+
+
+def test_verdict_keys_are_whitelisted_and_answers_hold_only_accepted_fields(env):
+    out, _, ctx = env
+    v = {"kind": "relations", "index": 0, "verified": True, "check": "relation_overlap", "rate": 0.9, "n": 5,
+         "leak": {"value": "hunter2"}, "error": "ValueError"}
+    _store(env, {"relations": [_rel()]}, [v])
+    dump = json.dumps([dict(r) for r in ctx.db.execute("SELECT probe FROM fact_provenance")]
+                      + [dict(r) for r in ctx.db.execute("SELECT probe FROM index_relations")])
+    assert "hunter2" not in dump and "leak" not in dump and "relation_overlap" in dump
+    p = ST.save_answer(out, UNIT, "job-0001", {"relations": [{**_rel(), "extra": "x"}], "bogus": [{"a": 1}]}, "m", "h", [v])
+    body = json.loads(p.read_text())
+    assert "extra" not in body["answer"]["relations"][0] and "bogus" not in body["answer"]
+    assert set(body["verdicts"][0]) <= {"kind", "index", "verified", "check", "rate", "n", "error", "skipped"}

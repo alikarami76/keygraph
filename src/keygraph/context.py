@@ -149,6 +149,8 @@ class ContextDB:
         self.db.row_factory = sqlite3.Row
         if not (readonly and self.path.exists()):
             self.db.executescript(SCHEMA)
+            if "cardinality" not in {r[1] for r in self.db.execute("PRAGMA table_info(index_relations)")}:
+                self.db.execute("ALTER TABLE index_relations ADD COLUMN cardinality TEXT")  # a file from before the column
         else:  # a file from an older keygraph may lack newer tables: read them as empty (temp tables, file untouched)
             have = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
             for stmt in SCHEMA.split(";"):

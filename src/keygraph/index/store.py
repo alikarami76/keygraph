@@ -13,11 +13,12 @@ from pathlib import Path
 from keygraph.code.refs import mask_secrets
 from keygraph.graph import Graph, edge_id
 from keygraph.index.pii import mask_keywords, scrub
-from keygraph.index.schema import SCHEMA_VERSION
+from keygraph.index.schema import ITEMS, SCHEMA_VERSION
 
 LLM = "llm"
 CAP_UNVERIFIED, CAP_VERIFIED = 0.75, 0.9
 ANSWERS = "answers"
+VERDICT_KEYS = ("verified", "check", "rate", "n", "error", "skipped")
 _PERF_LISTS = ("common_filters", "slow_patterns", "index_friendly_filters", "hints")
 
 
@@ -58,6 +59,11 @@ def accepted_answer(validation: dict, verdicts: list[dict]) -> tuple[dict, list[
     return answer, out
 
 
+def _verdict(v: dict | None, keep=VERDICT_KEYS) -> dict:
+    """Only the documented verdict keys, strings cleaned: nothing else an agent or a probe returned is stored."""
+    return {k: (clean(v[k], 80) if isinstance(v[k], str) else v[k]) for k in sorted(keep) if v and k in v}
+
+
 def _tid(g: Graph, ref) -> str:
     try:
         return g.resolve(str(ref))
@@ -77,12 +83,12 @@ def _prov(ctx, kind: str, ref: str, meta: dict, conf: float, verdict: dict | Non
     """One fact_provenance row, replacing an earlier row for the same (kind, ref)."""
     probe: dict = {"reason": clean(reason, 240)}
     if verdict:
-        probe["verdict"] = {k: (clean(v, 80) if isinstance(v, str) else v) for k, v in sorted(verdict.items())
-                            if k not in ("kind", "index")}
+        probe["verdict"] = _verdict(verdict)
     if filled:
         old = _prov_filled(ctx, kind, ref)
         if old.get("table") == filled["table"] and old.get("keys") == filled["keys"]:
-            filled = {**filled, "fields": {**old.get("fields", {}), **filled["fields"]}}
+            filled = {**filled, "fields": {**old.get("fields", {}), **filled["fields"]},
+                      "old": {**filled["old"], **old.get("old", {})}}
         probe["filled"] = filled
     ok = bool(verdict and verdict.get("verified") is True)
     ctx.db.execute("INSERT OR REPLACE INTO fact_provenance VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -102,18 +108,20 @@ def _write_row(ctx, table: str, keys: dict, new: dict, meta: dict, counts: dict)
         ctx.db.execute(f"INSERT OR REPLACE INTO {table} VALUES({','.join('?' * len(cols))})", [row[c] for c in cols])
         return ("replaced" if old else "new"), {}
     filled, blocked = {}, 0
+    prior: dict = {}
     for f, v in new.items():
         if _empty(v):
             continue
         if _empty(old[f]):
             filled[f] = v
+            prior[f] = old[f]
         elif old[f] != v:
             blocked += 1
     if filled:
         ctx.db.execute(f"UPDATE {table} SET {', '.join(f'{f}=?' for f in filled)} WHERE {where}", [*filled.values(), *keys.values()])
     counts["kept"] += blocked
     counts["filled"] += len(filled)
-    return ("filled" if filled else "kept"), ({"table": table, "keys": keys, "fields": filled} if filled else {})
+    return ("filled" if filled else "kept"), ({"table": table, "keys": keys, "fields": filled, "old": prior} if filled else {})
 
 
 def _record(ctx, table, keys, new, kind, ref, meta, counts, conf, verdict, reason) -> str:
@@ -146,7 +154,7 @@ def store_unit(ctx, g: Graph, job_id: str, unit: dict, answer: dict, model: str,
         ctx.db.execute("INSERT OR REPLACE INTO index_relations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (rel, unit["unit_id"], ft, json.dumps(fc), tt, json.dumps(tc), _clamp(it.get("confidence")), reason,
                         "verified" if ok else "rejected" if bad else "unverified",
-                        json.dumps({k: x for k, x in sorted((v or {}).items()) if k not in ("kind", "index")}), meta["model"],
+                        json.dumps(_verdict(v)), meta["model"],
                         job_id, meta["now"], it.get("cardinality", "")))
         _prov(ctx, "relation", rel, meta, CAP_VERIFIED if ok else min(_clamp(it.get("confidence")), CAP_UNVERIFIED), v, reason)
         counts["rejected_relations" if bad else "relations"] = counts.get("rejected_relations" if bad else "relations", 0) + 1
@@ -238,9 +246,11 @@ def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prom
     """index/answers/<unit_id>.json: sorted keys, no timestamps. Replay reads these files."""
     p = answers_dir(out_dir) / f"{unit['unit_id']}.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    body = {"answer": answer, "job_id": job_id, "model": clean(model, 120), "prompt_hash": prompt_hash,
+    known = {k: [{f: x for f, x in it.items() if f in ITEMS[k]["properties"]} for it in items]
+             for k, items in answer.items() if k in ITEMS}
+    body = {"answer": known, "job_id": job_id, "model": clean(model, 120), "prompt_hash": prompt_hash,
             "schema_version": SCHEMA_VERSION, "tables": sorted(unit.get("tables") or []), "unit_id": unit["unit_id"],
-            "verdicts": [{k: x for k, x in sorted(v.items())} for v in verdicts]}
+            "verdicts": [{"kind": v.get("kind"), "index": v.get("index"), **_verdict(v)} for v in verdicts]}
     p.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
     return p
 
@@ -260,7 +270,7 @@ def clear_llm(ctx) -> None:
             continue
         for fld, val in f["fields"].items():
             if cur[fld] == val:
-                ctx.db.execute(f"UPDATE {f['table']} SET {fld}=? WHERE {where}", ["", *f["keys"].values()])
+                ctx.db.execute(f"UPDATE {f['table']} SET {fld}=? WHERE {where}", [f.get("old", {}).get(fld, ""), *f["keys"].values()])
     for t in ("column_semantics", "table_notes", "concepts", "concept_links", "metrics", "performance_notes"):
         ctx.db.execute(f"DELETE FROM {t} WHERE source=?", (LLM,))
     ctx.db.execute("DELETE FROM fact_provenance")
@@ -304,6 +314,15 @@ def _cardinality(g: Graph, table: str, cols: list[str], given: str) -> str:
     return "many-to-one"
 
 
+def _human_rejected(rejects: list[dict], ft: str, fc: list, tt: str, tc: list) -> bool:
+    """True when a person rejected this pair (an override `reject`), in either direction."""
+    for x in rejects:
+        for a, ac, b, bc in ((ft, fc, tt, tc), (tt, tc, ft, fc)):
+            if x["from"] == a and x["from_columns"] == ac and (not x["to"] or (x["to"] == b and (not x["to_columns"] or x["to_columns"] == bc))):
+                return True
+    return False
+
+
 def apply_index_relations(g: Graph, ctx) -> dict:
     """Apply index_relations to the graph (idempotent; call after inference and the context import, before the
     graph is saved). Unverified edges are capped at 0.75 and probe-passed ones sit at 0.9. A rejected candidate stays in
@@ -311,10 +330,11 @@ def apply_index_relations(g: Graph, ctx) -> dict:
     max(confidence, llm confidence)."""
     strip_llm(g)
     rows = ctx.db.execute("SELECT * FROM index_relations ORDER BY rel_id").fetchall()
+    rejects = g.data.get("override_rejects") or []
     existing: dict[frozenset, dict] = {}
     for e in g.data["edges"]:
         existing.setdefault(_pair(e), e)
-    out = {"added": 0, "merged": 0, "unchanged": 0, "rejected": 0, "stale": 0}
+    out = {"added": 0, "merged": 0, "unchanged": 0, "rejected": 0, "stale": 0, "human_rejected": 0}
     for r in rows:
         if r["status"] == "rejected":
             out["rejected"] += 1
@@ -325,6 +345,9 @@ def apply_index_relations(g: Graph, ctx) -> dict:
         if not a or not b or a.get("mirror_of") or b.get("mirror_of") or not fc or len(fc) != len(tc) \
                 or not set(fc) <= names[0] or not set(tc) <= names[1]:
             out["stale"] += 1
+            continue
+        if _human_rejected(rejects, r["from_table"], fc, r["to_table"], tc):
+            out["human_rejected"] += 1
             continue
         conf = _edge_confidence(r)
         ev = [EV + (r["reason"] or "proposed relation")]
@@ -343,7 +366,7 @@ def apply_index_relations(g: Graph, ctx) -> dict:
             out["merged"] += 1
             continue
         new = {"kind": "inferred", "status": "inferred", "from": r["from_table"], "from_columns": fc, "to": r["to_table"],
-               "to_columns": tc, "confidence": conf, "cardinality": _cardinality(g, r["from_table"], fc, r["cardinality"] or ""),
+               "to_columns": tc, "confidence": conf, "cardinality": _cardinality(g, r["from_table"], fc, (r["cardinality"] if "cardinality" in r.keys() else "") or ""),
                "ambiguous": False, "evidence": ev, "source": LLM}
         new["id"] = edge_id(new)
         g.data["edges"].append(new)

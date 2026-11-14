@@ -173,3 +173,36 @@ def test_replay_without_a_base_graph_says_what_to_run(out):
     (out / "index" / "base_graph.json").unlink()
     with pytest.raises(FileNotFoundError, match="index start"):
         RP.replay(out)
+
+
+def test_replay_applies_answers_in_unit_id_order(out):
+    shutil.rmtree(out / "index" / "answers")
+    fill = {"table": "shop.orders", "column": "total", "meaning": "m", "reason": "r", "confidence": 0.5}
+    own = {"table": "shop.carts", "column": "customer_id", "reason": "r", "confidence": 0.5}
+    for uid in ("b1", "a1"):  # written in the opposite order of their ids
+        ST.save_answer(out, {"unit_id": uid, "tables": []}, "job-1", {"columns": [
+            {**fill, "null_meaning": f"from {uid}"}, {**own, "meaning": f"from {uid}"}]}, "m", "h", [])
+    RP.replay(out)
+    with ContextDB(out / "keygraph.db") as ctx:
+        q = lambda sql: ctx.db.execute(sql).fetchone()[0]  # noqa: E731
+        assert q("SELECT null_meaning FROM column_semantics WHERE table_id='shop.orders' AND col='total'") == "from a1"  # first fill wins
+        assert q("SELECT meaning FROM column_semantics WHERE table_id='shop.carts' AND col='customer_id'") == "from b1"  # last llm row wins
+        assert q("SELECT unit_id FROM fact_provenance WHERE kind='column' AND ref='shop.carts.customer_id'") == "b1"
+
+
+def test_replay_does_not_resurrect_a_rejected_edge(tmp_path):
+    from test_index_store import build_with_overrides
+    out = tmp_path / "ov"
+    build_with_overrides(out)
+    RP.snapshot_base(out)
+    ST.save_answer(out, {"unit_id": "aaa", "tables": []}, "job-1", {"relations": [
+        {"from_table": "billing.invoices", "from_columns": ["customer_id"], "to_table": "shop.customers", "to_columns": ["id"],
+         "reason": "r", "confidence": 0.9},
+        {"from_table": "shop.returns", "from_columns": ["order_id"], "to_table": "shop.orders_shadow", "to_columns": ["id"],
+         "reason": "r", "confidence": 0.9}]}, "m", "h", [])
+    res = RP.replay(out)
+    ids = [e["id"] for e in json.loads((out / "graph.json").read_text())["edges"]]
+    assert "billing.invoices(customer_id)->shop.customers(id)" not in ids
+    assert "shop.returns(order_id)->shop.orders_shadow(id)" in ids and res["llm_edges"] == 1
+    _build_again = RP.replay(out)  # and a second replay keeps it out
+    assert _build_again == res
