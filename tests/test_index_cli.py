@@ -203,7 +203,7 @@ def test_refresh_marks_only_changed_units(work, capsys, tmp_path):
 
 def test_refresh_adds_new_units_and_drops_removed_ones(work, capsys, tmp_path):
     run(capsys, work, "index", "start", "--tasks", "relations")
-    gone = [u for u in _units(work) if u != ORDERS_UNIT][0]
+    gone = next(u for u in _units(work) if u != ORDERS_UNIT)
     submit(capsys, work, tmp_path, run(capsys, work, "index", "next")["unit_id"], EMPTY)
     with ContextDB(work / "keygraph.db") as ctx:  # fake a removed table (unit not in the plan) and a table that has no unit yet
         job = jobs.latest_job(ctx)["job_id"]
@@ -268,6 +268,6 @@ def test_start_remembers_names_and_dialect_only(work, capsys, monkeypatch):
     assert r["cmd_env"] == "KG_PROBE_CMD" and r["dialect"] == "mysql" and "SECRET" not in json.dumps(r)
     with ContextDB(work / "keygraph.db") as ctx:
         row = ctx.db.execute("SELECT * FROM index_jobs").fetchone()
-        assert "SECRET" not in json.dumps(list(tuple(row)))
+        assert "SECRET" not in json.dumps(list(row))
     with pytest.raises(SystemExit):  # the two flags exclude each other
         main(["index", "start", "--url-env", "A", "--cmd-env", "B", "--dir", str(work)])

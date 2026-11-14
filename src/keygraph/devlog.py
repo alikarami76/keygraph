@@ -148,7 +148,7 @@ _INDEX_SIZED = {"packet", "answer_schema", "instructions"}
 
 
 def is_index_tool(name: str) -> bool:
-    return isinstance(name, str) and (name.startswith("index ") or name.startswith("index_"))
+    return isinstance(name, str) and (name.startswith(("index ", "index_")))
 
 
 def index_shape(obj, key: str = ""):

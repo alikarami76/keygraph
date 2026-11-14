@@ -645,16 +645,19 @@ def _index_text(cmd: str, r: dict) -> str:
                 f"{r['instructions']}\n\npacket:\n{json.dumps(r['packet'], ensure_ascii=False, indent=1)}\n\nanswer schema:\n"
                 f"{json.dumps(r['answer_schema'], indent=1)}\n\nsubmit with: keygraph index submit {r['unit_id']} FILE|-")
     if cmd == "submit":
-        lines = [f"{r['status']}: {r['accepted']} accepted ({r['verified']} verified, {r['unverified']} unverified, "
-                 f"{r['probe_failed']} failed a probe), {len(r['rejected'])} rejected, {r['attempts_left']} attempts left, "
-                 f"{r['budget_left']} tokens left"]
+        lines = [(f"{r['status']}: {r['accepted']} accepted ({r['verified']} verified, {r['unverified']} unverified, "
+                  f"{r['probe_failed']} failed a probe), {len(r['rejected'])} rejected, {r['attempts_left']} attempts left, "
+                  f"{r['budget_left']} tokens left")]
         lines += [f"  rejected {x['item']}: {x['reason']}" for x in r["rejected"]]
         return "\n".join(lines)
     if cmd == "status":
         u = r["units"]
-        rate = lambda v: "n/a" if v is None else f"{v:.0%}"  # noqa: E731
-        lines = [f"{r['job_id']} ({r['status']}): {u['done']} done, {u['pending']} pending, {u['failed']} failed, {u['skipped']} skipped; "
-                 f"budget {r['used']}/{r['budget']} tokens", f"accept rate {rate(r['accept_rate'])}, verify rate {rate(r['verify_rate'])}"]
+
+        def rate(v):
+            return "n/a" if v is None else f"{v:.0%}"
+
+        lines = [(f"{r['job_id']} ({r['status']}): {u['done']} done, {u['pending']} pending, {u['failed']} failed, {u['skipped']} skipped; "
+                  f"budget {r['used']}/{r['budget']} tokens"), f"accept rate {rate(r['accept_rate'])}, verify rate {rate(r['verify_rate'])}"]
         for f in r["failed_units"]:
             lines.append(f"  failed {f['unit_id']} ({', '.join(f['tables'])}): "
                          + ("; ".join(f"{x['item']}: {x['reason']}" for x in f["reasons"][:3]) or "no reason kept"))

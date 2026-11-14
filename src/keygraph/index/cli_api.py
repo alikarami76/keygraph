@@ -227,8 +227,9 @@ def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: fl
         answer = json.loads(text)
         err = None
     except ValueError as exc:
-        answer, err = None, f"$: the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} " \
-                            f"at line {getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')})"
+        answer = None
+        err = (f"$: the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} "
+               f"at line {getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')})")
     return submit_result(dir, unit_id, answer, model, probe_seconds, _parse_error=err,
                          _answer_tokens=(len(text) + 3) // 4 if err else None)
 
@@ -318,7 +319,7 @@ def status_result(dir) -> dict:
     led = _ledger(out)
     mine = {u["unit_id"]: led.get(u["unit_id"], {}) for u in failed}
     tot = Counter()
-    for k, e in led.items():
+    for e in led.values():
         tot.update({f: e.get(f, 0) for f in ("accepted", "rejected", "verified", "unverified", "probe_failed")})
     judged = tot["accepted"] + tot["rejected"]
     return {"job_id": job["job_id"], "status": job["status"], "units": prog["units"], "total": sum(prog["units"].values()),

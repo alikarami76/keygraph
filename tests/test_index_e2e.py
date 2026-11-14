@@ -97,7 +97,9 @@ def test_fake_agent_indexes_the_shop_end_to_end(built, tmp_path, monkeypatch, ca
     ev = [e for e in graph["edges"] if e["from"] == "billing.payments" and e["from_columns"] == ["order_id"] and e["to"] == "shop.orders"]
     assert ev and any(x.startswith("llm: ") for x in ev[0]["evidence"])
     assert not [e for e in graph["edges"] if e["from"] == "shop.orders" and e["from_columns"] == ["total"]]  # the false one is not in the map
-    declared = lambda g: [e for e in g["edges"] if e["kind"] == "declared"]  # noqa: E731
+    def declared(g):
+        return [e for e in g["edges"] if e["kind"] == "declared"]
+
     assert declared(graph) == declared(base_graph)  # declared foreign keys are untouched
     assert (out / "index" / "answers" / f"{ORDERS_UNIT}.json").exists()
 
