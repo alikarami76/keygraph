@@ -11,6 +11,13 @@ SYSTEM_SCHEMAS = {"information_schema", "mysql", "performance_schema", "sys", "p
 ROW_CAP = 1_000_000  # a SQLite COUNT stops here: bigger tables record rows_estimate=ROW_CAP and rows_at_least=true
 
 
+def _bounded_count(conn, quoted: str, row_cap: int) -> int | None:
+    try:
+        return int(conn.exec_driver_sql(assert_select(f"SELECT COUNT(*) FROM (SELECT 1 FROM {quoted} LIMIT {row_cap + 1})")).scalar())
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _sqlite_rows(url: str, sch: Schema, row_cap: int) -> None:
     """rows_estimate for every SQLite table: sqlite_stat1 when it has the table, else a bounded exact count
     (SELECT COUNT(*) FROM (SELECT 1 FROM t LIMIT cap+1)); a table above the cap gets rows_estimate=cap and rows_at_least=true.
@@ -40,9 +47,8 @@ def _sqlite_rows(url: str, sch: Schema, row_cap: int) -> None:
                     method["sqlite_stat1"] += 1
                     continue
                 quoted = '"' + t.name.replace('"', '""') + '"'
-                try:
-                    n = int(conn.exec_driver_sql(assert_select(f"SELECT COUNT(*) FROM (SELECT 1 FROM {quoted} LIMIT {row_cap + 1})")).scalar())
-                except Exception:  # noqa: BLE001  (unreadable table: no estimate)
+                n = _bounded_count(conn, quoted, row_cap)
+                if n is None:  # unreadable table: no estimate
                     continue
                 if n > row_cap:
                     t.info["rows_estimate"], t.info["rows_at_least"] = row_cap, True
