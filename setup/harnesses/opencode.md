@@ -1,6 +1,6 @@
 # OpenCode
 
-`COMMAND` and `ARGS` below are `mcp_launch.command` and `mcp_launch.args` from `keygraph doctor --dir "$OUT" --json`.
+In the `command` array below, put `mcp_launch.command` first, then every item of `mcp_launch.args`, from `keygraph doctor --dir "$OUT" --json`.
 
 ## 1. Register the MCP server
 
@@ -26,9 +26,9 @@ Optional, dev mode (SETUP.md step 9): pass `KEYGRAPH_DEV=1` in the server's envi
 
 - Instructions: add the block from `setup/templates/agent-instructions.md` to `AGENTS.md` at the project root. OpenCode reads it.
 - Skill: if your OpenCode version loads skills (check OpenCode's documentation for the skills folder; if you are unsure, skip this, the AGENTS.md block is enough), copy `skills/keygraph/SKILL.md` there. The AGENTS.md block is enough without it.
-- Local models through OpenCode (Ollama, llama.cpp, LM Studio, Unsloth GGUF builds): pick a model that is good at tool calling. If OpenCode lets you limit the tools per agent, keep (OpenCode may prefix tool names with the server name; the server's own names are `search`, `describe`, `path`, `keys`, `explain`) `keygraph_search`, `keygraph_describe`, `keygraph_path`, `keygraph_keys` and `keygraph_explain` on at least.
+- Local models through OpenCode (Ollama, llama.cpp, LM Studio, Unsloth GGUF builds): pick a model that is good at tool calling. If OpenCode lets you allow only some tools per agent, allow at least `keygraph_search`, `keygraph_describe`, `keygraph_path`, `keygraph_keys` and `keygraph_explain`. OpenCode adds the server name in front of the server's own tool names (`search`, `describe`, `path`, `keys`, `explain`).
 
 ## 3. Verify
 
-- `opencode mcp list` (if your version has it), or start OpenCode and check that the keygraph tools are listed.
+- `opencode mcp list` (if your version has it), or start OpenCode and check that the keygraph tools are listed. If the `opencode` binary is not installed here, skip this check, use the in-process stand-in in SETUP.md step 7.3, and tell the user to paste the check from step 7.2 into a new OpenCode session.
 - Do step 7.3 of SETUP.md in a new session.
