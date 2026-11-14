@@ -299,7 +299,10 @@ def test_row_dict_keeps_duplicate_labels():
 
 def test_runner_keeps_duplicate_labels_from_real_sqlalchemy(tmp_path):
     pytest.importorskip("sqlalchemy")
+    import sqlite3
+
     from keygraph.probe import SelectOnlyRunner
+    sqlite3.connect(tmp_path / "x.db").close()  # sqlite URLs open read-only now, so the file must exist
     r = SelectOnlyRunner.from_url(f"sqlite:///{tmp_path / 'x.db'}", as_dicts=True)
     assert list(r.run("SELECT 1 AS relname, 2 AS relname")[0].values()) == [1, 2]
 
