@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _pyproject_version() -> str:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    return re.search(r'^version = "([^"]+)"', text, re.M).group(1)
+    return re.search(r'^version = "([^"]+)"', text, re.MULTILINE).group(1)
 
 
 def test_server_json_versions_match_the_package():

@@ -36,6 +36,8 @@ uvx keygraph path customers order_items --dir keygraph-demo    # the join, with 
 uvx keygraph describe orders --dir keygraph-demo               # grain, pitfalls, status codes (9 is undocumented)
 ```
 
+`keygraph demo` (keygraph 0.4.0 or newer) takes `--dir DIR`, `--no-open` and `--json` (which also gives `database`, the path of the packaged read-only SQLite sample), needs only the core install, refuses a folder that is not empty and not an earlier demo, and a rerun gives byte-identical files.
+
 To give the demo map to Claude Code (other clients are in [MCP](#mcp)), run this from the same folder:
 
 ```bash
