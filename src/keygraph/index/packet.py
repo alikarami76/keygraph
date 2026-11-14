@@ -11,6 +11,7 @@ import sqlite3
 
 from keygraph.code.refs import mask_secrets
 from keygraph.graph import Graph
+from keygraph.index import plan as PL
 from keygraph.index.pii import looks_pii, mask_keywords, scrub
 from keygraph.index.schema import canonical
 from keygraph.profile import is_pii_name
@@ -20,11 +21,12 @@ DEFAULT_CAP = 6000
 SLACK = 40  # tokens kept free for the `trimmed` note added while trimming
 # Sections are trimmed in this order (first to last) until the estimate fits; then indexes, then trailing columns.
 # Context holds the most trustworthy facts (human notes, earlier answers), so it goes last.
-TRIM_ORDER = ("queries", "code_refs", "profiles", "neighbours", "column_details", "candidate_relations", "context")
+TRIM_ORDER = ("queries", "code_refs", "profiles", "neighbours", "column_details", "candidate_relations", "copies", "family_undecided", "context")
 PII_PROFILE_KEYS = ("sample_size", "null_rate", "distinct_in_sample", "distinct_ratio", "pattern", "length")
 PLAIN_PROFILE_KEYS = (*PII_PROFILE_KEYS, "numeric", "dates", "values_complete")
 MIN_CONFIDENCE = 0.6
 MAX_ENUM_DISTINCT, MAX_ENUM_LEN = 20, 30
+MAX_COPIES = 10
 MAX_CODE_REFS, MAX_QUERIES, MAX_NEIGHBOURS, MAX_EVIDENCE, MAX_TOP_VALUES = 5, 3, 8, 3, 8
 
 
@@ -175,6 +177,28 @@ def _context(ctx, units: list[str]) -> list[dict]:
     return out
 
 
+def _copies(fams: dict, units: list[str]) -> list[dict]:
+    """Family copies of the unit's tables: near-duplicates (same columns, same data) that get no unit of their own."""
+    out = []
+    for t in units:
+        if t in fams:
+            out.append({"table": t, "copies": fams[t][:MAX_COPIES], **({"more": len(fams[t]) - MAX_COPIES} if len(fams[t]) > MAX_COPIES else {}),
+                        "note": "these tables have the same columns and overlapping data as this one; they are not indexed separately"})
+    return out
+
+
+def _undecided(undecided: dict, units: list[str]) -> list[dict]:
+    """Unit tables that belong to a family nothing could split: the members are listed so the agent can say which is canonical."""
+    out = []
+    for rep, rest in undecided.items():
+        members = [rep, *rest]
+        mine = [t for t in members if t in units]
+        out.extend({"table": t, "family": [m for m in members if m != t][:MAX_COPIES],
+                    "note": "same columns as these tables and nothing tells them apart (rows, usage, relations); do not assume which is canonical"}
+                   for t in mine)
+    return sorted(out, key=lambda x: x["table"])
+
+
 def _note(p: dict, what: str) -> None:
     if what not in p["trimmed"]:
         p["trimmed"].append(what)
@@ -244,14 +268,14 @@ def _fit(p: dict, limit: int) -> None:
             if _drop_details(p):
                 _note(p, sec)
             continue
-        while estimate(p) > limit and p[sec]:
+        while estimate(p) > limit and p.get(sec):
             _pop_one(p, sec)
             _note(p, sec)
     _drop_indexes(p, limit)
     _drop_columns(p, limit)
 
 
-def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> dict:
+def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP, report: tuple | None = None) -> dict:
     """The packet for a unit: tables (columns, keys, indexes), candidate relations with evidence, neighbours, masked
     profiles, top code refs, masked logged queries and context snippets. Trimmed in TRIM_ORDER, then indexes, then
     trailing columns, until estimate() <= cap. `trimmed` lists what lost content. When even the required tables
@@ -261,6 +285,13 @@ def build_packet(g: Graph, ctx, tables: list[str], cap: int = DEFAULT_CAP) -> di
                "candidate_relations": _relations(g, set(units)), "neighbours": _neighbours(g, set(units)),
                "profiles": _profiles(g, ctx, units), "code_refs": _code_refs(ctx, units), "queries": _queries(ctx, units),
                "context": _context(ctx, units), "trimmed": [], "cap": int(cap)}
+    fams, basis = report if report is not None else PL.family_report(g, ctx)  # the job stores it once (index/families.json)
+    copies = _copies({r: c for r, c in fams.items() if basis.get(r) != "name"}, units)
+    if copies:
+        p["copies"] = copies
+    undecided = _undecided({r: c for r, c in fams.items() if basis.get(r) == "name"}, units)
+    if undecided:
+        p["family_undecided"] = undecided
     _fit(p, cap - SLACK)
     if estimate(p) > cap:  # the notes added while trimming may have used the slack
         _fit(p, cap)

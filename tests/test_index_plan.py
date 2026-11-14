@@ -34,7 +34,7 @@ def test_rank_orders_by_score_then_table_id(shop):
     r = P.rank_tables(g, ctx)
     assert [(-x["score"], x["table"]) for x in r] == sorted((-x["score"], x["table"]) for x in r)
     assert r[0]["score"] > r[-1]["score"]
-    assert set(r[0]["parts"]) == {"hub", "queries", "code", "context", "area"}
+    assert set(r[0]["parts"]) == {"hub", "queries", "code", "context", "area", "rows", "degree", "presence", "family_undecided"}
 
 
 def test_rank_counts_code_and_query_hits(shop):
@@ -131,6 +131,9 @@ def test_hub_signal_comes_from_incoming_edges(tmp_path):
     assert by["app.a"] == 0.333333 and by["app.lonely"] == 0.0 and by["app.c"] == 0.0
 
 
+STRONG = ("hub", "queries", "code", "context", "area")
+
+
 def test_each_signal_reads_its_own_source(tmp_path):
     g = _schema({"t1": [], "t2": [], "t3": [], "t4": [], "t5": []})
     ctx = _ctx(tmp_path, g)
@@ -143,9 +146,9 @@ def test_each_signal_reads_its_own_source(tmp_path):
     db.execute("INSERT INTO table_notes(table_id, source, verified) VALUES('app.t4','llm',0)")
     ctx.db.commit()
     r = {x["table"]: x["parts"] for x in P.rank_tables(g, ctx)}
-    assert r["app.t1"] == {"hub": 0.0, "queries": 1.0, "code": 0.0, "context": 0.0, "area": 0.0}
-    assert r["app.t2"] == {"hub": 0.0, "queries": 0.0, "code": 1.0, "context": 0.0, "area": 0.0}
-    assert r["app.t3"] == {"hub": 0.0, "queries": 0.0, "code": 0.0, "context": 1.0, "area": 0.0}
+    assert {k: v for k, v in r["app.t1"].items() if k in STRONG} == {"hub": 0.0, "queries": 1.0, "code": 0.0, "context": 0.0, "area": 0.0}
+    assert {k: v for k, v in r["app.t2"].items() if k in STRONG} == {"hub": 0.0, "queries": 0.0, "code": 1.0, "context": 0.0, "area": 0.0}
+    assert {k: v for k, v in r["app.t3"].items() if k in STRONG} == {"hub": 0.0, "queries": 0.0, "code": 0.0, "context": 1.0, "area": 0.0}
     assert r["app.t4"]["context"] == 0.0 and r["app.t5"]["context"] == 0.0  # an llm-source note is not a mention
 
 
@@ -191,3 +194,196 @@ def test_component_larger_than_five_splits_into_units_of_five_or_less(tmp_path):
     assert all(1 <= len(u["tables"]) <= 5 for u in units) and len(units) >= 2
     assert sorted(t for u in units for t in u["tables"]) == sorted(g.nodes)
     assert max(len(u["tables"]) for u in units) == 5
+
+
+# --- families and data presence (ENG-106) -----------------------------------------------------------------------
+
+def _shape(name: str, rows=None, extra=(), cols=("id", "customer_ref", "total", "placed_at")):
+    from keygraph.model import Column, Index, Table
+    c = [Column(n, "int" if n in ("id", "total") else "varchar(20)") for n in (*cols, *extra)]
+    return Table("dw", name, c, [Index("PRIMARY", ["id"], True, True)], [], {"rows_estimate": rows} if rows is not None else {})
+
+
+def _warehouse(*tables):
+    from keygraph.graph import build_graph
+    from keygraph.model import Schema
+    s = Schema()
+    for t in tables:
+        s.add(t)
+    return build_graph(s)
+
+
+def _profile(ctx, table, col, **p):
+    import json
+    ctx.db.execute("INSERT OR REPLACE INTO column_profile VALUES(?,?,?,?,?,?)",
+                   (table, col, json.dumps({"sample_size": 5, **p}), "", 5, "limit"))
+
+
+def _shared(ctx, *tables):
+    """Profiles whose key ranges overlap: the data evidence a family needs."""
+    for t in tables:
+        _profile(ctx, t, "id", numeric={"min": 1, "max": 100})
+
+
+def test_same_shape_tables_form_a_family_with_one_representative(tmp_path):
+    g = _warehouse(_shape("t_orders", 5000), _shape("t_orders_bak", 4000), _shape("x_orders_2", 3000),
+                   _shape("customers", 40, cols=("id", "full_name", "tier")))
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.t_orders", "dw.t_orders_bak", "dw.x_orders_2")
+    fam = P.families(g, ctx)
+    assert fam == {"dw.t_orders": ["dw.t_orders_bak", "dw.x_orders_2"]}  # most rows
+    ranked = [r["table"] for r in P.rank_tables(g, ctx)]
+    assert "dw.t_orders" in ranked and "dw.t_orders_bak" not in ranked and "dw.x_orders_2" not in ranked
+    assert "dw.customers" in ranked
+    assert P.families(g, ctx) == fam
+    units = P.make_units(g, P.rank_tables(g, ctx))
+    assert sorted(t for u in units for t in u["tables"]) == ["dw.customers", "dw.t_orders"]
+
+
+def test_family_signature_ignores_column_order_but_not_names_or_types(tmp_path):
+    a = _shape("a_t", 100)
+    b = _shape("b_t", 80, cols=("total", "id", "placed_at", "customer_ref"))
+    c = _shape("c_t", 10, cols=("id", "customer_ref", "total", "placed_on"))
+    g = _warehouse(a, b, c)
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.a_t", "dw.b_t", "dw.c_t")
+    assert P.families(g, ctx) == {"dw.a_t": ["dw.b_t"]}
+
+
+def test_two_column_shapes_are_too_generic_for_a_family(tmp_path):
+    g = _warehouse(_shape("x", 5, cols=("id", "name")), _shape("y", 5, cols=("id", "name")))
+    assert P.families(g, _ctx(tmp_path, g)) == {}
+
+
+def test_family_representative_falls_back_to_relations_then_name(tmp_path):
+    from keygraph.graph import build_graph
+    from keygraph.model import Column, ForeignKey, Index, Schema, Table
+    s = Schema()
+    for n in ("p", "q"):
+        s.add(Table("dw", n, [Column("id", "int"), Column("a", "int"), Column("b", "int")], [Index("PRIMARY", ["id"], True, True)]))
+    s.add(Table("dw", "kid", [Column("id", "int"), Column("q_id", "int")], [Index("PRIMARY", ["id"], True, True)],
+                [ForeignKey("fk", ["q_id"], "dw", "q", ["id"])]))
+    g = build_graph(s)
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.p", "dw.q")
+    assert P.families(g, ctx) == {"dw.q": ["dw.p"]}  # no row counts: q has a relation, p has none
+
+
+def test_profiled_key_ranges_that_do_not_overlap_split_a_family(tmp_path):
+    g = _warehouse(_shape("o1", 100), _shape("o2", 90), _shape("o3", 80))
+    ctx = _ctx(tmp_path, g)
+    _profile(ctx, "dw.o1", "id", numeric={"min": 1, "max": 100})
+    _profile(ctx, "dw.o2", "id", numeric={"min": 50, "max": 150})  # overlaps o1
+    _profile(ctx, "dw.o3", "id", numeric={"min": 9000, "max": 9999})  # a different data set with the same shape
+    assert P.families(g, ctx) == {"dw.o1": ["dw.o2"]}
+    ranked = {r["table"] for r in P.rank_tables(g, ctx)}
+    assert ranked == {"dw.o1", "dw.o3"}
+
+
+def test_shared_top_values_count_as_overlap(tmp_path):
+    g = _warehouse(_shape("o1", 100), _shape("o2", 90))
+    ctx = _ctx(tmp_path, g)
+    _profile(ctx, "dw.o1", "customer_ref", top_values=[["a", 3], ["b", 2]], values_complete=True)
+    _profile(ctx, "dw.o2", "customer_ref", top_values=[["b", 3], ["c", 2]], values_complete=True)
+    assert P.families(g, ctx) == {"dw.o1": ["dw.o2"]}
+    _profile(ctx, "dw.o2", "customer_ref", top_values=[["x", 3], ["y", 2]], values_complete=True)
+    assert P.families(g, ctx) == {}
+
+
+def test_empty_and_tiny_tables_rank_lower_and_row_count_breaks_ties(tmp_path):
+    g = _warehouse(_shape("big", 1_000_000, cols=("id", "a", "b")), _shape("mid", 5_000, cols=("id", "c", "d")),
+                   _shape("tiny", 4, cols=("id", "e", "f")), _shape("empty", 0, cols=("id", "g", "h")),
+                   _shape("unknown", None, cols=("id", "i", "j")))
+    ranked = P.rank_tables(g, _ctx(tmp_path, g))
+    r = {x["table"]: x for x in ranked}
+    order = [x["table"] for x in ranked]
+    assert order[:2] == ["dw.big", "dw.mid"] and order[-1] == "dw.empty"
+    assert order.index("dw.tiny") > order.index("dw.unknown") > order.index("dw.mid")
+    assert r["dw.big"]["parts"]["rows"] == 1.0 and 0 < r["dw.mid"]["parts"]["rows"] < 1.0
+    assert r["dw.empty"]["parts"]["presence"] < r["dw.tiny"]["parts"]["presence"] < 0 == r["dw.unknown"]["parts"]["presence"]
+
+
+def test_relation_degree_counts_both_directions(tmp_path):
+    g = _schema({"core": [], "a": ["core"], "b": ["core", "a"], "c": ["a"], "lonely": []})
+    r = {x["table"]: x["parts"]["degree"] for x in P.rank_tables(g, _ctx(tmp_path, g))}
+    assert r["app.a"] == 1.0 and r["app.lonely"] == 0.0 and 0 < r["app.c"] < 1.0
+
+
+def test_query_log_and_code_signals_still_dominate_data_presence(tmp_path):
+    g = _warehouse(_shape("huge", 10_000_000, cols=("id", "a", "b")), _shape("asked", 0, cols=("id", "c", "d")))
+    ctx = _ctx(tmp_path, g)
+    ctx.db.execute("CREATE TABLE IF NOT EXISTS query_refs(fp TEXT, table_id TEXT, column_name TEXT, role TEXT)")
+    ctx.db.execute("INSERT INTO query_refs VALUES('f1','dw.asked','id','x')")
+    assert next(x["table"] for x in P.rank_tables(g, ctx)) == "dw.asked"
+
+
+def test_plan_is_the_same_for_the_same_map(tmp_path):
+    tables = [_shape(n, r) for n, r in (("a1", 50), ("a2", 50), ("a3", 70))] + [_shape("z", 3, cols=("id", "x", "y"))]
+    g1, g2 = _warehouse(*tables), _warehouse(*reversed(tables))
+    c1, c2 = _ctx(tmp_path, g1), ContextDB(tmp_path / "k2.db", g2)
+    c2.index_graph(g2)
+    for c in (c1, c2):
+        _shared(c, "dw.a1", "dw.a2", "dw.a3")
+    assert P.rank_tables(g1, c1) == P.rank_tables(g2, c2) and P.families(g1, c1) == P.families(g2, c2)
+    assert P.make_units(g1, P.rank_tables(g1, c1)) == P.make_units(g2, P.rank_tables(g2, c2))
+
+
+def _used(ctx, table):
+    ctx.db.execute("CREATE TABLE IF NOT EXISTS query_refs(fp TEXT, table_id TEXT, column_name TEXT, role TEXT)")
+    ctx.db.execute("INSERT INTO query_refs VALUES('f1',?,'id','x')", (table,))
+
+
+def test_family_representative_is_the_one_with_clearly_more_rows_then_usage(tmp_path):
+    g = _warehouse(_shape("old_copy", 9000), _shape("live", 100))
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.old_copy", "dw.live")
+    _used(ctx, "dw.live")
+    assert P.families(g, ctx) == {"dw.old_copy": ["dw.live"]}  # a clear row margin comes first
+    for i, (a_rows, b_rows) in enumerate(((100, 100), (100, 105), (None, None))):  # tied, within 10 percent, unknown
+        g = _warehouse(_shape("old_copy", a_rows), _shape("live", b_rows))
+        ctx = ContextDB(tmp_path / f"k{i}.db", g)
+        ctx.index_graph(g)
+        _shared(ctx, "dw.old_copy", "dw.live")
+        _used(ctx, "dw.live")
+        assert P.families(g, ctx) == {"dw.live": ["dw.old_copy"]}, (a_rows, b_rows)  # usage decides
+
+
+def test_family_report_says_what_chose_the_representative(tmp_path):
+    g = _warehouse(_shape("a", 10), _shape("b", 20))
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.a", "dw.b")
+    assert P.family_report(g, ctx)[1] == {"dw.b": "rows"}
+
+
+def test_undecided_families_drop_nothing_and_rank_the_others_last(tmp_path):
+    g = _warehouse(_shape("a", 10), _shape("b", 10), _shape("c", 10), _shape("solo", 3, cols=("id", "x", "y")))
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.a", "dw.b", "dw.c")
+    assert P.family_report(g, ctx) == ({"dw.a": ["dw.b", "dw.c"]}, {"dw.a": "name"})
+    assert P.families(g, ctx) == {} and P.undecided_families(g, ctx) == {"dw.a": ["dw.b", "dw.c"]}
+    ranked = P.rank_tables(g, ctx)
+    assert sorted(r["table"] for r in ranked) == ["dw.a", "dw.b", "dw.c", "dw.solo"]  # every member keeps a unit
+    assert [r["table"] for r in ranked][-2:] == ["dw.b", "dw.c"] and ranked[0]["table"] in ("dw.a", "dw.solo")
+    by = {r["table"]: r["parts"]["family_undecided"] for r in ranked}
+    assert by == {"dw.a": 0.0, "dw.b": 1.0, "dw.c": 1.0, "dw.solo": 0.0}
+    assert sorted(t for u in P.make_units(g, ranked) for t in u["tables"]) == ["dw.a", "dw.b", "dw.c", "dw.solo"]
+
+
+def test_unknown_rows_and_no_usage_is_undecided(tmp_path):
+    g = _warehouse(_shape("a"), _shape("b"))
+    ctx = _ctx(tmp_path, g)
+    _shared(ctx, "dw.a", "dw.b")
+    assert P.family_report(g, ctx)[1] == {"dw.a": "name"}
+
+
+def test_shape_alone_never_forms_a_family(tmp_path):
+    """Lookup tables share a generic shape (id, name, slug); with no profile evidence all three keep their unit."""
+    g = _warehouse(_shape("brand", 50, cols=("id", "name", "slug")), _shape("category", 80, cols=("id", "name", "slug")),
+                   _shape("color", 20, cols=("id", "name", "slug")))
+    ctx = _ctx(tmp_path, g)
+    assert P.family_report(g, ctx) == ({}, {})
+    assert sorted(r["table"] for r in P.rank_tables(g, ctx)) == ["dw.brand", "dw.category", "dw.color"]
+    assert sorted(t for u in P.make_units(g, P.rank_tables(g, ctx)) for t in u["tables"]) == ["dw.brand", "dw.category", "dw.color"]
+    _profile(ctx, "dw.brand", "name", values_complete=True)  # a profile with nothing comparable
+    _profile(ctx, "dw.color", "name", values_complete=True)
+    assert P.family_report(g, ctx) == ({}, {})

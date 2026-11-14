@@ -28,6 +28,7 @@ from . import packet as PK
 from . import plan as PL
 from . import probe as PR
 from . import replay as RP
+from . import reply as RY
 from . import schema as SC
 from . import store as ST
 from . import validate as VL
@@ -40,6 +41,7 @@ FINISH = "index_finish (CLI: keygraph index finish)"
 FREE_PARSE_ERRORS = 3
 DIALECTS = ("mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite")
 LEDGER = "ledger.json"
+FAMILIES = "families.json"
 REASONS_KEPT = 20
 
 
@@ -87,8 +89,18 @@ def _pre_llm(ctx):
     return mem
 
 
-def _packet(g, ctx, unit: dict) -> tuple[dict, int, str]:
-    pk = PK.build_packet(g, _pre_llm(ctx), unit["tables"])
+def _stored_families(out: Path, g, ctx) -> tuple[dict, dict]:
+    """The job's families as `index start` or `refresh` stored them; computed (once) only when the file is missing."""
+    try:
+        d = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
+        return d["families"], d["chosen_by"]
+    except (OSError, ValueError, KeyError):
+        return PL.family_report(g, ctx)
+
+
+def _packet(g, ctx, unit: dict, out: Path | None = None) -> tuple[dict, int, str]:
+    pre = _pre_llm(ctx)
+    pk = PK.build_packet(g, pre, unit["tables"], report=_stored_families(out, g, pre) if out else None)
     return pk, PK.estimate(pk), hashlib.sha256(SC.canonical(pk).encode("utf-8")).hexdigest()
 
 
@@ -104,6 +116,29 @@ def _save_ledger(out: Path, d: dict) -> None:
     p = out / "index" / LEDGER
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+
+
+def _save_families(out: Path, g, ctx) -> None:
+    """index/families.json: {"families": {representative: [members]}, "chosen_by": {representative: rows|usage|relations|name}}.
+    For decided families the members get no unit and this file is their "copy of" note. `name` means nothing but the table id
+    told the members apart: those families keep a unit for every member (`family_undecided`, ranked low)."""
+    fams, basis = PL.family_report(g, ctx)
+    p = out / "index" / FAMILIES
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"families": fams, "chosen_by": basis}, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+
+
+def _families_view(out: Path) -> dict:
+    """Counts for the start reply. families_undecided counts families where no row count, usage or relation told the members apart:
+    they keep every member as a unit."""
+    try:
+        d = json.loads((out / "index" / FAMILIES).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    fams, by = d.get("families", {}), d.get("chosen_by", {})
+    decided = {r: v for r, v in fams.items() if by.get(r) != "name"}
+    return {"families": len(decided), "copies_without_unit": sum(len(v) for v in decided.values()),
+            "families_undecided": len(fams) - len(decided)}
 
 
 def _entry(led: dict, uid: str) -> dict:
@@ -153,6 +188,7 @@ def _job_view(ctx, job: dict, resumed: bool) -> dict:
 
 # --- start -----------------------------------------------------------------------------------------------------
 
+@RY.capped
 def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "", cmd_env: str = "", dialect: str = "",
                  max_units: int = 0, restart: bool = False) -> dict:
     """Plan the units and create the job, or resume the open one. Needs a built map in `dir`.
@@ -179,7 +215,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
                 ignored = ["tasks"] if tasks and want != job["tasks"] else []
                 job = jobs.update_job(ctx, job["job_id"], budget=max(budget, job["budget"]),
                                       url_env=url_env or None, cmd_env=cmd_env or None, dialect=dialect or None)
-                res = _job_view(ctx, job, True)
+                res = {**_job_view(ctx, job, True), **_families_view(out)}
                 if ignored:
                     res["ignored"] = ignored
                 devlog.decide("index_start", job_id=job["job_id"], resumed=True, units=res["units"], budget=res["budget"],
@@ -191,11 +227,13 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
             jobs.close_job(ctx, job["job_id"], "aborted")
         RP.snapshot_base(out)
         g = _base(out)
-        units = PL.make_units(g, PL.rank_tables(g, _pre_llm(ctx)))
+        pre = _pre_llm(ctx)
+        units = PL.make_units(g, PL.rank_tables(g, pre))
+        _save_families(out, g, pre)
         job_id = jobs.create_job(ctx, units, budget=budget, tasks=want, url_env=url_env or "", cmd_env=cmd_env or "",
                                  dialect=dialect, skip_after=max_units if max_units > 0 else None)
         _save_ledger(out, {})
-        res = _job_view(ctx, jobs.get_job(ctx, job_id), False)
+        res = {**_job_view(ctx, jobs.get_job(ctx, job_id), False), **_families_view(out)}
     devlog.decide("index_start", job_id=job_id, resumed=False, units=res["units"], budget=res["budget"], skipped=res["skipped"],
                   tasks=len(want), probe=("url_env" if url_env else "cmd_env" if cmd_env else "none"))
     return res
@@ -203,6 +241,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
 
 # --- next ------------------------------------------------------------------------------------------------------
 
+@RY.capped
 def next_result(dir) -> dict:
     """The best pending unit with its packet, or budget_exhausted, or done. The same unit comes back until it is submitted
     (or fails after three rejections)."""
@@ -218,7 +257,7 @@ def next_result(dir) -> dict:
         if unit is None:
             devlog.decide("index_next", status="done")
             return {"status": "done", "finish": FINISH}
-        pk, est, h = _packet(g, ctx, unit)
+        pk, est, h = _packet(g, ctx, unit, out)
         jobs.update_unit(ctx, job["job_id"], unit["unit_id"], tokens_est=est, packet_hash=h)
         left = jobs.budget_left(ctx, job["job_id"])
         if not jobs.has_budget(ctx, job["job_id"], est):
@@ -251,6 +290,7 @@ def _source(job: dict, g) -> tuple[PR.Source | None, str]:
     return src, "url" if job["url_env"] else "cmd"
 
 
+@RY.capped
 def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET) -> dict:
     """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt, for the first
     three times per unit; after that each one is a rejection like any other."""
@@ -267,6 +307,7 @@ def _resubmit(unit_id: str) -> str:
     return f"index_submit unit_id={unit_id} (CLI: keygraph index submit {unit_id} FILE|-)"
 
 
+@RY.capped
 def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *,
                   _parse_error: str | None = None, _answer_tokens: int | None = None) -> dict:
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
@@ -298,7 +339,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
                              + ("failed units and units with changed tables back" if unit["status"] == "failed"
                                 else "it back only when its tables changed"))
         tasks = unit["tasks"]
-        pk, est, ph = _packet(g, ctx, unit)
+        pk, est, ph = _packet(g, ctx, unit, out)
         prompt = SC.prompt_hash(SC.instructions(tasks), SC.answer_schema(tasks), pk)
         if not model and isinstance(answer, dict) and isinstance(answer.get("model"), str):
             model = answer["model"]
@@ -395,6 +436,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
 
 # --- status, finish, replay, refresh ---------------------------------------------------------------------------
 
+@RY.capped
 def status_result(dir) -> dict:
     """Progress, budget, accept and verify rates (null before any submission) and the failed units with their reasons."""
     out = Path(dir)
@@ -422,6 +464,7 @@ def status_result(dir) -> dict:
             "next": NEXT if prog["units"]["pending"] else FINISH}
 
 
+@RY.capped
 def finish_result(dir) -> dict:
     """Replay the saved answers onto the base graph, write index/summary.json and close the job when nothing is pending.
     Returns the summary (counts only), the same dict `replay` returns."""
@@ -444,6 +487,7 @@ def finish_result(dir) -> dict:
     return res
 
 
+@RY.capped
 def replay_result(dir) -> dict:
     """Rebuild the meaning layer from index/answers/ alone: no model, no environment variable, no source database."""
     out = Path(dir)
@@ -453,6 +497,7 @@ def replay_result(dir) -> dict:
     return res
 
 
+@RY.capped
 def refresh_result(dir) -> dict:
     """Re-plan on the current map. Failed units, and done units whose packet hash changed, go back to pending (retried and changed), tables
     that no unit covers get new pending units, and units that are no longer planned are dropped with their saved answers.
@@ -474,6 +519,8 @@ def refresh_result(dir) -> dict:
         job_id = job["job_id"]
         pre = _pre_llm(ctx)
         new = PL.make_units(g, PL.rank_tables(g, pre))
+        _save_families(out, g, pre)
+        rep = _stored_families(out, g, pre)
         old = {u["unit_id"]: u for u in jobs.list_units(ctx, job_id)}
         for u in new:
             o = old.get(u["unit_id"])
@@ -481,7 +528,7 @@ def refresh_result(dir) -> dict:
                 added.append(u)
                 continue
             if o["status"] in ("done", "failed"):
-                h = hashlib.sha256(SC.canonical(PK.build_packet(g, pre, u["tables"])).encode("utf-8")).hexdigest()
+                h = hashlib.sha256(SC.canonical(PK.build_packet(g, pre, u["tables"], report=rep)).encode("utf-8")).hexdigest()
                 if h != o["packet_hash"] or o["status"] == "failed":  # a failed unit gets another go even when nothing changed
                     jobs.reset_unit(ctx, job_id, u["unit_id"], u["rank"])
                     (changed if h != o["packet_hash"] else retried).append(u["unit_id"])

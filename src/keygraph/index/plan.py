@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import sqlite3
 
 from keygraph.graph import Graph
 
-WEIGHTS = {"hub": 3.0, "queries": 2.0, "code": 1.5, "context": 1.0, "area": 1.0}
+# The first five are the strong signals (declared and inferred relations, the query log, code references, documented
+# context, area centrality). `rows`, `degree` and `presence` are weak generic warehouse signals: how much data a table
+# holds (log-scaled), how many relations touch it, and a penalty for tables known to be empty or tiny. They never
+# outweigh a table that people query or code uses.
+WEIGHTS = {"hub": 3.0, "queries": 2.0, "code": 1.5, "context": 1.0, "area": 1.0, "rows": 0.6, "degree": 0.4, "presence": 1.0,
+           "family_undecided": -10.0}
 MAX_TABLES = 5
+TINY_ROWS = 10  # fewer rows than this (but known) ranks lower; zero rows ranks lowest
+PRESENCE = {"empty": -1.0, "tiny": -0.5}
+MIN_FAMILY_COLUMNS = 3  # a 2-column shape (id, name) is too generic to call two tables copies of each other
+ROW_MARGIN = 1.1  # a row count decides only when it is at least 10 percent above the next member
 
 
 def _counts(ctx, sql: str) -> dict[str, int]:
@@ -35,14 +46,8 @@ def _real_edges(g: Graph) -> list[dict]:
             and not e.get("rejected")]
 
 
-def rank_tables(g: Graph, ctx) -> list[dict]:
-    """Rank every table except mirror and copy-schema ones: hub score (incoming relations), query-log hits, code refs, context mentions, area centrality.
-    Returns [{"table", "score", "parts"}] best first; ties broken by table id. Same inputs give the same list."""
-    skip = skipped_tables(g)
-    ids = sorted(t for t in g.nodes if t not in skip)
-    incoming: dict[str, int] = {}
-    for e in _real_edges(g):
-        incoming[e["to"]] = incoming.get(e["to"], 0) + 1
+def _evidence(ctx) -> tuple[dict[str, int], dict[str, int], dict[str, int]]:
+    """(query-log hits, code references, context mentions) per table."""
     qhits = _counts(ctx, "SELECT table_id, COUNT(DISTINCT fp) FROM query_refs GROUP BY table_id")
     code = _counts(ctx, "SELECT table_id, COUNT(*) FROM code_refs GROUP BY table_id")
     mentions: dict[str, int] = {}
@@ -51,6 +56,165 @@ def rank_tables(g: Graph, ctx) -> list[dict]:
                 "SELECT table_id, COUNT(*) FROM column_semantics WHERE COALESCE(source,'')!='llm' GROUP BY table_id"):
         for t, n in _counts(ctx, sql).items():
             mentions[t] = mentions.get(t, 0) + n
+    return qhits, code, mentions
+
+
+def _degree(g: Graph) -> dict[str, int]:
+    """table_id -> number of distinct related tables (edges in either direction)."""
+    nbrs: dict[str, set[str]] = {}
+    for e in _real_edges(g):
+        nbrs.setdefault(e["from"], set()).add(e["to"])
+        nbrs.setdefault(e["to"], set()).add(e["from"])
+    return {t: len(n) for t, n in nbrs.items()}
+
+
+def _rows(g: Graph, ctx) -> dict[str, int]:
+    """table_id -> known row count: the adapter's estimate, or the largest profile sample (a lower bound). Unknown tables are absent."""
+    out: dict[str, int] = {}
+    for t, n in g.nodes.items():
+        est = (n.get("info") or {}).get("rows_estimate")
+        if isinstance(est, (int, float)) and est >= 0:
+            out[t] = int(est)
+    for t, n in _counts(ctx, "SELECT table_id, MAX(sample_size) FROM column_profile GROUP BY table_id").items():
+        out[t] = max(out.get(t, 0), n)
+    return out
+
+
+def _signature(node: dict) -> tuple:
+    """Column names and types, order-insensitive."""
+    return tuple(sorted((c["name"].lower(), " ".join(str(c["type"]).lower().split())) for c in node["columns"]))
+
+
+def _profiles_of(ctx, tid: str) -> dict[str, dict]:
+    out = {}
+    try:
+        for r in ctx.db.execute("SELECT col, profile FROM column_profile WHERE table_id=? ORDER BY col", (tid,)):
+            try:
+                out[r[0]] = json.loads(r[1])
+            except ValueError:
+                pass
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def _range_overlap(a: dict | None, b: dict | None) -> bool | None:
+    if not a or "min" not in a or "max" not in a or not b or "min" not in b or "max" not in b:
+        return None
+    try:
+        return a["min"] <= b["max"] and b["min"] <= a["max"]
+    except TypeError:
+        return None
+
+
+def _col_overlap(pa: dict, pb: dict) -> bool | None:
+    """True/False when two column profiles share/cannot share values, None when they say nothing comparable."""
+    verdicts = [_range_overlap(pa.get("numeric"), pb.get("numeric")), _range_overlap(pa.get("dates"), pb.get("dates"))]
+    ta, tb = pa.get("top_values"), pb.get("top_values")
+    if ta and tb:
+        shared = {v for v, _ in ta} & {v for v, _ in tb}
+        both_complete = pa.get("values_complete") is True and pb.get("values_complete") is True
+        verdicts.append(True if shared else (False if both_complete else None))
+    known = [v for v in verdicts if v is not None]
+    return None if not known else any(known)
+
+
+def _same_data(ctx, a: str, b: str, key_cols: list[str], cache: dict) -> bool:
+    """True only with evidence: profiles of both tables exist and a comparable column (the key columns first, then every shared
+    column) shows overlapping values. No profiles, nothing comparable, or values that cannot overlap: False. The shape alone
+    never makes two tables a family."""
+    for t in (a, b):
+        if t not in cache:
+            cache[t] = _profiles_of(ctx, t)
+    pa, pb = cache[a], cache[b]
+    shared = sorted(set(pa) & set(pb))
+    for cols in ([c for c in key_cols if c in shared], shared):
+        verdicts = [v for v in (_col_overlap(pa[c], pb[c]) for c in cols) if v is not None]
+        if verdicts:
+            return any(verdicts)
+    return False
+
+
+def families(g: Graph, ctx) -> dict[str, list[str]]:
+    """{representative: [copies]} for the families whose representative was decided by rows, usage or relations; the copies get
+    no unit. Families that only the table id could split are in `undecided_families` and keep a unit for every member."""
+    fams, basis = family_report(g, ctx)
+    return {r: c for r, c in fams.items() if basis[r] != "name"}
+
+
+def undecided_families(g: Graph, ctx) -> dict[str, list[str]]:
+    """{first member by id: [other members]} for families where rows, usage and relations tie (or are all unknown). Nothing
+    is dropped: every member keeps its unit, the others rank low and are marked `family_undecided`."""
+    fams, basis = family_report(g, ctx)
+    return {r: c for r, c in fams.items() if basis[r] == "name"}
+
+
+def family_report(g: Graph, ctx) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Near-duplicate families: tables with the same column signature (names and types, any order, at least 3 columns) whose
+    stored profiles show overlapping key or column values (no profile evidence, no family: the shape alone is never enough). Returns {representative: [copies]} (copies sorted), only for
+    families of two or more, and {representative: what chose it: rows, usage, relations or name}. The representative is the member with the
+    most rows by a clear margin (at least 10 percent more than the next); otherwise the one people use (query-log hits, code references, context mentions), then the
+    one with the most relations; `name` (smallest table id) means nothing else told the top two apart.
+    Copies get no unit of their own: their only note is "copy of <representative>" (index/families.json and the
+    representative's packet). Deterministic: same map and profiles, same families."""
+    skip = skipped_tables(g)
+    rows, deg = _rows(g, ctx), _degree(g)
+    ev = _evidence(ctx)
+    strong = {t: sum(d.get(t, 0) for d in ev) for t in g.nodes}
+    groups: dict[tuple, list[str]] = {}
+    for t in sorted(g.nodes):
+        n = g.nodes[t]
+        if t not in skip and len(n["columns"]) >= MIN_FAMILY_COLUMNS:
+            groups.setdefault(_signature(n), []).append(t)
+    cache: dict[str, dict] = {}
+    out: dict[str, list[str]] = {}
+    basis: dict[str, str] = {}
+    for sig, members in sorted(groups.items(), key=lambda kv: kv[1][0]):
+        if len(members) < 2:
+            continue
+        clusters: list[list[str]] = []
+        for t in members:  # sorted: each table joins the first cluster whose first member holds the same data
+            key_cols = g.nodes[t]["primary_key"]
+            for cl in clusters:
+                if _same_data(ctx, cl[0], t, key_cols, cache):
+                    cl.append(t)
+                    break
+            else:
+                clusters.append([t])
+        for cl in clusters:
+            if len(cl) > 1:
+                top = max(rows.get(t, -1) for t in cl)
+                close = [t for t in cl if top < 0 or rows.get(t, -1) * ROW_MARGIN >= top]  # within the margin of the top
+                order = sorted(close, key=lambda t: (-rows.get(t, -1), t)) if len(close) == 1 else \
+                    sorted(close, key=lambda t: (-strong[t], -deg.get(t, 0), t))
+                rep = order[0]
+                out[rep] = sorted(set(cl) - {rep})
+                if len(close) == 1:
+                    basis[rep] = "rows"
+                else:
+                    a, b = order[0], order[1]
+                    basis[rep] = "usage" if strong[a] != strong[b] else "relations" if deg.get(a, 0) != deg.get(b, 0) else "name"
+    return dict(sorted(out.items())), dict(sorted(basis.items()))
+
+
+def copy_of(fams: dict[str, list[str]]) -> dict[str, str]:
+    """copy table -> representative."""
+    return {c: rep for rep, cs in fams.items() for c in cs}
+
+
+def rank_tables(g: Graph, ctx) -> list[dict]:
+    """Rank every table except mirror, copy-schema and family-copy ones. Strong signals: hub score (incoming relations),
+    query-log hits, code refs, context mentions, area centrality. Weak generic signals: row count (log-scaled), relation
+    degree, and a penalty for tables with zero or fewer than 10 rows (known only from the adapter's estimate or profiles).
+    Members of an undecided family (see `undecided_families`) other than the first by id keep a unit but rank last (part `family_undecided`).
+    Returns [{"table", "score", "parts"}] best first; ties broken by table id. Same inputs give the same list."""
+    skip = skipped_tables(g) | set(copy_of(families(g, ctx)))
+    undecided = {c for cs in undecided_families(g, ctx).values() for c in cs} - skip
+    ids = sorted(t for t in g.nodes if t not in skip)
+    incoming: dict[str, int] = {}
+    for e in _real_edges(g):
+        incoming[e["to"]] = incoming.get(e["to"], 0) + 1
+    qhits, code, mentions = _evidence(ctx)
     area_of = {t: a for a in g.data.get("areas", []) for t in a["tables"]}
     inside: dict[str, int] = {}
     for e in _real_edges(g):
@@ -59,8 +223,14 @@ def rank_tables(g: Graph, ctx) -> list[dict]:
         if area_of.get(e["from"]) and area_of.get(e["from"]) == area_of.get(e["to"]):
             for t in (e["from"], e["to"]):
                 inside[t] = inside.get(t, 0) + 1
+    nrows = _rows(g, ctx)
+    logrows = {t: math.log1p(n) for t, n in nrows.items()}
+    presence = {t: PRESENCE["empty"] if nrows.get(t) == 0 else PRESENCE["tiny"] if t in nrows and nrows[t] < TINY_ROWS else 0.0
+                for t in ids}
     comps = {"hub": _norm(incoming, ids), "queries": _norm(qhits, ids), "code": _norm(code, ids),
-             "context": _norm(mentions, ids), "area": _norm(inside, ids)}
+             "context": _norm(mentions, ids), "area": _norm(inside, ids), "rows": _norm(logrows, ids),
+             "degree": _norm(_degree(g), ids), "presence": presence,
+             "family_undecided": {t: 1.0 if t in undecided else 0.0 for t in ids}}
     rows = []
     for t in ids:
         parts = {k: round(comps[k][t], 6) for k in WEIGHTS}

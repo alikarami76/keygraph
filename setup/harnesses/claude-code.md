@@ -31,6 +31,10 @@ If `keygraph` is already registered, remove the old entry first (`claude mcp rem
 - `claude mcp list` shows `keygraph: ... ✓ Connected`.
 - MCP servers load when a session starts. Ask the user to start a new session (or run `/mcp` and reconnect), then do step 7.3 of SETUP.md there. The tools appear as `mcp__keygraph__search`, `mcp__keygraph__path` and so on.
 
+## Large index replies
+
+Claude Code saves an MCP result over 50,000 characters to a file and shows only a 2 KB preview. keygraph's `index_*` results are compact JSON under 40,000 characters, so the packet always arrives in the tool result. If `index_next` returns a `truncated` note, the packet lost the sections in `truncated.cut`: answer from what remains (the unit is still submittable) and use `describe`, `keys`, `query_for` or `code_where` for anything missing. `truncated.over_cap: true` means even the trimmed reply is over the limit: answer anyway.
+
 ## Notes for non-Anthropic backends
 
 - Weaker or smaller models pick skills less reliably. The CLAUDE.md block is what keeps them on track, so keep it.
