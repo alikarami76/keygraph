@@ -1,8 +1,9 @@
 """MCP server: keygraph's read-only queries as tools for any MCP client.
 
 Each tool returns the same JSON as the matching `keygraph <command> --json`, except `areas`, which wraps the
-CLI's list as {"areas": [...]} (MCP tools return objects). Nothing here runs SQL or
-touches a database: it reads graph.json and keygraph.db from a built output directory.
+CLI's list as {"areas": [...]} (MCP tools return objects). The query tools run no SQL and touch no database: they read
+graph.json and keygraph.db from a built output directory. The `index_*` build tools write only to that directory; their
+optional probes run read-only through assert_select against a source named by an environment variable.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from .cli import area_result, describe_result, load_graph, path_result
 from .context import ContextDB
 from .docs_out import table_file
 from .graph import Graph
+from .index import cli_api as IX
 
 INSTRUCTIONS = """keygraph maps the keys of a database and the relations between its tables. It is deterministic and
 answers from a prebuilt graph; it never queries the database. Every tool is read-only except `query_submit`.
@@ -36,7 +38,14 @@ values for PII columns. Table names resolve leniently, but when a bare name exis
 When code was indexed, `code_where` lists where a table or column is declared, written, read and used in code, and
 `code_what` lists the tables and columns a file, line or symbol touches. The query log answers how a table was
 queried before: `query_for`, `query_top` and `query_search`. `query_submit` is the only tool that writes: it logs a
-query you ran (SQL, source, timing and the business question) into the query tables and nothing else."""
+query you ran (SQL, source, timing and the business question) into the query tables and nothing else.
+
+The `index_*` tools (`index_start`, `index_next`, `index_submit`, `index_status`, `index_finish`) are build tools for LLM
+indexing, in a group of their own. You do the reasoning: `index_next` gives a packet of metadata and masked profiles, you
+answer with the JSON the schema asks for, and `index_submit` validates, probe-checks and stores it. They write only to the
+output folder (keygraph.db and index/). keygraph runs its probes read-only through assert_select and returns only pass or
+fail and rates; `index_start` takes the NAME of an environment variable for the probe source, never a URL or a command.
+The existing query tools above are unchanged and still read the stored map."""
 
 
 def _client(context) -> dict:
@@ -277,7 +286,46 @@ def build_server(dir: str | Path) -> MCPServer:
         query log tables. Returns the query's fingerprint and the tables it touched."""
         return run(QL.add, db, sql, source, ms, rows, context, tags or [], by)
 
-    if devlog.enabled(out):  # only when dev mode is on as the server starts: the tool list stays at 15 otherwise
+    @srv.tool()
+    def index_start(budget: int = IX.DEFAULT_BUDGET, tasks: list[str] | None = None, url_env: str = "", cmd_env: str = "",
+                    dialect: str = "", max_units: int = 0, restart: bool = False) -> dict:
+        """Start (or resume) an LLM indexing job on the built map: ranks the tables, groups them into units and sets a token
+        budget. url_env or cmd_env is the NAME of an environment variable holding the probe source (a database URL, or a
+        read-only command template with {sql}); never pass the URL or command itself. Without one, claims stay unverified.
+        tasks is a list from relations, columns, tables, concepts, metrics, performance (default all). An open job is
+        resumed (a larger budget raises its budget); restart=true aborts it and starts over. Returns the job id, unit counts
+        and the next step. Writes only to the output folder."""
+        return run(IX.start_result, out, budget, tasks, url_env, cmd_env, dialect, max_units, restart)
+
+    @srv.tool()
+    def index_next() -> dict:
+        """The next unit to index: unit_id, tasks, instructions, a packet (columns, keys, candidate relations, masked
+        profiles, code references, logged queries, notes) and the JSON schema your answer must follow. It returns the same
+        unit until you submit it. Also returns status budget_exhausted (with the command to resume) or done (finish next)."""
+        return run(IX.next_result, out)
+
+    @srv.tool()
+    def index_submit(unit_id: str, answer: dict, model: str = "") -> dict:
+        """Submit your answer for a unit as a JSON object (the answer argument, not text) following the schema from
+        index_next, and say which model you are. keygraph rejects unknown tables and columns, PII-looking values and
+        contradictions with declared keys, probes checkable claims read-only, and stores the rest with provenance. Returns
+        status accepted, partially_accepted, rejected or failed, the rejected items with reasons, verified and unverified
+        counts and the attempts left. A unit that is rejected three times fails and keeps the deterministic map."""
+        return run(IX.submit_result, out, unit_id, answer, model)
+
+    @srv.tool()
+    def index_status() -> dict:
+        """Progress of the indexing job: units done, pending, failed and skipped, budget used and left, the accept rate
+        and verify rate, and the failed units with their reasons."""
+        return run(IX.status_result, out)
+
+    @srv.tool()
+    def index_finish() -> dict:
+        """Finish the run: rebuild graph.json, the pages, the report and the explorer from the saved answers and write
+        index/summary.json. Returns the counts (units, facts, relations, llm edges). Call it when index_next says done."""
+        return run(IX.finish_result, out)
+
+    if devlog.enabled(out):  # only when dev mode is on as the server starts: the tool list stays at 20 otherwise
         @srv.tool()
         def dev_note(question: str) -> dict:
             """Record the user's question for the dev log. Call this once per user question, before your first keygraph

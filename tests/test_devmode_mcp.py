@@ -52,7 +52,7 @@ def dev_on(out):
 
 def test_off_lists_15_tools_and_writes_nothing(out):
     srv = build_server(out)
-    assert names(srv) == TOOLS and len(TOOLS) == 15
+    assert names(srv) == TOOLS and len(TOOLS) == 20
     before = {p: p.stat().st_mtime_ns for p in out.rglob("*") if p.is_file()}
     for tool, args in (("search", {"query": "orders"}), ("describe", {"table": "shop.orders"}),
                        ("profile_summary", {"table": "shop.orders"}), ("query_top", {})):
@@ -208,7 +208,7 @@ def test_doctor_accepts_dev_note(out):
     dev_on(out)
     r = doctor.run(out)
     mcp = next(c for c in r["checks"] if c["name"] == "mcp")
-    assert mcp["status"] == "ok" and "16 tools" in mcp["detail"]
+    assert mcp["status"] == "ok" and "21 tools" in mcp["detail"]
 
 
 def test_parity_with_dev_on(out, capsys):

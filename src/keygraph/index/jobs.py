@@ -28,7 +28,8 @@ def _env_name(label: str, value: str) -> str:
 def _job(r) -> dict:
     return {"job_id": r["job_id"], "budget": r["budget"], "used": r["used"], "tasks": json.loads(r["tasks"] or "[]"),
             "keygraph_version": r["keygraph_version"], "schema_version": r["schema_version"], "status": r["status"],
-            "url_env": r["url_env"] or "", "cmd_env": r["cmd_env"] or "", "finished": bool(r["finished_at"])}
+            "url_env": r["url_env"] or "", "cmd_env": r["cmd_env"] or "", "dialect": r["dialect"] or "",
+            "finished": bool(r["finished_at"])}
 
 
 def _unit(r) -> dict:
@@ -38,8 +39,9 @@ def _unit(r) -> dict:
 
 
 def create_job(ctx, units: list[dict], *, budget: int, tasks=TASKS, url_env: str = "", cmd_env: str = "",
-               schema_version: int | str = SCHEMA_VERSION) -> str:
-    """Create an open job with its pending units and return the job id (job-0001, job-0002, ...)."""
+               schema_version: int | str = SCHEMA_VERSION, dialect: str = "", skip_after: int | None = None) -> str:
+    """Create an open job with its pending units and return the job id (job-0001, job-0002, ...).
+    `skip_after`: units past the first N (by rank order as given) start as skipped and keep the deterministic map."""
     if int(budget) <= 0:
         raise ValueError("budget must be a positive number of tokens, for example --budget 200000")
     tasks = list(tasks)
@@ -54,14 +56,21 @@ def create_job(ctx, units: list[dict], *, budget: int, tasks=TASKS, url_env: str
     n = ctx.db.execute("SELECT COALESCE(MAX(rowid), 0) FROM index_jobs").fetchone()[0]
     job_id = f"job-{n + 1:04d}"
     tasks = [t for t in TASKS if t in tasks]
-    ctx.db.execute("INSERT INTO index_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+    ctx.db.execute("INSERT INTO index_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                    (job_id, _now(), None, int(budget), 0, json.dumps(tasks), __version__, str(schema_version), "open",
-                    url_env, cmd_env))
+                    url_env, cmd_env, (dialect or "").strip().lower()))
     ctx.db.executemany("INSERT INTO index_units VALUES(?,?,?,?,?,?,?,?,?,?)",
-                       [(u["unit_id"], job_id, json.dumps(u["tables"]), json.dumps(tasks), u["rank"], "", "pending", 0, 0, None)
-                        for u in units])
+                       [(u["unit_id"], job_id, json.dumps(u["tables"]), json.dumps(tasks), u["rank"], "",
+                         "skipped" if skip_after is not None and i >= skip_after else "pending", 0, 0, None)
+                        for i, u in enumerate(units)])
     ctx.db.commit()
     return job_id
+
+
+def latest_job(ctx) -> dict | None:
+    """The newest job, open or not."""
+    r = ctx.db.execute("SELECT * FROM index_jobs ORDER BY rowid DESC LIMIT 1").fetchone()
+    return _job(r) if r else None
 
 
 def get_job(ctx, job_id: str) -> dict | None:
@@ -145,3 +154,53 @@ def progress(ctx, job_id: str) -> dict:
         counts[u["status"]] += 1
     return {"job_id": job_id, "status": j["status"], "units": counts, "budget": j["budget"], "used": j["used"],
             "left": max(0, j["budget"] - j["used"])}
+
+
+def update_job(ctx, job_id: str, *, budget: int | None = None, url_env: str | None = None, cmd_env: str | None = None,
+               dialect: str | None = None) -> dict:
+    """Raise the budget or rename the probe source (names only) of a job; None leaves a field as it was."""
+    if budget is not None and int(budget) <= 0:
+        raise ValueError("budget must be a positive number of tokens")
+    sets = {"budget": None if budget is None else int(budget),
+            "url_env": None if url_env is None else _env_name("url_env", url_env),
+            "cmd_env": None if cmd_env is None else _env_name("cmd_env", cmd_env),
+            "dialect": None if dialect is None else dialect.strip().lower()}
+    if sets["url_env"] and sets["cmd_env"] is None:
+        sets["cmd_env"] = ""
+    if sets["cmd_env"] and sets["url_env"] is None:
+        sets["url_env"] = ""
+    sets = {k: v for k, v in sets.items() if v is not None}
+    if sets:
+        ctx.db.execute(f"UPDATE index_jobs SET {', '.join(f'{k}=?' for k in sets)} WHERE job_id=?", [*sets.values(), job_id])
+        ctx.db.commit()
+    return get_job(ctx, job_id)
+
+
+def reopen_job(ctx, job_id: str) -> dict:
+    ctx.db.execute("UPDATE index_jobs SET status='open', finished_at=NULL WHERE job_id=?", (job_id,))
+    ctx.db.commit()
+    return get_job(ctx, job_id)
+
+
+def add_units(ctx, job_id: str, units: list[dict], tasks) -> None:
+    """Add new pending units (refresh)."""
+    ctx.db.executemany("INSERT INTO index_units VALUES(?,?,?,?,?,?,?,?,?,?)",
+                       [(u["unit_id"], job_id, json.dumps(u["tables"]), json.dumps(list(tasks)), u["rank"], "", "pending", 0, 0, None)
+                        for u in units])
+    ctx.db.commit()
+
+
+def drop_unit(ctx, job_id: str, unit_id: str) -> None:
+    ctx.db.execute("DELETE FROM index_units WHERE job_id=? AND unit_id=?", (job_id, unit_id))
+    ctx.db.commit()
+
+
+def reset_unit(ctx, job_id: str, unit_id: str, rank: int) -> None:
+    """Put a unit back to pending with no attempts (its inputs changed) and set its new rank."""
+    ctx.db.execute("UPDATE index_units SET status='pending', attempts=0, rank=? WHERE job_id=? AND unit_id=?", (rank, job_id, unit_id))
+    ctx.db.commit()
+
+
+def set_rank(ctx, job_id: str, unit_id: str, rank: int) -> None:
+    ctx.db.execute("UPDATE index_units SET rank=? WHERE job_id=? AND unit_id=?", (rank, job_id, unit_id))
+    ctx.db.commit()

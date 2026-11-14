@@ -91,11 +91,11 @@ def test_budget_tasks_and_empty_units_validated(tmp_path):
 
 def test_open_job_orders_by_creation_not_string(tmp_path):
     with ContextDB(tmp_path / "k.db") as ctx:
-        ctx.db.execute("INSERT INTO index_jobs VALUES('job-9999','', NULL, 1, 0, '[]', 'v', '1', 'open', '', '')")
+        ctx.db.execute("INSERT INTO index_jobs VALUES('job-9999','', NULL, 1, 0, '[]', 'v', '1', 'open', '', '', '')")
         jid = J.create_job(ctx, UNITS, budget=1)
         assert jid == "job-0002"  # one past the highest row; the open job is the newest row
         assert J.open_job(ctx)["job_id"] == jid
-        ctx.db.execute("INSERT INTO index_jobs VALUES('job-10000','', NULL, 1, 0, '[]', 'v', '1', 'open', '', '')")
+        ctx.db.execute("INSERT INTO index_jobs VALUES('job-10000','', NULL, 1, 0, '[]', 'v', '1', 'open', '', '', '')")
         assert J.open_job(ctx)["job_id"] == "job-10000"  # a string sort would pick job-9999
 
 

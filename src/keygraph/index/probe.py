@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import Callable
 from decimal import Decimal
 from typing import NamedTuple
@@ -70,11 +71,20 @@ def runner_from_env(url_env: str = "", cmd_env: str = "", environ=None, dialect:
     return None
 
 
+TIME_BUDGET = 60.0  # seconds of probing per submit
+
+
+class _OutOfTime(Exception):
+    """The per-submit wall-clock budget is spent."""
+
+
 class _Cap:
-    def __init__(self, n: int):
-        self.left = n
+    def __init__(self, n: int, deadline: float | None = None):
+        self.left, self.deadline = n, deadline
 
     def take(self, n: int) -> bool:
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            raise _OutOfTime
         if n > self.left:
             return False
         self.left -= n
@@ -167,8 +177,8 @@ def parse_filter(text: str, columns: set[str], q: Callable[[str], str]) -> tuple
 
 
 class _Prober:
-    def __init__(self, g, runner: SelectOnlyRunner, quote: str, bare: bool, cap: int):
-        self.g, self.run, self.quote, self.bare, self.cap = g, runner, quote, bare, _Cap(cap)
+    def __init__(self, g, runner: SelectOnlyRunner, quote: str, bare: bool, cap: int, deadline: float | None = None):
+        self.g, self.run, self.quote, self.bare, self.cap = g, runner, quote, bare, _Cap(cap, deadline)
 
     def q(self, name: str) -> str:
         return quote_ident(name, self.quote)
@@ -254,17 +264,25 @@ class _Prober:
 
 
 def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: str | None = None, *, bare: bool = False,
-                cap: int = QUERY_CAP) -> list[dict]:
+                cap: int = QUERY_CAP, time_budget: float | None = TIME_BUDGET) -> list[dict]:
     """One verdict per accepted item (`{"kind", "index", "item"}` as `validate` returns them), in the same order.
-    No runner means every item stays unverified. `quote` defaults to the map's source dialect. Grain verdicts are samples."""
-    pr = _Prober(g, runner, quote or quote_for(dialect_of(g)), bare, cap) if runner is not None else None
+    No runner means every item stays unverified. `quote` defaults to the map's source dialect. Grain verdicts are samples.
+    `time_budget` (seconds, default 60, None for no limit) is a wall-clock budget for the whole call: no query starts once
+    it is spent, and the remaining items are unverified with check `time_budget`. A query already running is not cancelled,
+    so one slow query can overrun the budget by its own duration."""
+    deadline = None if time_budget is None else time.monotonic() + max(0.0, float(time_budget))
+    pr = _Prober(g, runner, quote or quote_for(dialect_of(g)), bare, cap, deadline) if runner is not None else None
     out = []
+    spent = False
     for ent in items:
         kind, it = ent["kind"], ent["item"]
         checks = {"relations": ["relation"], "columns": ["codes"], "tables": ["grain", "filters"]}.get(kind, [])
         v = {"verified": None, "check": "none", "rate": None, "n": 0}
+        spent = spent or bool(pr and checks and deadline is not None and time.monotonic() >= deadline)
         if pr is None and checks:
             v = {"verified": None, "check": "no_source", "rate": None, "n": 0}
+        elif checks and spent:
+            v = {"verified": None, "check": "time_budget", "rate": None, "n": 0}
         elif checks:
             vs = []
             for name in checks:
@@ -272,9 +290,15 @@ def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: st
                     if name == "grain" and not (it.get("grain") or it.get("grain_columns")):
                         continue
                     vs.append(getattr(pr, name)(it))
+                except _OutOfTime:
+                    spent = True
+                    vs = []
+                    break
                 except Exception as exc:  # noqa: BLE001  (the message can hold values; keep the type only)
                     vs.append(pr.verdict(name, None, error=type(exc).__name__))
             vs = [x for x in vs if x["check"] != "none"] or [v]
+            if spent:
+                vs = [{"verified": None, "check": "time_budget", "rate": None, "n": 0}]
             # several checks on one item: false if any fails, true only if every check passed
             v = vs[0] if len(vs) == 1 else {
                 "verified": False if any(x["verified"] is False for x in vs) else (True if all(x["verified"] for x in vs) else None),

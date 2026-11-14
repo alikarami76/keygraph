@@ -20,7 +20,8 @@ from pathlib import Path
 from . import __version__
 
 MCP_TOOLS = {"search", "describe", "keys", "explain", "path", "neighbors", "areas", "area", "profile_summary",
-             "code_where", "code_what", "query_for", "query_top", "query_search", "query_submit"}
+             "code_where", "code_what", "query_for", "query_top", "query_search", "query_submit",
+             "index_start", "index_next", "index_submit", "index_status", "index_finish"}
 EXTRAS = {"live": ("sqlalchemy", "sqlalchemy"), "mcp": ("mcp", "mcp"), "yaml": ("yaml", "pyyaml"), "code": ("sqlglot", "sqlglot")}
 
 

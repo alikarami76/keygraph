@@ -140,6 +140,42 @@ def is_row_tool(name: str) -> bool:
     return name in ROW_TOOLS
 
 
+# `keygraph index ...` commands and the MCP index_* tools carry packets (profile values, SQL), agent answers and rejection
+# reasons. Their events keep ids, counts and statuses only: the answer argument becomes list lengths, a response keeps
+# numbers, a few fixed words and ids, lists become lengths, and any other text is dropped.
+_INDEX_WORDS = {"status", "unit_id", "job_id", "next", "finish", "resume", "probe_source"}
+_INDEX_SIZED = {"packet", "answer_schema", "instructions"}
+
+
+def is_index_tool(name: str) -> bool:
+    return isinstance(name, str) and (name.startswith("index ") or name.startswith("index_"))
+
+
+def index_shape(obj, key: str = ""):
+    """The loggable shape of an index command's JSON result (never text from an agent, a packet or a reason)."""
+    if key in _INDEX_SIZED:
+        return {"bytes": len(json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8", "replace"))}
+    if isinstance(obj, dict):
+        return {str(k): index_shape(v, str(k)) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return {"len": len(obj)}
+    if obj is None or isinstance(obj, (bool, int, float)):
+        return obj
+    return mask_text(str(obj))[:200] if key in _INDEX_WORDS else "<text>"
+
+
+def index_args(args):
+    """Arguments of an index call with the answer (agent text) reduced to list lengths per kind."""
+    if not isinstance(args, dict):
+        return args
+    out = dict(args)
+    ans = out.get("answer")
+    if ans is not None:
+        out["answer"] = ({str(k): (len(v) if isinstance(v, list) else "<text>") for k, v in ans.items()}
+                         if isinstance(ans, dict) else "<text>")
+    return out
+
+
 def _scalar(v):
     return v if v is None or isinstance(v, _ROW_SCALARS) else mask_text(str(v))[:200]
 
@@ -204,6 +240,8 @@ def response_fields(tool: str, obj) -> dict:
     """{"response": obj} when its JSON is <= 16 KB, else {"response_ref": {sha256, bytes, tokens_approx, shape}}."""
     if tool in ROW_TOOLS:
         return {"response": rows_shape(obj)}
+    if is_index_tool(tool):
+        return {"response": index_shape(obj)}
     obj = mask_response(tool, obj)
     text = json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str)
     if len(text.encode("utf-8", "replace")) <= INLINE_MAX:
@@ -218,6 +256,11 @@ def stdout_fields(tool: str, text: str, nbytes: int, digest: str, tokens: int, i
         with contextlib.suppress(ValueError, RecursionError):
             if text.lstrip()[:1] == "{" and nbytes <= INLINE_MAX:
                 return {"response": rows_shape(json.loads(text))}
+        return {"response_ref": {"sha256": digest, "bytes": nbytes, "tokens_approx": tokens, "shape": {"lines": lines or text.count("\n")}}}
+    if is_index_tool(tool):
+        with contextlib.suppress(ValueError, RecursionError):
+            if text.lstrip()[:1] == "{" and nbytes <= INLINE_MAX:
+                return {"response": index_shape(json.loads(text))}
         return {"response_ref": {"sha256": digest, "bytes": nbytes, "tokens_approx": tokens, "shape": {"lines": lines or text.count("\n")}}}
     if nbytes <= INLINE_MAX and inline:
         with contextlib.suppress(ValueError, RecursionError):
@@ -299,7 +342,8 @@ class Recorder:
         try:
             self.seq += 1
             ev: dict = {"v": V, "ts": now(), "session": self.session, "session_source": session_source(self.surface), "seq": self.seq, "surface": self.surface,
-                        "client": self.client, "kind": kind, "tool": tool, "args": mask_args(args or {}),
+                        "client": self.client, "kind": kind, "tool": tool,
+                        "args": mask_args(index_args(args or {}) if is_index_tool(tool) else args or {}),
                         "ms": round(ms, 2), "ok": ok}
             if error:
                 ev["error"] = {"type": error.get("type", ""), "message": mask_message(str(error.get("message", "")))}

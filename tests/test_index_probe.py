@@ -236,3 +236,21 @@ def test_non_sqlite_url_without_the_live_extra_says_so(monkeypatch):
     monkeypatch.setenv("KG_TEST_PG", "postgresql://u:p@h/db")
     with pytest.raises(RuntimeError, match="live extra"):
         P.runner_from_env("KG_TEST_PG", "")
+
+
+def test_time_budget_marks_the_rest_unverified_and_stops_queries(src, shop_graph, monkeypatch):
+    calls = []
+    real = src.runner.run
+    monkeypatch.setattr(src.runner, "run", lambda sql: calls.append(sql) or real(sql))
+    ents = [_rel("billing.payments", ["order_id"], "shop.orders", ["id"]), _rel("shop.orders", ["id"], "shop.products", ["id"])]
+    out = _run(src, shop_graph, ents, time_budget=0)
+    assert calls == [] and [v["check"] for v in out] == ["time_budget"] * 2 and all(v["verified"] is None for v in out)
+    assert _run(src, shop_graph, ents, time_budget=None)[0]["verified"] is True
+
+
+def test_time_budget_runs_out_between_items(src, shop_graph, monkeypatch):
+    clock = iter([0.0, 0.5, 0.5, 0.5, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0])
+    monkeypatch.setattr(P.time, "monotonic", lambda: next(clock, 5.0))
+    ents = [_rel("billing.payments", ["order_id"], "shop.orders", ["id"]), _rel("shop.orders", ["id"], "shop.products", ["id"])]
+    first, second = _run(src, shop_graph, ents, time_budget=1)
+    assert first["verified"] is True and second["check"] == "time_budget" and second["verified"] is None

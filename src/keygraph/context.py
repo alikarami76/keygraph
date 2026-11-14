@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS table_info(table_id TEXT PRIMARY KEY, info TEXT);
 CREATE TABLE IF NOT EXISTS context_history(kind TEXT, ref TEXT, action TEXT, old TEXT, new TEXT, source TEXT, at TEXT);
 CREATE TABLE IF NOT EXISTS curation(kind TEXT, body JSON, source TEXT);
 CREATE TABLE IF NOT EXISTS index_jobs(job_id TEXT PRIMARY KEY, started_at TEXT, finished_at TEXT, budget INTEGER, used INTEGER,
-  tasks TEXT, keygraph_version TEXT, schema_version TEXT, status TEXT, url_env TEXT, cmd_env TEXT);
+  tasks TEXT, keygraph_version TEXT, schema_version TEXT, status TEXT, url_env TEXT, cmd_env TEXT, dialect TEXT);
 CREATE TABLE IF NOT EXISTS index_units(unit_id TEXT, job_id TEXT, tables TEXT, tasks TEXT, rank INTEGER, packet_hash TEXT,
   status TEXT, attempts INTEGER, tokens_est INTEGER, submitted_at TEXT, PRIMARY KEY(job_id, unit_id));
 CREATE TABLE IF NOT EXISTS fact_provenance(kind TEXT, ref TEXT, source TEXT, model TEXT, prompt_hash TEXT, job_id TEXT,
@@ -151,6 +151,8 @@ class ContextDB:
             self.db.executescript(SCHEMA)
             if "cardinality" not in {r[1] for r in self.db.execute("PRAGMA table_info(index_relations)")}:
                 self.db.execute("ALTER TABLE index_relations ADD COLUMN cardinality TEXT")  # a file from before the column
+            if "dialect" not in {r[1] for r in self.db.execute("PRAGMA table_info(index_jobs)")}:
+                self.db.execute("ALTER TABLE index_jobs ADD COLUMN dialect TEXT")
         else:  # a file from an older keygraph may lack newer tables: read them as empty (temp tables, file untouched)
             have = {r[0] for r in self.db.execute("SELECT name FROM sqlite_master")}
             for stmt in SCHEMA.split(";"):
