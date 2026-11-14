@@ -11,7 +11,7 @@ import re
 MASK = "***"
 LONG_DIGITS = 9
 _EMAIL = re.compile(r"[\w.+-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63})*\.[A-Za-z]{2,}")
-_IBAN = re.compile(r"\bIR\d{2}(?:[ -]?\d{4}){5}[ -]?\d{2}\b|\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", re.I)
+_IBAN = re.compile(r"\bIR\d{2}(?:[ -]?\d{4}){5}[ -]?\d{2}\b|\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", re.IGNORECASE)
 _RUN = re.compile(r"\+?\d{2,}(?:[ -]\d{3,})*")
 _SECRET_KW = re.compile(r"""(?ix)\b(\w{0,20}?(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|auth|credential|private[_-]?key))
                             ((?:[_-]\w+)?["']?)(\s*[:=]\s*|\s+)["']?[^\s,;"')]+""")
