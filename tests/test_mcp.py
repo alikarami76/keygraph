@@ -332,7 +332,8 @@ def test_index_tools_match_the_cli(out, tmp_path, capsys):
         f.write_text(json.dumps(answer, indent=3), encoding="utf-8")
         cli_res = cli_json(capsys, cli_dir, "index", "submit", nxt["unit_id"], str(f), "--model", "m1")
         err, got = call(s2, "index_submit", unit_id=nxt["unit_id"], answer=answer, model="m1")
-        assert not err and got == cli_res
+        assert not err and {**got, "next": ""} == {**cli_res, "next": ""}  # the `next` hint names the tool, not the command
+        assert got["next"].startswith("index_") and cli_res["next"].startswith("keygraph index ")
     assert cli_res["status"] == "accepted"
     err, got = call(s2, "index_status")
     assert not err and got == cli_json(capsys, cli_dir, "index", "status") and got["units"]["done"] == 1
@@ -363,3 +364,20 @@ def test_index_instructions_paragraph_and_existing_tools_unchanged(srv):
     assert "index_submit" in text and "assert_select" in text and "output folder" in text
     assert "The existing query tools above are unchanged" in text
     assert {t.name for t in asyncio.run(srv.list_tools())} - INDEX_TOOLS == TOOLS - INDEX_TOOLS
+
+
+def test_index_env_values_typed_into_mcp_never_reach_the_dev_log(out, tmp_path, monkeypatch):
+    monkeypatch.setenv("KEYGRAPH_DEV", "1")
+    d = _copy(out, tmp_path, "devnames")
+    s2 = build_server(d)
+    for arg in ("cmd_env", "url_env"):
+        err, msg = call(s2, "index_start", **{arg: "mysql -phunter3 {sql}"})
+        assert err and "hunter3" not in msg
+    log = "".join(p.read_text(encoding="utf-8") for p in (d / "dev").glob("events*.jsonl"))
+    assert log and "hunter3" not in log and "<invalid>" in log
+
+
+def test_index_instructions_state_the_loop_and_that_index_tools_write():
+    from keygraph.mcp_server import INSTRUCTIONS
+    assert "Every tool is read-only except `query_submit`" not in INSTRUCTIONS
+    assert "index_start" in INSTRUCTIONS and "index_next" in INSTRUCTIONS and "repeat" in INSTRUCTIONS and "index_finish" in INSTRUCTIONS

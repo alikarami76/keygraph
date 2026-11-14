@@ -48,7 +48,7 @@ def test_malformed_relation_item_fails(mutate, needle):
 
 def test_not_an_object_and_wrong_list():
     assert S.validate_answer([], ["relations"]) == ["$: expected object"]
-    assert S.validate_answer({"relations": {}}, ["relations"]) == ["$.relations: expected array"]
+    assert S.validate_answer({"relations": {}}, ["relations"]) == ["$.relations: expected array (a JSON list; use [] when empty)"]
 
 
 def test_codes_object_checked():

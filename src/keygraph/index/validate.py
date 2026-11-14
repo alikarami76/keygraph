@@ -177,11 +177,12 @@ def _item_problem(g, ctx, unit: set[str], kind: str, it: dict) -> str | None:
     return _verified_note_problem(ctx, kind, it)
 
 
-def validate(answer, g, ctx, packet: dict, tasks=None) -> dict:
+def validate(answer, g, ctx, packet: dict, tasks=None, require_all: bool = True) -> dict:
     """{"accepted": [{kind, index, item}], "rejected": [{kind, index, item, reason}], "errors": [...], "counts": {...}}.
 
     `errors` holds whole-answer structure problems (then nothing is accepted). `item` in a rejection is a label such as
-    `relations[2]`, never the text. `tasks` defaults to the kinds present in the answer."""
+    `relations[2]`, never the text. `tasks` defaults to the kinds present in the answer. A missing kind is one error naming
+    them all; with require_all=False (a resubmit of rejected items) a missing kind just means no items of it."""
     out: dict = {"accepted": [], "rejected": [], "errors": []}
     if not isinstance(answer, dict):
         out["errors"] = ["$: the answer must be one JSON object"]
@@ -190,6 +191,14 @@ def validate(answer, g, ctx, packet: dict, tasks=None) -> dict:
     if not kinds:
         out["errors"] = ["$: the answer holds no task lists (relations, columns, tables, concepts, metrics, performance)"]
         return out
+    missing = [k for k in kinds if k not in answer]
+    if missing and not require_all and len(missing) == len(kinds):
+        out["errors"] = ["$: the answer holds no items; send the rejected items again under their kind"]
+        return out
+    if missing and require_all:
+        names = ", ".join(f"`{k}`" for k in missing)
+        out["errors"].append(f"$: missing {names}: include {'it' if len(missing) == 1 else 'each'} as [] if you have nothing to add")
+    answer = {**answer, **{k: [] for k in missing}}
     per_item: dict[tuple[str, int], list[str]] = {}
     for e in S.validate_answer(answer, kinds):
         m = _PATH.match(e)

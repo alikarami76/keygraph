@@ -89,11 +89,15 @@ def _entry(led: dict, uid: str) -> dict:
                                 "verified": 0})
 
 
-def _open_job(ctx) -> dict:
-    job = jobs.open_job(ctx)
-    if job is None:
-        raise ValueError("no open index job: run `keygraph index start` first (or `keygraph index refresh` after a finished run)")
-    return job
+RESUBMIT_HINT = "resubmit only the rejected items for this unit_id; accepted items are already stored"
+FINISHED_HINT = ("the job is finished; run `keygraph index refresh` to index changed tables or "
+                 "`keygraph index start --restart` to redo all")
+
+
+def _finished(ctx) -> dict | None:
+    """{status: finished, hint} when the newest job is done and nothing is open: submit and next end the loop here."""
+    last = jobs.latest_job(ctx)
+    return {"status": "finished", "hint": FINISHED_HINT} if last and last["status"] == "done" else None
 
 
 def _tasks(tasks) -> list[str]:
@@ -104,7 +108,7 @@ def _tasks(tasks) -> list[str]:
 
 
 def _env_names(url_env: str, cmd_env: str) -> None:
-    """Check the names (never echo a value: someone may have typed the URL here) and that the variable is set."""
+    """Check the names (never echo a value: someone may have typed the URL or a command here) and that the variable is set."""
     if url_env and cmd_env:
         raise ValueError("use --url-env or --cmd-env, not both")
     for flag, name in (("--url-env", url_env), ("--cmd-env", cmd_env)):
@@ -186,6 +190,8 @@ def next_result(dir) -> dict:
         unit = jobs.next_unit(ctx, job["job_id"]) if job else None
         if job is None and jobs.latest_job(ctx) is None:
             raise ValueError("no index job: run `keygraph index start` first")
+        if job is None and _finished(ctx):
+            return _finished(ctx)
         if unit is None:
             devlog.decide("index_next", status="done")
             return {"status": "done", "finish": FINISH}
@@ -195,7 +201,7 @@ def next_result(dir) -> dict:
         if not jobs.has_budget(ctx, job["job_id"], est):
             devlog.decide("index_next", status="budget_exhausted", unit_id=unit["unit_id"], tokens_est=est, budget_left=left)
             more = max(job["budget"] * 2, job["used"] + est)
-            return {"status": "budget_exhausted", "budget_left": left, "needed": est,
+            return {"status": "budget_exhausted", "unit_id": unit["unit_id"], "budget_left": left, "needed": est,
                     "resume": f"keygraph index start --budget {more}"}
         tasks = unit["tasks"]
         devlog.decide("index_next", status="unit", unit_id=unit["unit_id"], tokens_est=est, attempt=unit["attempts"] + 1,
@@ -222,86 +228,120 @@ def _source(job: dict, g) -> tuple[PR.Source | None, str]:
 
 
 def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET) -> dict:
-    """submit for an answer given as JSON text (the CLI): text that is not JSON counts as one rejection."""
+    """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt."""
     try:
         answer = json.loads(text)
-        err = None
     except ValueError as exc:
-        answer = None
-        err = (f"$: the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} "
-               f"at line {getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')})")
-    return submit_result(dir, unit_id, answer, model, probe_seconds, _parse_error=err,
-                         _answer_tokens=(len(text) + 3) // 4 if err else None)
+        raise ValueError(f"the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} at line "
+                         f"{getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')}); fix the file and submit again, "
+                         f"this did not use an attempt") from None
+    return submit_result(dir, unit_id, answer, model, probe_seconds)
 
 
-def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *,
-                  _parse_error: str | None = None, _answer_tokens: int | None = None) -> dict:
+def _resubmit(unit_id: str, mcp: bool) -> str:
+    return f"index_submit unit_id={unit_id}" if mcp else f"keygraph index submit {unit_id} FILE|-"
+
+
+def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *, mcp: bool = False) -> dict:
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
 
     Returns {status: accepted | partially_accepted | rejected | failed, accepted, rejected: [{item, reason}], unverified,
-    verified, probe_failed, attempts_left, budget_left, probe_source}. An answer with a structure error or with nothing
-    accepted (and something rejected) is a rejection; the unit stays pending for a resubmission and fails on the third.
-    Items that pass validation but fail a probe are stored as rejected candidates (probe_failed counts them)."""
+    verified, probe_failed, budget_left, probe_source, next} plus attempts_left, resubmit and hint when the unit is still
+    open or failed. A structure error, or items rejected and none accepted, is `rejected`: nothing is stored. When some
+    items are accepted and some rejected the status is `partially_accepted`: the accepted items are stored, the unit stays
+    pending and the agent resubmits only the rejected ones (the saved answer is the union). Every rejected or partial
+    submission uses one of three attempts; the third one marks the unit failed. The packet is charged once per unit.
+    `mcp` only changes the wording of `next`. A finished job returns {status: finished, hint}."""
     out = Path(dir)
     g = _base(out)
     with ContextDB(out / "keygraph.db", g) as ctx:
-        job = _open_job(ctx)
+        job = jobs.open_job(ctx)
+        if job is None:
+            fin = _finished(ctx)
+            if fin:
+                return fin
+            raise ValueError("no index job: run `keygraph index start` first")
         job_id = job["job_id"]
         unit = jobs.get_unit(ctx, job_id, unit_id)
         if unit is None:
             raise ValueError(f"unit {unit_id} is not in {job_id}; ask for one with `keygraph index next`")
         if unit["status"] != "pending":
-            raise ValueError(f"unit {unit_id} is already {unit['status']}; `keygraph index refresh` puts changed units back")
+            raise ValueError(f"unit {unit_id} is already {unit['status']}; `keygraph index refresh` puts "
+                             + ("failed units and units with changed tables back" if unit["status"] == "failed"
+                                else "it back only when its tables changed"))
         tasks = unit["tasks"]
         pk, est, ph = _packet(g, ctx, unit)
         prompt = SC.prompt_hash(SC.instructions(tasks), SC.answer_schema(tasks), pk)
         if not model and isinstance(answer, dict) and isinstance(answer.get("model"), str):
             model = answer["model"]
         model = (model or "unknown").strip()[:120] or "unknown"
-        atoks = _answer_tokens if _answer_tokens is not None else PK.estimate(answer)
-        if _parse_error:
-            val = {"accepted": [], "rejected": [], "errors": [_parse_error]}
-        else:
-            val = VL.validate(answer, g, ctx, pk, tasks)
-        rejected = [{"item": "$", "reason": e} for e in val["errors"]] + [{"item": r["item"], "reason": r["reason"]}
-                                                                          for r in val["rejected"]]
+        atoks = PK.estimate(answer)
         led = _ledger(out)
         ent = _entry(led, unit_id)
+        again = bool(ent.get("partial"))  # an earlier submit stored some items and left the rest to be resubmitted
+        val = VL.validate(answer, g, ctx, pk, tasks, require_all=not again)
+        rejected = [{"item": "$", "reason": e[3:] if e.startswith("$: ") else e} for e in val["errors"]] + \
+                   [{"item": r["item"], "reason": r["reason"]} for r in val["rejected"]]
         attempts = unit["attempts"] + 1
-        jobs.add_used(ctx, job_id, est + atoks)
+        jobs.add_used(ctx, job_id, atoks + (est if unit["attempts"] == 0 else 0))  # the packet is paid for once per unit
         left = jobs.budget_left(ctx, job_id)
+        failed = bool(rejected) and attempts >= MAX_ATTEMPTS
         if val["errors"] or (rejected and not val["accepted"]):
-            failed = attempts >= MAX_ATTEMPTS
             jobs.update_unit(ctx, job_id, unit_id, status="failed" if failed else None, attempts=attempts, tokens_est=est,
                              packet_hash=ph)
             ent.update(attempts=attempts, rejected=ent["rejected"] + len(rejected), reasons=rejected[:REASONS_KEPT])
+            if failed:
+                ent.pop("partial", None)
             _save_ledger(out, led)
             devlog.decide("index_submit", unit_id=unit_id, status="failed" if failed else "rejected", attempt=attempts,
                           tokens_est=est, answer_tokens=atoks, accepted=0, rejected=len(rejected), errors=len(val["errors"]))
-            return {"status": "failed" if failed else "rejected", "accepted": 0, "rejected": rejected, "unverified": 0,
-                    "verified": 0, "probe_failed": 0, "attempts_left": MAX_ATTEMPTS - attempts if not failed else 0,
-                    "budget_left": left, "probe_source": "none"}
+            res = {"status": "failed" if failed else "rejected", "accepted": 0, "rejected": rejected, "unverified": 0,
+                   "verified": 0, "probe_failed": 0, "attempts_left": MAX_ATTEMPTS - attempts if not failed else 0,
+                   "budget_left": left, "probe_source": "none"}
+            if failed:
+                return {**res, "next": "index_next" if mcp else NEXT}
+            return {**res, "resubmit": True, "next": _resubmit(unit_id, mcp),
+                    "hint": RESUBMIT_HINT if again else "nothing was stored; fix the listed problems and submit the answer "
+                                                        "again for this unit_id"}
         src, label = _source(job, g)
         verdicts = PR.probe_items(val["accepted"], g, src.runner if src else None, src.quote if src else None,
                                   bare=src.bare if src else False, time_budget=probe_seconds)
         acc, verds = ST.accepted_answer(val, verdicts)
-        ctx.db.execute("DELETE FROM index_relations WHERE unit_id=?", (unit_id,))
+        if not again:
+            ctx.db.execute("DELETE FROM index_relations WHERE unit_id=?", (unit_id,))
         ST.store_unit(ctx, g, job_id, unit, acc, model, prompt, verds)
-        ST.save_answer(out, unit, job_id, acc, model, prompt, verds)
-        jobs.update_unit(ctx, job_id, unit_id, status="done", attempts=attempts, tokens_est=est, packet_hash=ph)
+        if rejected:
+            jobs.update_unit(ctx, job_id, unit_id, status="failed" if failed else None, attempts=attempts, tokens_est=est,
+                             packet_hash=ph)
+        else:
+            jobs.update_unit(ctx, job_id, unit_id, status="done", attempts=attempts, tokens_est=est, packet_hash=ph)
+        # The answer file comes last: facts and unit status are committed first, so a crash in between leaves no file for a
+        # unit that is not done (replay reads files only); a resubmit stores the same items again. Not atomic as a whole.
+        saved, saved_v = ST.merge_saved(out, unit, acc, verds) if again else (acc, verds)
+        ST.save_answer(out, unit, job_id, saved, model, prompt, saved_v)
         n_ok = sum(1 for v in verds if v["verified"] is True)
         n_bad = sum(1 for v in verds if v["verified"] is False)
         n_unk = len(verds) - n_ok - n_bad
         ent.update(attempts=attempts, accepted=ent["accepted"] + len(val["accepted"]), rejected=ent["rejected"] + len(rejected),
                    verified=ent["verified"] + n_ok, unverified=ent["unverified"] + n_unk,
-                   probe_failed=ent["probe_failed"] + n_bad, reasons=[])
+                   probe_failed=ent["probe_failed"] + n_bad, reasons=rejected[:REASONS_KEPT])
+        if rejected and not failed:
+            ent["partial"] = True
+        else:
+            ent.pop("partial", None)
         _save_ledger(out, led)
-        status = "partially_accepted" if rejected else "accepted"
+        status = "failed" if failed else "partially_accepted" if rejected else "accepted"
         devlog.decide("index_submit", unit_id=unit_id, status=status, attempt=attempts, tokens_est=est, answer_tokens=atoks,
                       accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, unverified=n_unk,
                       probe_failed=n_bad, probe_source=label, checks=dict(sorted(Counter(v["check"] for v in verds).items())))
-        return {"status": status, "accepted": len(val["accepted"]), "rejected": rejected, "unverified": n_unk, "verified": n_ok,
-                "probe_failed": n_bad, "attempts_left": 0, "budget_left": left, "probe_source": label}
+        res = {"status": status, "accepted": len(val["accepted"]), "rejected": rejected, "unverified": n_unk, "verified": n_ok,
+               "probe_failed": n_bad, "budget_left": left, "probe_source": label}
+        if status == "accepted":
+            return {**res, "next": "index_next" if mcp else NEXT}
+        if status == "failed":
+            return {**res, "attempts_left": 0, "next": "index_next" if mcp else NEXT}
+        return {**res, "attempts_left": MAX_ATTEMPTS - attempts, "resubmit": True, "hint": RESUBMIT_HINT,
+                "next": _resubmit(unit_id, mcp)}
 
 
 # --- status, finish, replay, refresh ---------------------------------------------------------------------------
@@ -358,7 +398,7 @@ def replay_result(dir) -> dict:
 
 
 def refresh_result(dir) -> dict:
-    """Re-plan on the current map. Units whose packet hash changed (and that were done or failed) go back to pending, tables
+    """Re-plan on the current map. Failed units, and done units whose packet hash changed, go back to pending (retried and changed), tables
     that no unit covers get new pending units, and units that are no longer planned are dropped with their saved answers.
     A changed unit id is a new unit, so its old unit is dropped. The base graph is re-saved from the current graph.json."""
     out = Path(dir)
@@ -370,6 +410,7 @@ def refresh_result(dir) -> dict:
     RP.snapshot_base(out)
     g = _base(out)
     changed: list[str] = []
+    retried: list[str] = []
     added: list[dict] = []
     dropped: list[str] = []
     kept = 0
@@ -385,9 +426,9 @@ def refresh_result(dir) -> dict:
                 continue
             if o["status"] in ("done", "failed"):
                 h = hashlib.sha256(SC.canonical(PK.build_packet(g, pre, u["tables"])).encode("utf-8")).hexdigest()
-                if h != o["packet_hash"]:
+                if h != o["packet_hash"] or o["status"] == "failed":  # a failed unit gets another go even when nothing changed
                     jobs.reset_unit(ctx, job_id, u["unit_id"], u["rank"])
-                    changed.append(u["unit_id"])
+                    (changed if h != o["packet_hash"] else retried).append(u["unit_id"])
                     continue
             jobs.set_rank(ctx, job_id, u["unit_id"], u["rank"])
             kept += 1
@@ -398,13 +439,13 @@ def refresh_result(dir) -> dict:
             (ST.answers_dir(out) / f"{uid}.json").unlink(missing_ok=True)
             led.pop(uid, None)
             dropped.append(uid)
-        for uid in changed:
+        for uid in changed + retried:
             led.pop(uid, None)
         _save_ledger(out, led)
         jobs.add_units(ctx, job_id, added, job["tasks"])
-        if (changed or added) and job["status"] != "open":
+        if (changed or retried or added) and job["status"] != "open":
             jobs.reopen_job(ctx, job_id)
         pending = jobs.progress(ctx, job_id)["units"]["pending"]
-    devlog.decide("index_refresh", job_id=job_id, changed=len(changed), new=len(added), dropped=len(dropped), unchanged=kept)
-    return {"job_id": job_id, "changed": sorted(changed), "new": sorted(u["unit_id"] for u in added), "dropped": dropped,
+    devlog.decide("index_refresh", job_id=job_id, changed=len(changed), retried=len(retried), new=len(added), dropped=len(dropped), unchanged=kept)
+    return {"job_id": job_id, "changed": sorted(changed), "retried": sorted(retried), "new": sorted(u["unit_id"] for u in added), "dropped": dropped,
             "unchanged": kept, "pending": pending, "next": NEXT if pending else FINISH}

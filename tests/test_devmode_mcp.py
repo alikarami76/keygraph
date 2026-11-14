@@ -50,7 +50,7 @@ def dev_on(out):
     assert main(["dev", "on", "--dir", str(out)]) == 0
 
 
-def test_off_lists_15_tools_and_writes_nothing(out):
+def test_off_lists_20_tools_and_writes_nothing(out):
     srv = build_server(out)
     assert names(srv) == TOOLS and len(TOOLS) == 20
     before = {p: p.stat().st_mtime_ns for p in out.rglob("*") if p.is_file()}

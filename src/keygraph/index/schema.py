@@ -57,7 +57,7 @@ ITEMS = {
 
 INSTRUCTIONS = {
     "relations": "relations: list foreign-key style links the schema does not declare, from a table of this unit to a unit "
-                 "table or to a neighbour listed in the packet. Write tables as schema.table. Give from/to table and columns, the reason (what in the packet supports it), "
+                 "table or to a neighbour listed in the packet. Give from/to table and columns, the reason (what in the packet supports it), "
                  "and your confidence. Do not repeat declared relations.",
     "columns": "columns: give the business meaning of columns whose name alone does not say it: unit, code-to-meaning map for "
                "enum or status columns, and what NULL means. Skip obvious columns.",
@@ -107,11 +107,14 @@ def answer_schema(tasks=TASKS) -> dict:
 def instructions(tasks=TASKS) -> str:
     """The task text an agent reads with a packet."""
     kinds = kinds_of(tasks)
-    return ("Answer with one JSON object holding a list for each of: " + ", ".join(kinds) + ". Use only the tables and "
-            "columns the packet names (unit tables, their columns, and listed neighbours). Every item needs a short `reason` and a `confidence` from 0 to 1. Never write personal "
+    return ("Answer with one JSON object holding a list for each of: " + ", ".join(kinds) + " (use [] when you have nothing). "
+            "Write tables as schema.table, exactly as in the packet. Limits: `reason` at most "
+            f"{REASON_MAX} characters, other text fields at most {TEXT_MAX} (names {NAME_MAX}); `confidence` is a number from 0 to 1. "
+            "Use only the tables and columns the packet names (unit tables, their columns, and listed neighbours). "
+            "Every item needs a short `reason` and a `confidence`. Never write personal "
             "values (emails, phone numbers, card or national ids). Leave a list empty when the packet gives no support. "
             "Optional top-level `model` names the model you are.\n" + "\n".join(INSTRUCTIONS[k] for k in kinds)
-            + "\nOne valid item per kind (the examples are part of the prompt hash):\n"
+            + "\nOne valid item per kind:\n"
             + "\n".join(f"{k}: {canonical(EXAMPLES[k])}" for k in kinds))
 
 
@@ -129,6 +132,10 @@ def prompt_hash(instructions_text: str, schema: dict, packet: dict) -> str:
     return hashlib.sha256("\n".join((instructions_text, canonical(schema), canonical(packet))).encode("utf-8")).hexdigest()
 
 
+_TYPE_WORDS = {"object": "object", "array": "array (a JSON list; use [] when empty)", "string": "string",
+               "number": "number", "integer": "integer (a whole number)", "boolean": "boolean (true or false)"}
+
+
 def _type_ok(v, t: str) -> bool:
     return {"object": isinstance(v, dict), "array": isinstance(v, list), "string": isinstance(v, str),
             "number": isinstance(v, (int, float)) and not isinstance(v, bool), "integer": isinstance(v, int) and not isinstance(v, bool),
@@ -139,7 +146,7 @@ def check(value, schema: dict, path: str = "$") -> list[str]:
     """Errors (as 'path: message') of a value against a schema; an empty list means it fits."""
     t = schema.get("type")
     if t and not _type_ok(value, t):
-        return [f"{path}: expected {t}"]
+        return [f"{path}: expected {_TYPE_WORDS[t]}"]
     errs: list[str] = []
     if "enum" in schema and value not in schema["enum"]:
         errs.append(f"{path}: must be one of {', '.join(map(str, schema['enum']))}")

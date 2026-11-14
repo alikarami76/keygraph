@@ -83,7 +83,7 @@ def test_fake_agent_indexes_the_shop_end_to_end(built, tmp_path, monkeypatch, ca
 
     first, second = results[ORDERS_UNIT]
     assert first["status"] == "rejected" and first["attempts_left"] == 2 and first["accepted"] == 0
-    assert second["status"] == "accepted" and second["rejected"] == [] and second["attempts_left"] == 0
+    assert second["status"] == "accepted" and second["rejected"] == [] and "attempts_left" not in second
     assert second["probe_source"] == "url"
     assert second["verified"] >= 2 and second["probe_failed"] == 1  # the true relation and the codes passed; the planted one did not
     assert all(r[0]["status"] == "accepted" for u, r in results.items() if u != ORDERS_UNIT)

@@ -145,6 +145,7 @@ def is_row_tool(name: str) -> bool:
 # numbers, a few fixed words and ids, lists become lengths, and any other text is dropped.
 _INDEX_WORDS = {"status", "unit_id", "job_id", "next", "finish", "resume", "probe_source"}
 _INDEX_SIZED = {"packet", "answer_schema", "instructions"}
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def is_index_tool(name: str) -> bool:
@@ -169,6 +170,10 @@ def index_args(args):
     if not isinstance(args, dict):
         return args
     out = dict(args)
+    for k in ("url_env", "cmd_env"):  # a value typed here (a URL, a command) must never be logged: keep a valid name only
+        v = out.get(k)
+        if v:
+            out[k] = v if isinstance(v, str) and _ENV_NAME.match(v) else "<invalid>"
     ans = out.get("answer")
     if ans is not None:
         out["answer"] = ({str(k): (len(v) if isinstance(v, list) else "<text>") for k, v in ans.items()}

@@ -139,15 +139,6 @@ def test_submit_reads_stdin(work, capsys, monkeypatch):
     assert run(capsys, work, "index", "submit", unit, "-")["status"] == "accepted"
 
 
-def test_submit_text_that_is_not_json_is_a_rejection(work, capsys, tmp_path):
-    run(capsys, work, "index", "start", "--tasks", "relations")
-    unit = run(capsys, work, "index", "next")["unit_id"]
-    f = tmp_path / "a.json"
-    f.write_text("{not json", encoding="utf-8")
-    r = run(capsys, work, "index", "submit", unit, str(f))
-    assert r["status"] == "rejected" and "not valid JSON" in r["rejected"][0]["reason"]
-
-
 def test_model_comes_from_the_flag_or_the_json(work, capsys, tmp_path):
     run(capsys, work, "index", "start", "--tasks", "relations")
     a, b = run(capsys, work, "index", "next")["unit_id"], None
@@ -271,3 +262,162 @@ def test_start_remembers_names_and_dialect_only(work, capsys, monkeypatch):
         assert "SECRET" not in json.dumps(list(row))
     with pytest.raises(SystemExit):  # the two flags exclude each other
         main(["index", "start", "--url-env", "A", "--cmd-env", "B", "--dir", str(work)])
+
+
+# --- round 1 fixes -----------------------------------------------------------------------------------------------
+
+def _dev_log(out: Path) -> str:
+    return "".join(p.read_text(encoding="utf-8") for p in (out / "dev").glob("events*.jsonl"))
+
+
+def test_cmd_env_and_url_env_values_never_reach_the_dev_log(work, capsys, monkeypatch):
+    monkeypatch.setenv("KEYGRAPH_DEV", "1")
+    for flag in ("--cmd-env", "--url-env"):
+        assert main(["index", "start", flag, "mysql -phunter3 {sql}", "--dir", str(work)]) == 2
+    monkeypatch.delenv("KG_NOT_SET_URL", raising=False)
+    assert main(["index", "start", "--url-env", "KG_NOT_SET_URL", "--dir", str(work)]) == 2
+    err = capsys.readouterr().err
+    log = _dev_log(work)
+    assert "hunter3" not in log and "hunter3" not in err and "<invalid>" in log and "KG_NOT_SET_URL" in log
+
+
+TASKS2 = ("--tasks", "tables,columns")
+T_ORDERS = {"table": "shop.orders", "purpose": "One checkout", "reason": "comment", "confidence": 0.8}
+T_CUST = {"table": "shop.customers", "purpose": "A buyer", "reason": "comment", "confidence": 0.8}
+T_BAD = {"table": "nope.nothing", "purpose": "x", "reason": "made up", "confidence": 0.5}
+RESUBMIT = "resubmit only the rejected items for this unit_id; accepted items are already stored"
+
+
+def _answer_file(out: Path, unit: str) -> dict:
+    return json.loads((out / "index" / "answers" / f"{unit}.json").read_text(encoding="utf-8"))
+
+
+def test_partial_answer_keeps_the_unit_pending_and_resubmit_merges(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", *TASKS2)
+    assert run(capsys, work, "index", "next")["unit_id"] == ORDERS_UNIT
+    r1 = submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_ORDERS, T_BAD], "columns": []})
+    assert r1["status"] == "partially_accepted" and r1["resubmit"] is True and r1["accepted"] == 1 and r1["attempts_left"] == 2
+    assert [x["item"] for x in r1["rejected"]] == ["tables[1]"] and RESUBMIT in r1["hint"]
+    assert ORDERS_UNIT in r1["next"] and "submit" in r1["next"]
+    n = run(capsys, work, "index", "next")
+    assert n["unit_id"] == ORDERS_UNIT and n["attempt"] == 2  # still pending
+    assert _answer_file(work, ORDERS_UNIT)["answer"]["tables"][0]["table"] == "shop.orders"
+    # the resubmit holds only the corrected item, and no `columns` list at all
+    r2 = submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_CUST, T_ORDERS]})
+    assert r2["status"] == "accepted" and r2["rejected"] == [] and "attempts_left" not in r2
+    assert r2["next"] == "keygraph index next"
+    assert [t["table"] for t in _answer_file(work, ORDERS_UNIT)["answer"]["tables"]] == ["shop.orders", "shop.customers"]  # union, no duplicate
+    assert _units(work)[ORDERS_UNIT]["status"] == "done"
+
+
+def test_partial_answers_fail_the_unit_after_the_third_submission(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", *TASKS2)
+    left = []
+    for _ in range(3):
+        r = submit(capsys, work, tmp_path, ORDERS_UNIT, {"tables": [T_ORDERS, T_BAD], "columns": []})
+        left.append((r["status"], r.get("attempts_left")))
+    assert left == [("partially_accepted", 2), ("partially_accepted", 1), ("failed", 0)]
+    assert r["next"] == "keygraph index next" and _units(work)[ORDERS_UNIT]["status"] == "failed"
+    assert [t["table"] for t in _answer_file(work, ORDERS_UNIT)["answer"]["tables"]] == ["shop.orders"]  # accepted items stay
+
+
+def test_every_submit_reply_carries_next_and_accepted_has_no_attempts_left(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations")
+    rej = submit(capsys, work, tmp_path, ORDERS_UNIT, BAD)
+    assert rej["status"] == "rejected" and rej["resubmit"] is True and ORDERS_UNIT in rej["next"] and rej["attempts_left"] == 2
+    ok = submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)
+    assert ok["status"] == "accepted" and ok["next"] == "keygraph index next" and "attempts_left" not in ok
+    unit = run(capsys, work, "index", "next")["unit_id"]
+    for _ in range(3):
+        last = submit(capsys, work, tmp_path, unit, BAD)
+    assert last["status"] == "failed" and last["next"] == "keygraph index next" and last["attempts_left"] == 0
+
+
+def test_missing_kinds_are_one_rejection_with_a_fix(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations,columns,tables")
+    r = submit(capsys, work, tmp_path, ORDERS_UNIT, {"relations": []})
+    assert [x["item"] for x in r["rejected"]] == ["$"]
+    assert r["rejected"][0]["reason"] == "missing `columns`, `tables`: include each as [] if you have nothing to add"
+    r = submit(capsys, work, tmp_path, ORDERS_UNIT, {"relations": [], "columns": []})
+    assert r["rejected"][0]["reason"] == "missing `tables`: include it as [] if you have nothing to add"
+    r = submit(capsys, work, tmp_path, ORDERS_UNIT, {"relations": "no", "columns": [], "tables": []})
+    assert "expected array (a JSON list" in r["rejected"][0]["reason"]
+
+
+def test_instructions_header_has_naming_rule_and_limits_for_every_kind():
+    from keygraph.index import schema as SC
+    for kind in SC.TASKS:
+        text = SC.instructions([kind])
+        assert "schema.table" in text.split("\n")[0] and "exactly as in the packet" in text.split("\n")[0]
+        assert "240" in text.split("\n")[0] and "400" in text.split("\n")[0]
+        assert "prompt hash" not in text
+
+
+def test_unreadable_file_and_invalid_json_exit_2_without_a_traceback(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations")
+    for name, data in (("missing.json", None), ("binary.json", b"\xff\xfe\x00"), ("bad.json", b"{not json")):
+        f = tmp_path / name
+        if data is not None:
+            f.write_bytes(data)
+        assert main(["index", "submit", ORDERS_UNIT, str(f), "--dir", str(work)]) == 2
+        err = capsys.readouterr().err
+        assert err.startswith("keygraph: ") and "Traceback" not in err
+        assert main(["index", "submit", ORDERS_UNIT, str(f), "--dir", str(work), "--json"]) == 2
+        out = json.loads(capsys.readouterr().out)
+        assert out["status"] == "error" and out["error"]
+    assert _units(work)[ORDERS_UNIT]["attempts"] == 0  # none of them used an attempt
+
+
+def test_submit_and_next_on_a_finished_job_say_what_to_do(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations", "--max-units", "1")
+    submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)
+    run(capsys, work, "index", "finish")
+    hint = ("the job is finished; run `keygraph index refresh` to index changed tables or `keygraph index start --restart` to redo all")
+    assert submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY) == {"status": "finished", "hint": hint}
+    assert run(capsys, work, "index", "next") == {"status": "finished", "hint": hint}
+
+
+def test_refresh_also_reopens_failed_units(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations", "--max-units", "1")
+    for _ in range(3):
+        submit(capsys, work, tmp_path, ORDERS_UNIT, BAD)
+    run(capsys, work, "index", "finish")
+    r = run(capsys, work, "index", "refresh")
+    assert r["retried"] == [ORDERS_UNIT] and r["changed"] == [] and r["pending"] == 1
+    assert _units(work)[ORDERS_UNIT]["status"] == "pending" and _units(work)[ORDERS_UNIT]["attempts"] == 0
+    assert run(capsys, work, "index", "status")["status"] == "open"
+
+
+def test_packet_is_charged_once_per_unit(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations")
+    first = submit(capsys, work, tmp_path, ORDERS_UNIT, BAD)
+    second = submit(capsys, work, tmp_path, ORDERS_UNIT, BAD)
+    est = _units(work)[ORDERS_UNIT]["tokens_est"]
+    cost1 = 200000 - first["budget_left"]
+    cost2 = first["budget_left"] - second["budget_left"]
+    assert cost1 >= est and cost2 < est  # the second submit paid for the answer only
+
+
+def test_budget_exhausted_names_the_unit_it_could_not_afford(work, capsys):
+    run(capsys, work, "index", "start", "--budget", "100")
+    assert run(capsys, work, "index", "next")["unit_id"] == ORDERS_UNIT
+
+
+def test_answer_file_is_written_only_after_the_unit_is_updated(work, capsys, tmp_path, monkeypatch):
+    """A crash between the facts commit and the unit update leaves no answer file: replay never sees a unit that is not done."""
+    from keygraph.index import cli_api as X
+    run(capsys, work, "index", "start", "--tasks", "relations")
+    real = X.jobs.update_unit
+
+    def boom(*a, **k):
+        if k.get("status") == "done":
+            raise RuntimeError("crash")
+        return real(*a, **k)
+
+    monkeypatch.setattr(X.jobs, "update_unit", boom)
+    with pytest.raises(RuntimeError):
+        X.submit_text(work, ORDERS_UNIT, json.dumps(EMPTY))
+    assert not (work / "index" / "answers" / f"{ORDERS_UNIT}.json").exists()
+    monkeypatch.undo()
+    assert submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)["status"] == "accepted"  # resubmit heals it
+    assert not list((work / "index" / "answers").glob("*.tmp"))

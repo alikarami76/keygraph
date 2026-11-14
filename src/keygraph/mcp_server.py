@@ -29,7 +29,7 @@ from .graph import Graph
 from .index import cli_api as IX
 
 INSTRUCTIONS = """keygraph maps the keys of a database and the relations between its tables. It is deterministic and
-answers from a prebuilt graph; it never queries the database. Every tool is read-only except `query_submit`.
+answers from a prebuilt graph. The query tools are read-only and never query the database; only `query_submit` and the `index_*` tools write (see below).
 Start with `search` (find tables by business meaning) or `areas`, then `describe` a table (`brief=true` for a cheap first look at a wide table), and use `path` before writing
 any multi-table JOIN. Relations are either declared foreign keys (confidence 1.0) or inferred from names and key shapes;
 inferred relations carry a confidence and the evidence behind it, so check anything below about 0.8 (and every fan-out
@@ -45,7 +45,9 @@ indexing, in a group of their own. You do the reasoning: `index_next` gives a pa
 answer with the JSON the schema asks for, and `index_submit` validates, probe-checks and stores it. They write only to the
 output folder (keygraph.db and index/). keygraph runs its probes read-only through assert_select and returns only pass or
 fail and rates; `index_start` takes the NAME of an environment variable for the probe source, never a URL or a command.
-The existing query tools above are unchanged and still read the stored map."""
+Loop: `index_start`, then `index_next` (a unit) and `index_submit` (your answer), and repeat until `index_next` says
+done; then `index_finish`. When `index_submit` says partially_accepted or rejected, resubmit only the rejected items for
+that unit_id. The existing query tools above are unchanged and still read the stored map."""
 
 
 def _client(context) -> dict:
@@ -301,7 +303,7 @@ def build_server(dir: str | Path) -> MCPServer:
     def index_next() -> dict:
         """The next unit to index: unit_id, tasks, instructions, a packet (columns, keys, candidate relations, masked
         profiles, code references, logged queries, notes) and the JSON schema your answer must follow. It returns the same
-        unit until you submit it. Also returns status budget_exhausted (with the command to resume) or done (finish next)."""
+        unit until you submit it. Also returns status budget_exhausted (with the command to resume) or done (call index_finish), or finished (the job was closed)."""
         return run(IX.next_result, out)
 
     @srv.tool()
@@ -310,8 +312,10 @@ def build_server(dir: str | Path) -> MCPServer:
         index_next, and say which model you are. keygraph rejects unknown tables and columns, PII-looking values and
         contradictions with declared keys, probes checkable claims read-only, and stores the rest with provenance. Returns
         status accepted, partially_accepted, rejected or failed, the rejected items with reasons, verified and unverified
-        counts and the attempts left. A unit that is rejected three times fails and keeps the deterministic map."""
-        return run(IX.submit_result, out, unit_id, answer, model)
+        counts, and `next`. Include every requested kind as a list ([] when empty). Accepted items are stored at once; on
+        partially_accepted or rejected, resubmit only the rejected items for this unit_id (attempts_left counts down, the
+        third rejected or partial submission fails the unit and keeps the deterministic map)."""
+        return run(IX.submit_result, out, unit_id, answer, model, mcp=True)
 
     @srv.tool()
     def index_status() -> dict:

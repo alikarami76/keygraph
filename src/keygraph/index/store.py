@@ -7,6 +7,7 @@ reasons or edge evidence passes through the PII scrub and the secret maskers."""
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -251,8 +252,33 @@ def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prom
     body = {"answer": known, "job_id": job_id, "model": clean(model, 120), "prompt_hash": prompt_hash,
             "schema_version": SCHEMA_VERSION, "tables": sorted(unit.get("tables") or []), "unit_id": unit["unit_id"],
             "verdicts": [{"kind": v.get("kind"), "index": v.get("index"), **_verdict(v)} for v in verdicts]}
-    p.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, p)  # atomic: replay sees the old file or the new one, never half of one
     return p
+
+
+def merge_saved(out_dir, unit: dict, answer: dict, verdicts: list[dict]) -> tuple[dict, list[dict]]:
+    """The saved answer of a unit united with newly accepted items (a resubmit of rejected items). An item already saved is
+    not added twice. Verdicts of both are re-indexed to the united answer."""
+    p = answers_dir(out_dir) / f"{unit['unit_id']}.json"
+    try:
+        old = json.loads(p.read_text(encoding="utf-8"))
+        have = {k: list(v) for k, v in (old.get("answer") or {}).items() if k in ITEMS}
+        old_v = [v for v in old.get("verdicts") or [] if isinstance(v, dict)]
+    except (OSError, ValueError, AttributeError):
+        have, old_v = {}, []
+    merged = {k: list(v) for k, v in have.items()}
+    verds = list(old_v)
+    for kind, items in answer.items():
+        for i, it in enumerate(items):
+            known = {f: x for f, x in it.items() if f in ITEMS[kind]["properties"]}
+            if known in merged.get(kind, []):
+                continue
+            lst = merged.setdefault(kind, [])
+            lst.append(it)
+            verds += [{**v, "index": len(lst) - 1} for v in verdicts if v["kind"] == kind and v["index"] == i]
+    return merged, verds
 
 
 def clear_llm(ctx) -> None:
