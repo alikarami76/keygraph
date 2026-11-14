@@ -154,9 +154,35 @@ def test_declared_fk_unchanged_and_equal_inferred_edge_only_raised(env):
     assert p["confidence"] == 0.95 and p["evidence"][-1] == "llm: same ids"
     assert json.dumps({k: v for k, v in p.items() if k != "evidence"}, sort_keys=True) == json.dumps(
         {k: v for k, v in json.loads(hi).items() if k != "evidence"}, sort_keys=True)
-    assert weak["confidence"] == 0.7  # raised to the capped llm confidence
-    ST.strip_llm(g)  # undo restores the old value and evidence
+    assert weak["confidence"] < 0.6 and weak["evidence"][-1] == "llm: same ids" and "llm_boost" not in weak  # evidence only
+    ST.strip_llm(g)  # undo removes the evidence
     assert weak["confidence"] < 0.6 and not any(x.startswith("llm: ") for x in weak["evidence"])
+
+
+def test_unverified_claim_keeps_a_hidden_edge_hidden_and_verified_one_raises_to_0_9(env):
+    _, g, ctx = env
+    weak = _edge(g, "shop.orders", ["address_id"], "shop.customer_addresses", ["id"])
+    mid = next(e for e in g.edges if e["kind"] == "inferred" and 0.6 <= e["confidence"] < 0.9
+               and e["status"] == "inferred" and not g.nodes[e["from"]].get("mirror_of") and not g.nodes[e["to"]].get("mirror_of"))
+    key = (mid["from"], mid["from_columns"], mid["to"], mid["to_columns"])
+    _store(env, {"relations": [
+        _rel(from_table="shop.orders", from_columns=["address_id"], to_table="shop.customer_addresses", to_columns=["id"], confidence=0.9),
+        _rel(from_table=key[0], from_columns=key[1], to_table=key[2], to_columns=key[3], confidence=0.9)]},
+        [{"kind": "relations", "index": 1, "verified": True, "check": "relation_overlap", "rate": 0.97, "n": 200}])
+    ST.apply_index_relations(g, ctx)
+    assert weak["confidence"] < 0.6 and weak["evidence"][-1] == "llm: same ids"  # an unverified claim never lifts it
+    assert _edge(g, *key)["confidence"] == 0.9 and _edge(g, *key)["llm_boost"][1] == 0.9
+
+
+def test_a_probed_edge_is_never_raised_even_by_a_verified_claim(env):
+    _, g, ctx = env
+    e = _edge(g, "shop.orders", ["address_id"], "shop.customer_addresses", ["id"])
+    e["status"], e["confidence"] = "probed", 0.2  # a probe lowered it
+    _store(env, {"relations": [_rel(from_table="shop.orders", from_columns=["address_id"], to_table="shop.customer_addresses",
+                                    to_columns=["id"], confidence=0.9)]},
+           [{"kind": "relations", "index": 0, "verified": True, "check": "relation_overlap", "rate": 0.97, "n": 200}])
+    ST.apply_index_relations(g, ctx)
+    assert e["confidence"] == 0.2 and "llm_boost" not in e and "llm: same ids" in e["evidence"]
 
 
 def test_apply_is_idempotent_and_ordered(env):
@@ -240,6 +266,33 @@ def test_describe_shows_performance_notes_and_provenance_labels(env):
     assert brief["performance"]["default_filters"] == ["status = 2"]
 
 
+def test_a_field_the_llm_filled_into_a_human_row_is_labelled_llm_in_describe_and_search(env):
+    out, g, ctx = env
+    _store(env, {"tables": [{"table": "shop.orders", "purpose": "Customer orders placed in the webshop", "reason": "r", "confidence": 0.7}],
+                 "columns": [_col("shop.orders", "status", meaning="ignored", unit="state")]})
+    d = describe_result(out, g, "shop.orders", min_confidence=0)
+    assert d["provenance"]["notes"] == "verified" and d["provenance"]["columns"]["status"] == "verified"  # the human fields keep their label
+    assert d["provenance"]["filled"]["notes"] == {"summary": {"label": "llm", "verified": False}}
+    assert d["provenance"]["filled"]["columns"] == {"status": {"unit": {"label": "llm", "verified": False}}}
+    from keygraph.search import format_describe, search
+    text = format_describe(d)
+    assert "summary: Customer orders placed in the webshop (llm)" in text and "[state]" in text and "(llm: unit)" in text
+    r = next(t for t in search(g, ctx, "orders")["tables"] if t["table"] == "shop.orders")
+    assert r["summary"] == "Customer orders placed in the webshop" and r["llm_fields"] == ["summary"] and r["verified"] is False
+    other = next(t for t in search(g, ctx, "customers")["tables"] if t["table"] == "shop.customers")
+    assert other["llm_fields"] == []
+
+
+def test_llm_concept_links_on_a_human_concept_are_skipped_and_counted_as_kept(env):
+    _, _, ctx = env
+    before = [dict(r) for r in ctx.db.execute("SELECT * FROM concept_links WHERE concept='order' ORDER BY table_id, col")]
+    res = _store(env, {"concepts": [{"name": "order", "definition": "other words", "tables": ["shop.carts", "shop.orders"],
+                                     "reason": "r", "confidence": 0.7}]})
+    assert [dict(r) for r in ctx.db.execute("SELECT * FROM concept_links WHERE concept='order' ORDER BY table_id, col")] == before
+    assert ctx.db.execute("SELECT COUNT(*) FROM concept_links WHERE source='llm'").fetchone()[0] == 0
+    assert res["kept"] >= 1
+
+
 # --- fix round 1 ---------------------------------------------------------------------------------------------------
 
 OVERRIDES = {"reject": [{"from": "billing.invoices.customer_id", "to": "shop.customers.id"},
@@ -266,6 +319,17 @@ def oenv(tmp_path):
     ctx = ContextDB(out / "keygraph.db", g)
     yield out, g, ctx
     ctx.close()
+
+
+def test_graph_json_has_no_override_rejects_key_and_rejects_still_hold_after_a_reload(oenv):
+    out, g, ctx = oenv
+    assert "override_rejects" not in json.loads((out / "graph.json").read_text())
+    g2 = Graph.load(out / "graph.json")  # a fresh graph: the rejects come from the overrides saved in keygraph.db
+    with ContextDB(out / "keygraph.db", g2) as ctx2:
+        ST.store_unit(ctx2, g2, "job-0001", UNIT, {"relations": [
+            _rel(from_table="billing.invoices", from_columns=["customer_id"], to_table="shop.customers", to_columns=["id"])]},
+            "claude-x", "hash1", [])
+        assert ST.apply_index_relations(g2, ctx2)["human_rejected"] == 1
 
 
 def test_a_rejected_pair_is_never_re_added(oenv):

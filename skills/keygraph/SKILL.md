@@ -34,15 +34,15 @@ After a map is built, you can add a meaning layer yourself (undeclared relations
     keygraph index replay --json                   # same rebuild, no model, no database
     keygraph index refresh --json                  # after the map changed (CLI only)
 
-MCP: `index_start`, `index_next`, `index_submit(unit_id, answer, model)` (`answer` is an object), `index_status`, `index_finish`; same JSON.
+MCP: `index_start`, `index_next`, `index_submit(unit_id, answer, model, probe_seconds)` (`answer` is an object), `index_status`, `index_finish`; same JSON.
 
 Loop: `start`, then `next` and `submit` until `next` says `done`, then `finish`.
 - The answer is one JSON object with a list for every requested kind (`relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`); `[]` when you have nothing. Tables are `schema.table` as in the packet. Every item has `reason` and `confidence` (0 to 1). Never write personal values.
 - Attempts: three per unit. `rejected` stores nothing and the unit stays pending: fix the listed items (item `$` is the whole answer) and submit again for the same `unit_id`. `partially_accepted` stores the accepted items: resubmit only the rejected ones. The third rejected or partial submit gives `failed`: the unit keeps the deterministic map. An unparseable or unreadable file is an error (exit 2) and uses no attempt, for the first three per unit.
-- `budget_exhausted`: tell the user, and continue only with their yes: `keygraph index start --budget N` with a larger N (a second `start` resumes the open job). On a `finished` job use `refresh` (changed tables) or `start --restart` (everything).
+- `budget_exhausted` (from `next`, or from `submit` when the answer does not fit the budget left: nothing stored, no attempt used): tell the user, and continue only with their yes: `keygraph index start --budget N` with a larger N (a second `start` resumes the open job). On a `finished` job use `refresh` (changed tables) or `start --restart` (everything).
 - Do not repeat relations the packet already lists as declared or inferred: a repeat adds evidence only (counted in `confirmed_existing`). If a rejection says a fact is already verified, drop that item; an all-empty answer is a valid resubmit.
 - Probes: the user puts a read-only database URL (or a `{sql}` command) in an environment variable, for example `KEYGRAPH_PROBE_URL`. Pass the variable's name with `--url-env` or `--cmd-env`. Never type a URL, password or command into a command line, a file or the chat. Without it the items are unverified. keygraph reads the variable when you submit and sends only SELECTs (at most 40 and 60 seconds per submit).
-- Output: `graph.json` can hold `source: "llm"` edges, `llm_boost` and `override_rejects`; `describe` gains `performance` and `provenance`. Commit the context files next to `index/answers/`.
+- Output: `graph.json` can hold `source: "llm"` edges, `llm_boost`; `describe` gains `performance` and `provenance` (fields the LLM filled into a human note show as `llm`, unverified; `search` gives `llm_fields`). Commit the context files next to `index/answers/`.
 
 ## Read confidence honestly
 

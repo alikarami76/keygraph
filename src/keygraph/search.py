@@ -104,12 +104,14 @@ def search(graph: Graph, ctx: ContextDB, query: str, limit: int = 8, with_paths:
     for t in top:
         c = ctx.table_context(t)
         notes = c["notes"] or {}
+        llm_fields = sorted(filled_fields(ctx, t).get("notes", {}))
         node = graph.nodes[t]
         out_tables.append({
             "table": t, "score": round(score[t], 2), "why": why[t][:5], "grain": notes.get("grain", ""),
             "summary": notes.get("summary", ""), "primary_key": node["primary_key"],
             "filter_columns": filter_columns(node, notes), "concepts": sorted({l["concept"] for l in c["concepts"]}),
-            "pitfalls": notes.get("pitfalls", ""), "verified": bool(notes.get("verified"))})
+            "pitfalls": notes.get("pitfalls", ""), "llm_fields": llm_fields,
+            "verified": bool(notes.get("verified")) and not llm_fields})
     paths = []
     if with_paths and len(top) >= 2:
         for other in top[1:3]:
@@ -160,10 +162,42 @@ def edge_label(e: dict) -> str:
     return "deterministic"
 
 
-def _provenance(graph: Graph, ctx: ContextDB, t: str, c: dict, relations: list[dict] | None) -> dict:
-    prov = {(r["kind"], r["ref"]): r for r in ctx.rows("fact_provenance")
-            if r["ref"] == t or r["ref"].startswith(t + ".") and r["kind"] == "column"}
+def _fact_rows(ctx: ContextDB, t: str) -> dict:
+    """The fact_provenance rows of one table and its columns, keyed (kind, ref)."""
+    pre = t + "."
+    rows = ctx.rows("fact_provenance", "WHERE ref=? OR (kind='column' AND substr(ref,1,?)=?)", (t, len(pre), pre))
+    return {(r["kind"], r["ref"]): r for r in rows}
+
+
+def filled_fields(ctx: ContextDB, t: str, prov: dict | None = None) -> dict:
+    """Fields the indexing agent filled into a row a person wrote: {"notes": {field: {label, verified: false}},
+    "columns": {col: {field: ...}}}. The row keeps its human label; only these fields are labelled llm."""
+    prov = _fact_rows(ctx, t) if prov is None else prov
     out: dict = {}
+    for (kind, ref), r in sorted(prov.items()):
+        if kind not in ("table", "column"):
+            continue
+        try:
+            f = (json.loads(r["probe"]) if r["probe"] else {}).get("filled") or {}
+        except ValueError:
+            continue
+        if not f.get("fields"):
+            continue
+        lab = {"label": fact_label("llm", 0, r), "verified": False}
+        flds = {k: dict(lab) for k in sorted(f["fields"])}
+        if kind == "table":
+            out["notes"] = flds
+        else:
+            out.setdefault("columns", {})[ref[len(t) + 1:]] = flds
+    return out
+
+
+def _provenance(graph: Graph, ctx: ContextDB, t: str, c: dict, relations: list[dict] | None) -> dict:
+    prov = _fact_rows(ctx, t)
+    out: dict = {}
+    fl = filled_fields(ctx, t, prov)
+    if fl:
+        out["filled"] = fl
     n = c["notes"]
     if n:
         out["notes"] = fact_label(n["source"], n["verified"], prov.get(("table", t)))
@@ -250,9 +284,10 @@ def format_describe(d: dict) -> str:
     n = d["context"]["notes"]
     if n:
         out.append(f"  grain: {n['grain']}")
+        fl = (d.get("provenance") or {}).get("filled", {})
         for k in ("summary", "freshness", "soft_delete", "date_column", "pitfalls"):
             if n.get(k):
-                out.append(f"  {k}: {n[k]}")
+                out.append(f"  {k}: {n[k]}" + (" (llm)" if k in fl.get("notes", {}) else ""))
         out.append(f"  context source: {safe_source(n['source'])}  verified: {bool(n['verified'])}"
                    + (f"  provenance: {d['provenance']['notes']}" if d.get("provenance", {}).get("notes") else ""))
     out.append("  efficient filters: " + (", ".join(d["filter_columns"]) or "n/a"))
@@ -275,6 +310,8 @@ def format_describe(d: dict) -> str:
         lab = (d.get("provenance") or {}).get("columns", {}).get(c["name"])
         if s and lab and lab.startswith("llm"):
             extra += f" ({lab})"
+        elif s and c["name"] in (d.get("provenance") or {}).get("filled", {}).get("columns", {}):
+            extra += " (llm: " + ", ".join(d["provenance"]["filled"]["columns"][c["name"]]) + ")"
         pf = c.get("profile")
         if pf:
             from .profile import summarize

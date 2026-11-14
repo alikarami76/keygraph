@@ -8,23 +8,27 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
 
 from keygraph.code.refs import mask_secrets
 from keygraph.graph import Graph, edge_id
+from keygraph.index.jobs import now as _now
 from keygraph.index.pii import mask_keywords, scrub
+from keygraph.overrides import reject_pairs
 from keygraph.index.schema import ITEMS, SCHEMA_VERSION
 
 LLM = "llm"
 CAP_UNVERIFIED, CAP_VERIFIED = 0.75, 0.9
 ANSWERS = "answers"
-VERDICT_KEYS = ("verified", "check", "rate", "n", "error", "skipped")
+VERDICT_KEYS = ("verified", "check", "rate", "n", "error", "skipped", "why")
 _PERF_LISTS = ("common_filters", "slow_patterns", "index_friendly_filters", "hints")
 
 
-def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S")
+def _write_json(p: Path, body: dict) -> None:
+    """Sorted keys, no timestamps, atomic: a reader sees the old file or the new one, never half of one."""
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
 
 
 def clean(text, limit: int = 400) -> str:
@@ -225,9 +229,12 @@ def store_unit(ctx, g: Graph, job_id: str, unit: dict, answer: dict, model: str,
     for it in answer.get("concepts") or []:
         name = clean(it["name"], 120).strip()
         tables = [t for t in (_tid(g, x) for x in it.get("tables") or []) if t]
-        _record(ctx, "concepts", {"name": name},
+        state = _record(ctx, "concepts", {"name": name},
                         {"definition": clean(it.get("definition", "")), "synonyms": _j([clean(s, 120) for s in it.get("synonyms") or []])},
                         "concept", name, meta, counts, _clamp(it.get("confidence")), None, it.get("reason", ""))
+        if state in ("filled", "kept"):  # a concept a person wrote: the model's links never change it
+            counts["kept"] += 1 if tables else 0
+            continue
         ctx.db.execute("DELETE FROM concept_links WHERE concept=? AND source=?", (name, LLM))
         for t in sorted(set(tables)):
             if not ctx.db.execute("SELECT 1 FROM concept_links WHERE concept=? AND table_id=? AND col='' AND role='primary-record'",
@@ -265,9 +272,7 @@ def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prom
             "verdicts": [{"kind": v.get("kind"), "index": v.get("index"), **_verdict(v)} for v in verdicts]}
     if attempts is not None:  # the unit's attempts after this submit: replay uses it to tell a file from a crashed submit
         body["attempts"] = attempts
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
-    os.replace(tmp, p)  # atomic: replay sees the old file or the new one, never half of one
+    _write_json(p, body)
     return p
 
 
@@ -280,9 +285,7 @@ def set_saved_attempts(out_dir, unit_id: str, attempts: int) -> None:
         return
     if isinstance(body, dict) and "attempts" in body:
         body["attempts"] = attempts
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(json.dumps(body, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
-        os.replace(tmp, p)
+        _write_json(p, body)
 
 
 def merge_saved(out_dir, unit: dict, answer: dict, verdicts: list[dict]) -> tuple[dict, list[dict]]:
@@ -392,11 +395,11 @@ def _human_rejected(rejects: list[dict], ft: str, fc: list, tt: str, tc: list) -
 def apply_index_relations(g: Graph, ctx) -> dict:
     """Apply index_relations to the graph (idempotent; call after inference and the context import, before the
     graph is saved). Unverified edges are capped at 0.75 and probe-passed ones sit at 0.9. A rejected candidate stays in
-    keygraph.db only. A declared, confirmed or added edge is never changed; an equal inferred edge gets the evidence and
-    max(confidence, llm confidence)."""
+    keygraph.db only. A declared, confirmed or added edge is never changed; an equal inferred edge gets the evidence, and
+    max(confidence, 0.9) when the claim is probe-verified (never for an edge a probe lowered, never for an unverified claim)."""
     strip_llm(g)
     rows = ctx.db.execute("SELECT * FROM index_relations ORDER BY rel_id").fetchall()
-    rejects = g.data.get("override_rejects") or []
+    rejects = reject_pairs(g.nodes, ctx.override_rejects())  # the overrides the map was built with, kept in keygraph.db
     existing: dict[frozenset, dict] = {}
     for e in g.data["edges"]:
         existing.setdefault(_pair(e), e)
@@ -426,7 +429,8 @@ def apply_index_relations(g: Graph, ctx) -> dict:
                 out["unchanged"] += 1
                 continue
             e["evidence"] = list(e.get("evidence", [])) + ev
-            if conf > e["confidence"]:
+            # Only a probe-verified claim may lift an edge, and never one a probe lowered; unverified ones add evidence only.
+            if r["status"] == "verified" and e["status"] != "probed" and conf > e["confidence"]:
                 e["llm_boost"] = [e["confidence"], conf]
                 e["confidence"] = conf
             out["merged"] += 1

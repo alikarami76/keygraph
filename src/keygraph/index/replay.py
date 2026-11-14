@@ -6,6 +6,7 @@ llm fact, re-applies index/answers/*.json in unit-id order and renders. `finish`
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -39,7 +40,28 @@ def snapshot_base(out_dir) -> Path:
     return dst
 
 
-def _load_base(out: Path) -> Graph:
+def schema_fingerprint(data: dict) -> str:
+    """A hash of the schema in a graph: the sorted table ids and column ids (edges, notes and the llm layer do not count)."""
+    ids = sorted({n["id"] for n in data.get("nodes", [])} |
+                 {f"{n['id']}.{c['name']}" for n in data.get("nodes", []) for c in n.get("columns", [])})
+    return hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest()
+
+
+REBUILT = ("the map was rebuilt since index start; run `keygraph index refresh` (re-snapshots and re-plans) then finish")
+
+
+def check_fresh(out: Path) -> None:
+    """Refuse when graph.json no longer has the schema that index/base_graph.json was snapshotted from (a load, scan or
+    build ran since `index start`): replaying would silently revert the new tables and columns."""
+    gp = out / "graph.json"
+    bp = base_path(out)
+    if not (gp.exists() and bp.exists()):
+        return
+    if schema_fingerprint(json.loads(gp.read_text(encoding="utf-8"))) != schema_fingerprint(json.loads(bp.read_text(encoding="utf-8"))):
+        raise ValueError(REBUILT)
+
+
+def load_base(out: Path) -> Graph:
     bp = base_path(out)
     if not bp.exists():
         raise FileNotFoundError(f"{bp} is missing: run `keygraph index start --dir {out}` first")
@@ -79,7 +101,8 @@ def replay(out_dir) -> dict:
     """Rebuild the llm layer from index/answers/ and render. Never opens a database connection to a source."""
     from keygraph.cli import render
     out = Path(out_dir)
-    g = _load_base(out)
+    g = load_base(out)
+    check_fresh(out)
     files = sorted(answers_dir(out).glob("*.json"), key=lambda p: p.stem)
     have_db = (out / "keygraph.db").exists()
     used = 0

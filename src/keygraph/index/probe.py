@@ -187,13 +187,15 @@ class _Prober:
         n = self.g.nodes[tid]
         return self.q(n["table"]) if self.bare else f"{self.q(n['schema'])}.{self.q(n['table'])}"
 
-    def verdict(self, check: str, verified, rate=None, n: int = 0, **extra) -> dict:
-        return {"verified": verified, "check": check, "rate": None if rate is None else round(rate, 3), "n": n, **extra}
+    def verdict(self, check: str, verified, rate=None, n: int = 0, why: str = "", **extra) -> dict:
+        """`why` (a fixed phrase, never a value) says what happened when nothing could be checked (n 0, verified null)."""
+        return {"verified": verified, "check": check, "rate": None if rate is None else round(rate, 3), "n": n,
+                **({"why": why} if why else {}), **extra}
 
     def relation(self, it: dict) -> dict:
         c = "relation_overlap"
         if len(it["from_columns"]) != 1:
-            return self.verdict("relation_overlap_multi_column", None)
+            return self.verdict("relation_overlap_multi_column", None, why="multi-column relations are not probed")
         if not self.cap.take(2):
             return self.verdict(c, None, skipped="query_cap")
         fc, tc, q = it["from_columns"][0], it["to_columns"][0], self.q
@@ -201,7 +203,7 @@ class _Prober:
                                            f"WHERE {q(fc)} IS NOT NULL LIMIT {REL_SAMPLE}")]
         lits = sorted({x for x in map(_lit, vals) if x is not None})
         if not lits:
-            return self.verdict(c, None)
+            return self.verdict(c, None, why="no non-null values sampled" if not vals else "sampled values could not be used safely")
         found = self.run.run(f"SELECT DISTINCT {q(tc)} FROM {self.t(it['to_table'])} WHERE {q(tc)} IN ({','.join(lits)}) "
                              f"LIMIT {len(lits)}")
         hit = {x for x in map(_lit, [r[0] for r in found]) if x in set(lits)}
@@ -227,7 +229,7 @@ class _Prober:
         key = it.get("grain_columns") or []
         trivial = [node.get("primary_key") or [], *[u.get("columns") or [] for u in node.get("unique_keys") or []]]
         if not key or any(k and set(k) == set(key) for k in trivial):
-            return self.verdict("grain_pk_trivial", None)
+            return self.verdict("grain_pk_trivial", None, why="the grain columns are a primary or unique key, or none were named")
         c = "grain_sample_unique"
         if not self.cap.take(2):
             return self.verdict(c, None, skipped="query_cap")
@@ -235,7 +237,7 @@ class _Prober:
         inner = f"(SELECT {cols} FROM {self.t(it['table'])} LIMIT {GRAIN_SAMPLE}) s"
         total = _int(self.run.run(f"SELECT COUNT(*) FROM {inner}"))
         if not total:
-            return self.verdict(c, None)
+            return self.verdict(c, None, why="the table has no rows")
         distinct = _int(self.run.run(f"SELECT COUNT(*) FROM (SELECT DISTINCT {cols} FROM {inner}) d"))
         return self.verdict(c, distinct == total, distinct / total, total)
 
@@ -248,7 +250,7 @@ class _Prober:
         built = [parse_filter(t, cols, self.q) for t in texts]
         ok = [b for b in built if b]
         if not ok:
-            return self.verdict(c + "_unparsed", None)
+            return self.verdict(c + "_unparsed", None, why="the filter text is not a simple column filter")
         rates, total, fails = [], 0, 0
         for sql, used in ok:
             if not self.cap.take(1):
@@ -257,7 +259,7 @@ class _Prober:
             rows = self.run.run(f"SELECT COUNT(*), SUM(CASE WHEN {sql} THEN 1 ELSE 0 END) FROM {inner}")
             total, kept = _int(rows), _int(rows, 1)
             if not total:
-                return self.verdict(c, None)
+                return self.verdict(c, None, why="the table has no rows")
             rates.append(kept / total)
             fails += kept == 0
         return self.verdict(c, False if fails else (True if len(ok) == len(built) else None), min(rates), total)
@@ -280,9 +282,9 @@ def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: st
         v = {"verified": None, "check": "none", "rate": None, "n": 0}
         spent = spent or bool(pr and checks and deadline is not None and time.monotonic() >= deadline)
         if pr is None and checks:
-            v = {"verified": None, "check": "no_source", "rate": None, "n": 0}
+            v = {"verified": None, "check": "no_source", "rate": None, "n": 0, "why": "no probe source"}
         elif checks and spent:
-            v = {"verified": None, "check": "time_budget", "rate": None, "n": 0}
+            v = {"verified": None, "check": "time_budget", "rate": None, "n": 0, "why": "the probe time budget was spent"}
         elif checks:
             vs = []
             for name in checks:

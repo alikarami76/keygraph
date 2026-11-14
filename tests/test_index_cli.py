@@ -492,3 +492,64 @@ def test_submit_counts_relations_that_repeat_an_existing_edge(work, capsys, tmp_
     assert r["status"] == "accepted" and r["accepted"] == 1 and r["confirmed_existing"] == 1
     empty = submit(capsys, work, tmp_path, run(capsys, work, "index", "next")["unit_id"], {k: [] for k in ans})
     assert empty["confirmed_existing"] == 0
+
+
+def _load_with_extra_table(out: Path, tmp_path: Path) -> None:
+    from test_example_shop import SHOP
+    d = SHOP / "dumps"
+    cols = json.loads((d / "columns.json").read_text(encoding="utf-8"))
+    cols.append({"TABLE_SCHEMA": "shop", "TABLE_NAME": "zz_newtable", "COLUMN_NAME": "id", "ORDINAL_POSITION": 1, "DATA_TYPE": "bigint",
+                 "COLUMN_TYPE": "bigint unsigned", "IS_NULLABLE": "NO", "COLUMN_KEY": "PRI", "EXTRA": ""})
+    f = tmp_path / "columns.json"
+    f.write_text(json.dumps(cols), encoding="utf-8")
+    assert main(["load", "--dir", str(out), "--columns", str(f), "--statistics", str(d / "statistics.json"),
+                 "--key-columns", str(d / "key_columns.json"), "--tables", str(d / "tables.json"),
+                 "--context", str(SHOP / "context.yaml")]) == 0
+
+
+def test_finish_and_replay_refuse_a_map_rebuilt_since_start_until_refresh(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations", "--max-units", "1")
+    submit(capsys, work, tmp_path, ORDERS_UNIT, EMPTY)
+    _load_with_extra_table(work, tmp_path)
+    assert "zz_newtable" in (work / "graph.json").read_text()
+    for verb in ("finish", "replay"):
+        assert main(["index", verb, "--dir", str(work)]) == 2
+        err = capsys.readouterr().err
+        assert "rebuilt since index start" in err and "keygraph index refresh" in err
+        assert "zz_newtable" in (work / "graph.json").read_text()  # nothing was overwritten
+    run(capsys, work, "index", "refresh")
+    assert "zz_newtable" in (work / "index" / "base_graph.json").read_text()
+    run(capsys, work, "index", "finish")
+    assert (work / "graph.json").read_text().count("zz_newtable") >= 1
+
+
+def test_submit_refuses_an_answer_that_does_not_fit_the_budget_left_and_uses_no_attempt(work, capsys, tmp_path):
+    run(capsys, work, "index", "start", "--tasks", "relations", "--budget", "100")
+    need = run(capsys, work, "index", "next")["needed"]
+    run(capsys, work, "index", "start", "--budget", str(need + 60))
+    nxt = run(capsys, work, "index", "next")
+    assert nxt["status"] == "unit"
+    big = {"relations": [{**BAD["relations"][0], "reason": "x" * 6000}]}
+    before = run(capsys, work, "index", "status")
+    r = submit(capsys, work, tmp_path, nxt["unit_id"], big)
+    assert r["status"] == "budget_exhausted" and r["hint"] and r["needed"] > r["budget_left"] and "resume" in r
+    after = run(capsys, work, "index", "status")
+    assert after["used"] == before["used"] and after["used"] <= after["budget"]
+    assert _units(work)[nxt["unit_id"]]["attempts"] == 0 and _units(work)[nxt["unit_id"]]["status"] == "pending"
+    ok = submit(capsys, work, tmp_path, nxt["unit_id"], EMPTY)  # a small answer still fits
+    st = run(capsys, work, "index", "status")
+    assert ok["status"] == "accepted" and st["used"] <= st["budget"]
+
+
+def test_submit_says_plainly_when_the_probe_variable_is_not_set_in_this_shell(work, capsys, tmp_path, monkeypatch):
+    from keygraph.index import cli_api as X
+    monkeypatch.setenv("KEYGRAPH_PROBE_URL", "sqlite:///" + str(work / "nothing.db"))
+    run(capsys, work, "index", "start", "--tasks", "relations", "--url-env", "KEYGRAPH_PROBE_URL")
+    monkeypatch.delenv("KEYGRAPH_PROBE_URL")  # a harness that runs every command in a fresh shell
+    events = []
+    monkeypatch.setattr(X.devlog, "decide", lambda name, **kw: events.append((name, kw)))
+    r = submit(capsys, work, tmp_path, run(capsys, work, "index", "next")["unit_id"], EMPTY)
+    assert r["status"] == "accepted"
+    assert r["probe_source"] == "missing: KEYGRAPH_PROBE_URL is not set in this shell; items stored unverified"
+    sub = next(kw for name, kw in events if name == "index_submit")
+    assert sub["probe_source"] == "missing" and sub["probe_env"] == "KEYGRAPH_PROBE_URL"

@@ -130,3 +130,10 @@ def test_table_chunking_sql_has_no_backslash():
     fetch_metadata(run, limit=3)
     assert any("LIKE" in q for q in seen) and not any("\\" in q for q in seen)
     assert all(assert_select(q) for q in seen)
+
+
+def test_lit_skips_values_that_look_like_dollar_quotes():
+    from keygraph.probe import _lit
+    assert _lit("$2b$12$abc") is None and _lit("$$") is None and _lit("a$tag$b") is None
+    assert _lit("price $5") == "'price $5'" and _lit(7) == "7" and _lit("ok") == "'ok'"
+    assert_select(f"SELECT 1 WHERE x IN ({_lit('plain')})")

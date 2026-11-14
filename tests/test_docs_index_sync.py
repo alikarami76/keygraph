@@ -45,3 +45,11 @@ def test_every_index_tool_a_doc_names_exists(doc):
     assert {"start", "next", "submit", "status", "finish"} <= named, f"{doc} must name the five MCP tools"
     for verb in sorted(named):
         assert f"index_{verb}" in MCP_TOOLS, f"{doc} names MCP tool index_{verb}, which does not exist"
+
+
+def test_setup_tells_agents_about_fresh_shells_verdicts_and_has_no_repeat_exception():
+    text = (ROOT / "setup/SETUP.md").read_text(encoding="utf-8")
+    assert "fresh shell" in text and "same command line" in text
+    assert "verified: true" in text and "verified: false" in text and "verified: null" in text and "`n`" in text
+    assert "repeat one inferred" not in text and "you may repeat" not in text
+    assert "missing: NAME is not set in this shell" in text

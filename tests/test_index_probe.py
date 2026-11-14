@@ -254,3 +254,16 @@ def test_time_budget_runs_out_between_items(src, shop_graph, monkeypatch):
     ents = [_rel("billing.payments", ["order_id"], "shop.orders", ["id"]), _rel("shop.orders", ["id"], "shop.products", ["id"])]
     first, second = _run(src, shop_graph, ents, time_budget=1)
     assert first["verified"] is True and second["check"] == "time_budget" and second["verified"] is None
+
+
+def test_a_verdict_that_checked_nothing_says_why(src, shop_graph):
+    """The demo's orders.created_by_id is NULL in every row, so there is nothing to sample: n 0, verified null, and a reason."""
+    ok, null_rel, trivial = _run(src, shop_graph, [
+        _rel("billing.payments", ["order_id"], "shop.orders", ["id"]),
+        _rel("shop.orders", ["created_by_id"], "shop.users", ["id"]),
+        _ent("tables", {"table": "shop.orders", "grain": "one row per order", "grain_columns": ["id"], "reason": "r", "confidence": 0.7})])
+    assert "why" not in ok
+    assert null_rel["verified"] is None and null_rel["n"] == 0 and null_rel["why"] == "no non-null values sampled"
+    assert trivial["verified"] is None and trivial["n"] == 0 and "primary or unique key" in trivial["why"]
+    (nosrc,) = P.probe_items([_rel("shop.orders", ["id"], "shop.customers", ["id"])], shop_graph, None, '"')
+    assert nosrc["why"] == "no probe source"

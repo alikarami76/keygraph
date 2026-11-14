@@ -144,16 +144,16 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
 
 **Ask first**, in one message: "I can also build a meaning layer with myself as the indexer. It uses my own tokens, capped at 200000 by default (I can use a smaller cap). It makes search and describe richer. Shall I do it?" Wait for the answer. If the user names a smaller number, use it as `--budget`.
 
-Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir "$OUT"` to every command, or `export KEYGRAPH_DIR="$OUT"`. Use `--json`. Every `next` and `submit` reply has a `status` field: read it. (`start`, `finish`, `status` and `refresh` return a summary instead of a `status` field to branch on.) The `next` field of a reply names the next call.
+`OUT` is your output folder. Some harnesses run every command in a fresh shell, so nothing you `export` in one command is still set in the next. Set the probe variable on the same command line as each `keygraph index start` and each `keygraph index submit` (see "Probe source" below); if it is missing at `submit`, the reply says `probe_source: "missing: NAME is not set in this shell; items stored unverified"` and the items are stored without a probe. Add `--dir "$OUT"` to every command, or `export KEYGRAPH_DIR="$OUT"`. Use `--json`. Every `next` and `submit` reply has a `status` field: read it. (`start`, `finish`, `status` and `refresh` return a summary instead of a `status` field to branch on.) The `next` field of a reply names the next call.
 
 1. Plan the work.
 
-   - Probe source. keygraph can check your claims against the data with SELECT-only queries (it never shows you a row). The connection must be a **read-only** connection held in an environment variable; you pass only the variable's name, never its value. Never type a URL, password or command into a command line, a file or the chat. On a real database the user exports the variable themselves, for example `KEYGRAPH_PROBE_URL`, and you add `--url-env KEYGRAPH_PROBE_URL` (or `--cmd-env NAME` for a read-only command with `{sql}`). If `start` says the variable is not set, leave `--url-env` out: without probes everything is stored as unverified, which is fine.
-   - For the demo, use a copy of the demo database as the probe source: `cp <path to your copy of examples/shop>/shop.db "$OUT/../shop-probe.db" && export KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db"`.
+   - Probe source. keygraph can check your claims against the data with SELECT-only queries (it never shows you a row). The connection must be a **read-only** connection held in an environment variable; you pass only the variable's name, never its value. For a real database, never type a URL, password or command into a command line, a file or the chat: use a variable the user has already exported (for example `KEYGRAPH_PROBE_URL`), and add `--url-env KEYGRAPH_PROBE_URL` (or `--cmd-env NAME` for a read-only command with `{sql}`). If the variable is not set in your shell, tell the user; do not make one up. If `start` says the variable is not set, leave `--url-env` out: without probes everything is stored as unverified, which is fine. The only exception is the demo below, because its probe source is a local SQLite file with no secret in it.
+   - For the demo, use a copy of the demo database as the probe source: `cp <path to your copy of examples/shop>/shop.db "$OUT/../shop-probe.db"`. Its URL is `sqlite:///` plus the absolute path of that copy. Put the variable in front of every `start` and every `submit`, for example `KEYGRAPH_PROBE_URL="sqlite:///$(cd "$OUT/.." && pwd)/shop-probe.db" keygraph index submit ...`. (Demo only: you may type this local `sqlite:///` path. Never type any other URL.)
    - Start. For the demo add `--max-units 3` so the run stays short. The units beyond the cap are marked `skipped`; that is not a failure.
 
    ```bash
-   keygraph index start --budget 200000 --url-env KEYGRAPH_PROBE_URL --dir "$OUT" --json      # demo: add --max-units 3
+   keygraph index start --budget 200000 --url-env KEYGRAPH_PROBE_URL --dir "$OUT" --json      # demo: add --max-units 3, and set KEYGRAPH_PROBE_URL on this same line
    ```
 
    The reply is `{"job_id", "units", "budget", "used", "pending", "skipped", "tasks", "url_env", "cmd_env", "dialect", "resumed", "next"}`. Running `start` again resumes the open job.
@@ -174,7 +174,7 @@ Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir
    - Use only tables listed in `packet.unit_tables` as the `table` of an item, and only columns that appear in the packet. Write tables as `schema.table`, as in the packet. A table outside the unit is rejected and costs an attempt.
    - Every item needs a `reason` and a `confidence` between 0 and 1. Never write personal values.
    - Before you answer for a column or table, check what is stored: `keygraph describe <table> --brief --dir "$OUT"`. A verified note is never replaced, and an item that tries to is rejected.
-   - Do not repeat relations that the packet already lists as declared or inferred (`candidate_relations`). A declared one is rejected; an inferred one is accepted but adds evidence only, and the reply counts it in `confirmed_existing`. Propose relations only when the columns suggest a link the map does not have. (Demo only: to watch a probe work, you may repeat one inferred candidate once.)
+   - Do not repeat relations that the packet already lists as declared or inferred (`candidate_relations`). A declared one is rejected; an inferred one is accepted but adds evidence only, and the reply counts it in `confirmed_existing`. Propose relations only when the columns suggest a link the map does not have.
    - The `instructions` text ends with one valid example item per kind: copy its shape and replace every value. Shape of the answer, with placeholders:
 
    ```json
@@ -183,13 +183,18 @@ Run these from the same shell as step 4. `OUT` is your output folder. Add `--dir
 
    A short honest answer is better than a long guess. Do not submit the placeholders as they are.
 
+   To see a probe work on the demo, answer for `billing.payments.method_id` (the first unit, whose `packet.unit_tables` lists `billing.payments`) with a columns item that lists codes: `{"table": "billing.payments", "column": "method_id", "meaning": "How the customer paid", "codes": {"1": "card", "2": "wallet", "3": "bank transfer"}, "reason": "three distinct values 1 to 3 in the profile", "confidence": 0.6}`. The codes probe finds all three values in the data, so the reply shows `verified: 1`. (The demo has no note for that column, so it is not blocked by a verified note.)
+
 4. Submit it, using the `unit_id` from step 2, then read `status`:
 
    ```bash
-   keygraph index submit <unit_id> "${TMPDIR:-/tmp}/keygraph-answer.json" --dir "$OUT" --json
+   keygraph index submit <unit_id> "${TMPDIR:-/tmp}/keygraph-answer.json" --dir "$OUT" --json    # demo: put KEYGRAPH_PROBE_URL=... in front, on this same line
    ```
 
    The reply has `status`, `accepted`, `rejected` (a list of `item` and `reason`), `verified`, `unverified`, `probe_failed`, `confirmed_existing`, `budget_left` and `probe_source`.
+   - `probe_source` says whether probes could run: `none` (no variable named at `start`), `url` or `cmd` (probes ran), `error` (the source could not be opened), or `missing: NAME is not set in this shell; items stored unverified`. With anything but `url` or `cmd`, every item is stored unverified: set the variable on the command line and submit the next unit that way.
+   - Probe verdicts (in `index/answers/<unit_id>.json`, key `verdicts`): `verified: true` means the data supports the claim (the probe passed); `verified: false` means the data contradicts it, so the item is counted in `probe_failed` and its checkable part is not stored; `verified: null` means nothing could be checked (no probe source, nothing to sample, a key that is unique by definition, or the time or query cap), and the fact stays unverified; null is neither a pass nor a failure. `n` is how many values or rows the probe looked at, and `rate` the share that matched. A verdict with `n: 0` and `verified: null` carries a short `why`, for example "no non-null values sampled".
+   - `budget_exhausted` (from `submit`): the answer does not fit the budget left. Nothing was stored and no attempt was used. Ask the user whether to raise the budget (`keygraph index start --budget <larger number>`), then submit the same file again.
    - `accepted`: go back to 2.
    - `rejected`: nothing was stored and the unit stays pending. Read every entry of `rejected` (`item` and `reason`; item `$` means the whole answer, for example a missing list), fix the file, and run the same submit again with the same `unit_id`. You have three attempts per unit (`attempts_left` counts them down).
    - `partially_accepted`: the accepted items are stored. Write a new file holding only the rejected items, fixed (you may leave out the kinds that had no problem), and submit it again for the same `unit_id`. If a reason says a fact is already verified, drop that item: you cannot replace it. An answer with all lists empty is a valid resubmit, and it finishes the unit.

@@ -307,15 +307,16 @@ def build_server(dir: str | Path) -> MCPServer:
         return run(IX.next_result, out)
 
     @srv.tool()
-    def index_submit(unit_id: str, answer: dict, model: str = "") -> dict:
+    def index_submit(unit_id: str, answer: dict, model: str = "", probe_seconds: float = 60.0) -> dict:
         """Submit your answer for a unit as a JSON object (the answer argument, not text) following the schema from
         index_next, and say which model you are. keygraph rejects unknown tables and columns, PII-looking values and
         contradictions with declared keys, probes checkable claims read-only, and stores the rest with provenance. Returns
         status accepted, partially_accepted, rejected or failed, the rejected items with reasons, verified and unverified
         counts, and `next`. Include every requested kind as a list ([] when empty). Accepted items are stored at once; on
         partially_accepted or rejected, resubmit only the rejected items for this unit_id (attempts_left counts down, the
-        third rejected or partial submission fails the unit and keeps the deterministic map)."""
-        return run(IX.submit_result, out, unit_id, answer, model)
+        third rejected or partial submission fails the unit and keeps the deterministic map). probe_seconds is the wall-clock
+        budget for all probes of this submit (default 60)."""
+        return run(IX.submit_result, out, unit_id, answer, model, probe_seconds)
 
     @srv.tool()
     def index_status() -> dict:

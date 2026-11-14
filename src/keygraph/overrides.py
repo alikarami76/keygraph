@@ -60,10 +60,26 @@ def _resolve(nodes: dict, head: str) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
+def reject_pairs(nodes: dict, items: list[dict]) -> list[dict]:
+    """The rejected pairs of `reject` override items, resolved against the graph's tables (unknown tables are left out).
+    An LLM relation must never bring one of these back, so keygraph.db keeps the raw items and the indexer resolves them."""
+    out = []
+    for item in items:
+        fh, fc = parse_ref(item["from"])
+        ft = _resolve(nodes, fh)
+        if ft is None:
+            continue
+        tt, tc = None, []
+        if item.get("to"):
+            th, tc = parse_ref(item["to"])
+            tt = _resolve(nodes, th)
+        out.append({"from": ft, "from_columns": fc, "to": tt, "to_columns": tc if tt else []})
+    return sorted(out, key=lambda r: json.dumps(r, sort_keys=True))
+
+
 def apply_overrides(data: dict, ov: Overrides) -> None:
     nodes = {n["id"]: n for n in data["nodes"]}
     applied = {"confirmed": 0, "rejected": 0, "added": 0}
-    rejects: list[dict] = []
     notes = data["warnings"]
 
     def locate(item):
@@ -83,8 +99,6 @@ def apply_overrides(data: dict, ov: Overrides) -> None:
             e["kind"] == "inferred" and e["from"] == ft and e["from_columns"] == fc
             and (tt is None or (e["to"] == tt and (not tc or e["to_columns"] == tc))))]
         applied["rejected"] += before - len(data["edges"])
-        if ft is not None:  # remembered so a later LLM relation cannot bring the pair back
-            rejects.append({"from": ft, "from_columns": fc, "to": tt, "to_columns": tc if tt else []})
         if devlog.active():
             devlog.trace("override.reject", frm=item["from"], to=item.get("to"), removed=before - len(data["edges"]),
                          effect="removed inferred edges" if before != len(data["edges"]) else "matched no inferred edge")
@@ -132,5 +146,3 @@ def apply_overrides(data: dict, ov: Overrides) -> None:
                 })
             applied[kind] += 1
     data["overrides"] = applied
-    if rejects:
-        data["override_rejects"] = sorted(rejects, key=lambda r: json.dumps(r, sort_keys=True))

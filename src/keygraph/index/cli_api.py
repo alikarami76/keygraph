@@ -53,7 +53,7 @@ def _need_map(out: Path) -> None:
 def _base(out: Path):
     _need_map(out)
     try:
-        return RP._load_base(out)
+        return RP.load_base(out)
     except FileNotFoundError as exc:
         raise ValueError(str(exc)) from None
 
@@ -217,12 +217,13 @@ def next_result(dir) -> dict:
 # --- submit ----------------------------------------------------------------------------------------------------
 
 def _source(job: dict, g) -> tuple[PR.Source | None, str]:
-    """(probe source, label): label is none (not configured), unset (the named variable is empty now), url, cmd or error."""
+    """(probe source, label): label is none (not configured), `missing: NAME is not set in this shell; items stored
+    unverified` (the named variable is empty now), url, cmd or error."""
     if not (job["url_env"] or job["cmd_env"]):
         return None, "none"
     name = job["url_env"] or job["cmd_env"]
     if not os.environ.get(name):
-        return None, "unset"
+        return None, f"missing: {name} is not set in this shell; items stored unverified"
     try:
         src = PR.runner_from_env(job["url_env"], job["cmd_env"], dialect=job["dialect"] or PR.dialect_of(g))
     except Exception as exc:  # noqa: BLE001  (a URL may be in the message: keep the type only)
@@ -252,7 +253,9 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
 
     Returns {status: accepted | partially_accepted | rejected | failed, accepted, rejected: [{item, reason}], unverified,
-    verified, probe_failed, confirmed_existing (relations that repeat an edge the map has), budget_left, probe_source, next} plus attempts_left, resubmit and hint when the unit is still
+    verified, probe_failed, confirmed_existing (relations that repeat an edge the map has), budget_left, probe_source, next}
+    (or {status: budget_exhausted, needed, budget_left, hint, resume} when the answer does not fit the budget left: nothing
+    stored, no attempt used) plus attempts_left, resubmit and hint when the unit is still
     open or failed. A structure error, or items rejected and none accepted, is `rejected`: nothing is stored. When some
     items are accepted and some rejected the status is `partially_accepted`: the accepted items are stored, the unit stays
     pending and the agent resubmits only the rejected ones (the saved answer is the union). Every rejected or partial
@@ -290,6 +293,16 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
                 _save_ledger(out, led)
                 raise ValueError(f"{_parse_error} (free parse error {ent['parse_errors']} of {FREE_PARSE_ERRORS}: no attempt used; "
                                  f"later ones count as attempts)")
+        charge = atoks + (est if unit["attempts"] == 0 else 0)  # what this submit would add to `used`
+        left_now = jobs.budget_left(ctx, job_id)
+        if charge > left_now:  # hard stop: nothing is stored, charged or counted as an attempt
+            devlog.decide("index_submit", unit_id=unit_id, status="budget_exhausted", tokens_est=est, answer_tokens=atoks,
+                          budget_left=left_now)
+            more = max(job["budget"] * 2, job["used"] + charge)
+            return {"status": "budget_exhausted", "unit_id": unit_id, "budget_left": left_now, "needed": charge,
+                    "hint": "this answer does not fit the budget left; nothing was stored and no attempt was used. Raise the budget "
+                            "and submit the same answer again, or run `keygraph index finish` to keep what is stored",
+                    "resume": f"index_start budget={more} (CLI: keygraph index start --budget {more})"}
         again = bool(ent.get("partial"))  # an earlier submit stored some items and left the rest to be resubmitted
         if _parse_error:
             val = {"accepted": [], "rejected": [], "errors": [f"$: {_parse_error}"]}
@@ -298,7 +311,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         rejected = [{"item": "$", "reason": e.removeprefix("$: ")} for e in val["errors"]] + \
                    [{"item": r["item"], "reason": r["reason"]} for r in val["rejected"]]
         attempts = unit["attempts"] + 1
-        jobs.add_used(ctx, job_id, atoks + (est if unit["attempts"] == 0 else 0))  # the packet is paid for once per unit
+        jobs.add_used(ctx, job_id, charge)  # the packet is paid for once per unit
         left = jobs.budget_left(ctx, job_id)
         failed = bool(rejected) and attempts >= MAX_ATTEMPTS
         if val["errors"] or (rejected and not val["accepted"]):
@@ -347,7 +360,8 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         status = "failed" if failed else "partially_accepted" if rejected else "accepted"
         devlog.decide("index_submit", unit_id=unit_id, status=status, attempt=attempts, tokens_est=est, answer_tokens=atoks,
                       accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, unverified=n_unk,
-                      probe_failed=n_bad, probe_source=label, checks=dict(sorted(Counter(v["check"] for v in verds).items())))
+                      probe_failed=n_bad, probe_source=label.split(":")[0],
+                      probe_env=(job["url_env"] or job["cmd_env"] or ""), checks=dict(sorted(Counter(v["check"] for v in verds).items())))
         res = {"status": status, "accepted": len(val["accepted"]), "rejected": rejected, "unverified": n_unk, "verified": n_ok,
                "probe_failed": n_bad, "confirmed_existing": ST.count_existing(g, acc, verds), "budget_left": left,
                "probe_source": label}

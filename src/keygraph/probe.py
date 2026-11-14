@@ -129,6 +129,9 @@ class SelectOnlyRunner:
         return cls(ex)
 
 
+_DOLLAR = re.compile(r"\$\w*\$")  # assert_select refuses dollar quoting, so a value holding one (a `$2b$` hash) is not sampled
+
+
 def _lit(v) -> str | None:
     if isinstance(v, bool):
         return None
@@ -136,7 +139,7 @@ def _lit(v) -> str | None:
         return str(v)
     if isinstance(v, Decimal) and v == v.to_integral_value():
         return str(int(v))
-    if isinstance(v, str) and "\\" not in v and "\x00" not in v:
+    if isinstance(v, str) and "\\" not in v and "\x00" not in v and not _DOLLAR.search(v):
         return "'" + v.replace("'", "''") + "'"
     return None
 

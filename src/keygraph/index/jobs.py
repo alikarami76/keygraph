@@ -4,17 +4,16 @@ The probe source is stored as environment variable NAMES only, never values."""
 from __future__ import annotations
 
 import json
-import re
 import time
 
 from keygraph import __version__
+from keygraph.devlog import ENV_NAME
 from keygraph.index.schema import SCHEMA_VERSION, TASKS
 
-ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 UNIT_STATUS = ("pending", "done", "failed", "skipped")
 
 
-def _now() -> str:
+def now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
@@ -57,7 +56,7 @@ def create_job(ctx, units: list[dict], *, budget: int, tasks=TASKS, url_env: str
     job_id = f"job-{n + 1:04d}"
     tasks = [t for t in TASKS if t in tasks]
     ctx.db.execute("INSERT INTO index_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                   (job_id, _now(), None, int(budget), 0, json.dumps(tasks), __version__, str(schema_version), "open",
+                   (job_id, now(), None, int(budget), 0, json.dumps(tasks), __version__, str(schema_version), "open",
                     url_env, cmd_env, (dialect or "").strip().lower()))
     ctx.db.executemany("INSERT INTO index_units VALUES(?,?,?,?,?,?,?,?,?,?)",
                        [(u["unit_id"], job_id, json.dumps(u["tables"]), json.dumps(tasks), u["rank"], "",
@@ -112,7 +111,7 @@ def update_unit(ctx, job_id: str, unit_id: str, *, status: str | None = None, at
     sets = {"status": status, "attempts": attempts, "tokens_est": tokens_est, "packet_hash": packet_hash}
     sets = {k: v for k, v in sets.items() if v is not None}
     if status in ("done", "failed"):
-        sets["submitted_at"] = _now()
+        sets["submitted_at"] = now()
     if sets:
         ctx.db.execute(f"UPDATE index_units SET {', '.join(f'{k}=?' for k in sets)} WHERE job_id=? AND unit_id=?",
                        [*sets.values(), job_id, unit_id])
@@ -141,7 +140,7 @@ def close_job(ctx, job_id: str, status: str = "done") -> dict:
     """Mark a job finished (status done or aborted); it is no longer resumed."""
     if status not in ("done", "aborted"):
         raise ValueError("close status must be done or aborted")
-    ctx.db.execute("UPDATE index_jobs SET status=?, finished_at=? WHERE job_id=?", (status, _now(), job_id))
+    ctx.db.execute("UPDATE index_jobs SET status=?, finished_at=? WHERE job_id=?", (status, now(), job_id))
     ctx.db.commit()
     return get_job(ctx, job_id)
 

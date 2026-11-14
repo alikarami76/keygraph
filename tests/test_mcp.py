@@ -330,8 +330,8 @@ def test_index_tools_match_the_cli(out, tmp_path, capsys):
     f = tmp_path / "a.json"
     for answer in (bad, {"relations": []}):
         f.write_text(json.dumps(answer, indent=3), encoding="utf-8")
-        cli_res = cli_json(capsys, cli_dir, "index", "submit", nxt["unit_id"], str(f), "--model", "m1")
-        err, got = call(s2, "index_submit", unit_id=nxt["unit_id"], answer=answer, model="m1")
+        cli_res = cli_json(capsys, cli_dir, "index", "submit", nxt["unit_id"], str(f), "--model", "m1", "--probe-seconds", "5")
+        err, got = call(s2, "index_submit", unit_id=nxt["unit_id"], answer=answer, model="m1", probe_seconds=5)
         assert not err and got == cli_res  # every field, the `next` hint included
     assert cli_res["status"] == "accepted"
     err, got = call(s2, "index_status")
@@ -347,7 +347,7 @@ def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatc
     tools = {t.name: t for t in asyncio.run(s2.list_tools())}
     props = {n: set((tools[n].input_schema or {}).get("properties", {})) for n in INDEX_TOOLS}
     assert props["index_start"] == {"budget", "tasks", "url_env", "cmd_env", "dialect", "max_units", "restart"}
-    assert props["index_submit"] == {"unit_id", "answer", "model"} and props["index_next"] == set() == props["index_status"] == props["index_finish"]
+    assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds"} and props["index_next"] == set() == props["index_status"] == props["index_finish"]
     assert not any("url" in p.replace("url_env", "") or "cmd" in p.replace("cmd_env", "") for ps in props.values() for p in ps)
     monkeypatch.delenv("KG_MCP_UNSET", raising=False)
     err, msg = call(s2, "index_start", url_env="KG_MCP_UNSET")

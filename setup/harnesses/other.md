@@ -46,7 +46,7 @@ Any agent that can run shell commands can use keygraph. Every query command take
 | `query_submit` | `keygraph queries add --sql <file> --source <db> --ms <ms> --context "<question>"` |
 | `index_start` | `keygraph index start [--budget N] [--tasks KINDS] [--url-env NAME \| --cmd-env NAME] [--dialect D] [--max-units N] [--restart] --json --dir OUT` (optional LLM indexing, SETUP.md step 4b; env var NAMES only, never a URL) |
 | `index_next` | `keygraph index next --json --dir OUT` |
-| `index_submit` (`answer` is an object) | `keygraph index submit <unit_id> <answer.json or -> [--model NAME] --json --dir OUT` |
+| `index_submit` (`answer` is an object; optional `probe_seconds`) | `keygraph index submit <unit_id> <answer.json or -> [--model NAME] --json --dir OUT` |
 | `index_status` / `index_finish` | `keygraph index status --json`, `keygraph index finish --json` (CLI only: `index replay`, `index refresh`) |
 | `dev_note` (dev mode only) | `keygraph dev note --json --dir OUT "<question>"` (put `--` before text starting with `-`), the report groups commands within 10 minutes into one session; for exact grouping put `KEYGRAPH_DEV_SESSION=<session>` in front of later commands |
 

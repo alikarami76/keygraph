@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS fact_provenance(kind TEXT, ref TEXT, source TEXT, mod
   unit_id TEXT, confidence REAL, verified INTEGER, verified_by TEXT, probe TEXT, at TEXT, PRIMARY KEY(kind, ref));
 CREATE TABLE IF NOT EXISTS index_relations(rel_id TEXT PRIMARY KEY, unit_id TEXT, from_table TEXT, from_columns TEXT,
   to_table TEXT, to_columns TEXT, confidence REAL, reason TEXT, status TEXT, probe TEXT, model TEXT, job_id TEXT, at TEXT, cardinality TEXT);
+CREATE TABLE IF NOT EXISTS override_rejects(item TEXT);
 CREATE TABLE IF NOT EXISTS performance_notes(table_id TEXT PRIMARY KEY, notes TEXT, source TEXT, at TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(kind, ref, title, body, tokenize='unicode61');
 """
@@ -393,6 +394,16 @@ class ContextDB:
         if globs:
             self.db.execute("INSERT INTO curation VALUES('copies',?,?)", (json.dumps(list(globs)), source))
         self.db.commit()
+
+    def set_override_rejects(self, items: list[dict]) -> None:
+        """Keep the `reject` items of the overrides this map was built with (replaces the earlier ones)."""
+        self.db.execute("DELETE FROM override_rejects")
+        for it in items:
+            self.db.execute("INSERT INTO override_rejects VALUES(?)", (json.dumps(it, ensure_ascii=False, sort_keys=True),))
+        self.db.commit()
+
+    def override_rejects(self) -> list[dict]:
+        return [json.loads(r[0]) for r in self.db.execute("SELECT item FROM override_rejects ORDER BY rowid")]
 
     def clear_curation(self) -> None:
         """Forget all curation rules (a build that imports context starts from the files it imports now)."""

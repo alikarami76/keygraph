@@ -256,6 +256,7 @@ def run_pipeline(schema: Schema, out: str | Path, overrides: str | None = None, 
                 ctx.import_path(path)
             if copy_schemas:
                 ctx.add_copy_schemas(copy_schemas)
+        ctx.set_override_rejects(ov.reject if ov else [])  # replace: a build starts from the overrides it was given
         with devlog.phase("reindex"):
             ctx.reindex()
         prof = ctx.load_profiles()
@@ -649,6 +650,9 @@ def _index_text(cmd: str, r: dict) -> str:
     if cmd == "submit":
         if r["status"] == "finished":
             return r["hint"]
+        if r["status"] == "budget_exhausted":
+            return (f"budget exhausted: this answer needs about {r['needed']} tokens and {r['budget_left']} are left. {r['hint']}\n"
+                    f"continue with: {r['resume']}")
         left = f", {r['attempts_left']} attempts left" if "attempts_left" in r else ""
         lines = [(f"{r['status']}: {r['accepted']} accepted ({r['verified']} verified, {r['unverified']} unverified, "
                   f"{r['probe_failed']} failed a probe), {len(r['rejected'])} rejected{left}, {r['budget_left']} tokens left")]
