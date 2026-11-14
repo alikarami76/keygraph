@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-11-14
 
 - New `keygraph demo [--dir DIR] [--no-open] [--json]` (so `uvx keygraph demo` works): builds the bundled 35-table webshop into `./keygraph-demo` with the core install only, in this process (no subprocess). The demo data now ships inside the wheel (`keygraph/demo/`; `context.json` is generated from `examples/shop/context.yaml`, and a test keeps the copies identical), profiles read the bundled SQLite sample through the standard library, and steps an extra would improve use a simpler reader and print a note naming the extra (a missing sqlite3 skips profiles). It opens `keygraph.html` unless `--no-open`, `CI` is set or there is no display, prints three commands to try, refuses a non-empty folder that is not an earlier demo, and a rerun gives byte-identical `graph.json`, pages and `keygraph.html` (`keygraph.db` holds write times; `SOURCE_DATE_EPOCH` honoured). The `profile_table` function takes an optional `now` for a fixed `profiled_at`.
 - `keygraph demo --json` adds a `database` field: the absolute path of the packaged read-only SQLite sample (`shop.db`), so an agent with a PyPI install can copy it as the demo probe source (the text output is unchanged).
