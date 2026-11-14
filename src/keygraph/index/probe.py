@@ -23,14 +23,35 @@ REL_SAMPLE, CODE_SAMPLE, GRAIN_SAMPLE, FILTER_SAMPLE = 200, 200, 1000, 1000
 REL_PASS = 0.8
 
 
+def quote_for(kind: str | None) -> str:
+    """The identifier quote of a source kind: backticks for mysql, mariadb and clickhouse, `[]` for sqlserver, else `"`."""
+    k = (kind or "").lower()
+    return "`" if k in ("mysql", "mariadb", "clickhouse") else "[]" if k in ("sqlserver", "mssql", "tsql") else '"'
+
+
+def quote_ident(name: str, quote: str) -> str:
+    """Quote an identifier, doubling any quote character inside it (`]` for `[]`)."""
+    o, c = quote[0], quote[-1]
+    return f"{o}{name.replace(c, c * 2)}{c}"
+
+
+def dialect_of(g) -> str | None:
+    """The first source kind in the map's build.json, or None when it has none."""
+    for s in (g.build or {}).get("sources") or []:
+        if isinstance(s, dict) and s.get("kind"):
+            return str(s["kind"])
+    return None
+
+
 class Source(NamedTuple):
     runner: SelectOnlyRunner
     quote: str
     bare: bool  # table ids lose their schema (sqlite has none)
 
 
-def runner_from_env(url_env: str = "", cmd_env: str = "", environ=None) -> Source | None:
-    """The probe source named by the job's environment variables, or None when neither is set (items stay unverified)."""
+def runner_from_env(url_env: str = "", cmd_env: str = "", environ=None, dialect: str | None = None) -> Source | None:
+    """The probe source named by the job's environment variables, or None when neither is set (items stay unverified).
+    `dialect` (a source kind such as mysql or postgres) picks the identifier quote for a command runner; a URL gives its own."""
     env = os.environ if environ is None else environ
     url, cmd = (env.get(url_env, "") if url_env else ""), (env.get(cmd_env, "") if cmd_env else "")
     if url:
@@ -40,13 +61,12 @@ def runner_from_env(url_env: str = "", cmd_env: str = "", environ=None) -> Sourc
                 import sqlalchemy  # noqa: F401
             except ImportError:
                 raise RuntimeError("probing a database URL needs the live extra: pip install 'keygraph[live]'") from None
-        return Source(SelectOnlyRunner.from_url(url), "`" if lower.startswith(("mysql", "mariadb")) else '"',
-                      lower.startswith("sqlite:"))
+        return Source(SelectOnlyRunner.from_url(url), quote_for(lower.split(":", 1)[0].split("+", 1)[0]), lower.startswith("sqlite:"))
     if cmd:
         from ..adapters.fetch import command_runner
         run = command_runner(cmd)
         return Source(SelectOnlyRunner(lambda sql: [tuple(r.values()) if isinstance(r, dict) else tuple(r) for r in run(sql)]),
-                      "`", False)
+                      quote_for(dialect), False)
     return None
 
 
@@ -151,7 +171,7 @@ class _Prober:
         self.g, self.run, self.quote, self.bare, self.cap = g, runner, quote, bare, _Cap(cap)
 
     def q(self, name: str) -> str:
-        return f"{self.quote}{name}{self.quote}"
+        return quote_ident(name, self.quote)
 
     def t(self, tid: str) -> str:
         n = self.g.nodes[tid]
@@ -191,11 +211,14 @@ class _Prober:
         return self.verdict(c, True if rate == 1 else (False if len(rows) <= CODE_SAMPLE else None), rate, len(claimed))
 
     def grain(self, it: dict) -> dict:
-        c = "grain_unique"
+        """Sample-based: the first rows of the table only, so a pass is a signal and never a proof. Claimed columns that
+        are the primary key (or a unique key), or missing, are unique by definition and stay unverified."""
         node = self.g.nodes[it["table"]]
-        key = it.get("grain_columns") or node.get("primary_key") or (node.get("unique_keys") or [{}])[0].get("columns")
-        if not key:
-            return self.verdict("grain_unique_no_key", None)
+        key = it.get("grain_columns") or []
+        trivial = [node.get("primary_key") or [], *[u.get("columns") or [] for u in node.get("unique_keys") or []]]
+        if not key or any(k and set(k) == set(key) for k in trivial):
+            return self.verdict("grain_pk_trivial", None)
+        c = "grain_sample_unique"
         if not self.cap.take(2):
             return self.verdict(c, None, skipped="query_cap")
         cols = ",".join(self.q(k) for k in key)
@@ -230,11 +253,11 @@ class _Prober:
         return self.verdict(c, False if fails else (True if len(ok) == len(built) else None), min(rates), total)
 
 
-def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: str = '"', *, bare: bool = False,
+def probe_items(items: list[dict], g, runner: SelectOnlyRunner | None, quote: str | None = None, *, bare: bool = False,
                 cap: int = QUERY_CAP) -> list[dict]:
     """One verdict per accepted item (`{"kind", "index", "item"}` as `validate` returns them), in the same order.
-    No runner means every item stays unverified."""
-    pr = _Prober(g, runner, quote, bare, cap) if runner is not None else None
+    No runner means every item stays unverified. `quote` defaults to the map's source dialect. Grain verdicts are samples."""
+    pr = _Prober(g, runner, quote or quote_for(dialect_of(g)), bare, cap) if runner is not None else None
     out = []
     for ent in items:
         kind, it = ent["kind"], ent["item"]

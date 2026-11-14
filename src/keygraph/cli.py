@@ -309,8 +309,11 @@ def cmd_render(a):
 
 def cmd_probe(a):
     from .probe import SelectOnlyRunner, probe_graph
+    try:
+        runner = SelectOnlyRunner.from_url(a.url)
+    except ValueError as exc:
+        sys.exit(f"keygraph: {exc}")
     g = _load(a)
-    runner = SelectOnlyRunner.from_url(a.url)
     quote = "`" if a.url.startswith("mysql") else '"'
     res = probe_graph(g, runner, a.sample, quote, a.max_edges, a.min_confidence)
     ctx = _ctx(a, g)

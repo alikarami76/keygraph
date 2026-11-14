@@ -56,3 +56,20 @@ def test_fetch_chunking():
     stats, kcu = fetch_metadata(run, "DATABASE()", limit=3)
     assert len(calls) > 2 and all(c.startswith("SELECT") for c in calls)
     assert parse_rows('log line\n{"rows": [{"x": 1}]}') == [{"x": 1}]
+
+
+def test_assert_select_keeps_comment_markers_inside_literals():
+    assert assert_select("SELECT a FROM t WHERE b = '--x' AND c = '/* y */'") == "SELECT a FROM t WHERE b = '--x' AND c = '/* y */'"
+    assert assert_select("SELECT 1 /* c */ -- tail") == "SELECT 1"
+    assert assert_select("SELECT '--' ; ").endswith("'--'")
+    with pytest.raises(UnsafeSQL):
+        assert_select("SELECT '--' /* ' */; DELETE FROM t")
+    with pytest.raises(UnsafeSQL):
+        assert_select("SELECT 'a' -- c\n; DROP TABLE t")
+
+
+def test_sqlite_memory_url_is_a_clean_error(tmp_path, capsys):
+    from keygraph.cli import main
+    with pytest.raises(SystemExit) as e:
+        main(["probe", "--dir", str(tmp_path), "--url", "sqlite://"])
+    assert "sqlite URL needs a file path" in str(e.value.code)

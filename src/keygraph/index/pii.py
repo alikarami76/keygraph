@@ -75,3 +75,22 @@ def mask_keywords(text: str) -> str:
     text = _SECRET_KW.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}{MASK}", text)
     text = _PASS_EQ.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
     return _MYSQL_P.sub(lambda m: f"{m.group(1)}{m.group(2)}{MASK}", text)
+
+
+_KW = r"(?:passw[o0]rd|passwd|pwd|pass|secret|token|api[_-]?key|apikey|auth|credential|private[_-]?key)"
+_NARROW = re.compile(rf"""(?i)\b\w{{0,20}}?{_KW}\w{{0,20}}["']?(?:(\s*[:=]\s*)|(\s+is\s+)|(\s+))["']?([^\s,;"')]+)""")
+
+
+def _secret_like(v: str) -> bool:
+    return len(v) >= 8 and any(c.isalpha() for c in v) and any(not c.isalpha() for c in v)
+
+
+def holds_secret(text) -> bool:
+    """A narrow check for answers: a secret word followed by `=` or `:` and a value, or by `is` or a space and a value that
+    looks secret (8+ characters mixing letters with digits or symbols), or `pass=x`, or `mysql -pVALUE`. Prose such as
+    `auth table` or `token expires after 1h` passes. Packets use the wider `mask_keywords`."""
+    s = str(text if text is not None else "")[:2000]
+    for m in _NARROW.finditer(s):
+        if m.group(1) or _secret_like(m.group(4)):
+            return True
+    return bool(_PASS_EQ.search(s) or _MYSQL_P.search(s))

@@ -13,7 +13,7 @@ import re
 
 from ..code.refs import mask_secrets
 from . import schema as S
-from .pii import looks_pii, mask_keywords
+from .pii import holds_secret, looks_pii
 
 CODE_KEY_MAX = 40
 _PATH = re.compile(r"^\$\.(\w+)\[(\d+)\](?:\.(.*?))?: (.*)$")
@@ -42,7 +42,7 @@ def _text_problem(path: str, text: str) -> str | None:
     kind = looks_pii(text)
     if kind:
         return f"{field}: looks like a personal value ({kind}); remove it and describe the column in words"
-    if text and (mask_keywords(text) != text or mask_secrets(text) != text):
+    if text and (holds_secret(text) or mask_secrets(text) != text):
         return f"{field}: looks like it holds a secret or credential; reword it without the value"
     return None
 
@@ -109,8 +109,10 @@ def _relation_problem(g, unit: set[str], r: dict) -> str | None:
                (e["to"], e["to_columns"], e["from"], e["from_columns"]) == (ft, fc, tt, tc)
         if same:
             return f"already declared as foreign key {e.get('constraint') or e['id']}; leave declared relations out"
-        if e["from"] == ft and set(e["from_columns"]) == set(fc) and (e["to"], e["to_columns"]) != (tt, tc):
-            return (f"contradicts declared foreign key {e.get('constraint') or e['id']}, which points {ft}({', '.join(fc)}) at "
+        a, b = (e["from"], set(e["from_columns"])), (e["to"], set(e["to_columns"]))
+        mine_f, mine_t = (ft, set(fc)), (tt, set(tc))
+        if (mine_f == a and mine_t != b) or (mine_t == a and mine_f != b):  # also when the claim is written the other way round
+            return (f"contradicts declared foreign key {e.get('constraint') or e['id']}, which points {e['from']}({', '.join(e['from_columns'])}) at "
                     f"{e['to']}({', '.join(e['to_columns'])}); declared keys always win")
     for e in g.edges:
         if e.get("status") in ("confirmed", "added") and {(e["from"], tuple(e["from_columns"])), (e["to"], tuple(e["to_columns"]))} == \

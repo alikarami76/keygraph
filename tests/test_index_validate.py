@@ -85,7 +85,7 @@ def test_email_in_a_meaning_is_rejected_without_echoing_it(env):
 
 
 @pytest.mark.parametrize("text", ["call 09121234567", "card 4111 1111 1111 1111", "owner 0012345678", "password=hunter2",
-                                  "set PGPASSWORD hunter2", "mysql -u root -phunter2", "api_key: abc123"])
+                                  "set PGPASSWORD hunter2x9", "mysql -u root -phunter2", "api_key: abc123"])
 def test_personal_values_and_secrets_are_rejected_in_any_field(env, text):
     for item, kind in ((_col(meaning=text), "columns"), (_tab(pitfalls=["fine", text]), "tables"),
                        (_col(codes={"1": text}), "columns"), (_rel(reason=text), "relations")):
@@ -189,3 +189,27 @@ def test_concepts_and_metrics_tables_may_be_any_graph_table(env):
                  metrics=[{"name": "m", "definition": "d", "expression": "SUM(o.total)", "tables": ["shop.orders"], "reason": "r",
                            "confidence": 0.6}])
     assert [a["kind"] for a in res["accepted"]] == ["concepts", "metrics"] and res["rejected"][0]["item"] == "concepts[1]"
+
+
+@pytest.mark.parametrize("text", ["auth table", "token expires after 1h", "Holds the password hash column", "credential for user",
+                                  "This table stores auth tokens for login", "one row per secret key", "token count"])
+def test_prose_about_secrets_is_accepted(env, text):
+    assert not _check(env, columns=[_col(meaning=text)])["rejected"]
+    assert not _check(env, tables=[_tab(purpose=text, pitfalls=[text])])["rejected"]
+
+
+@pytest.mark.parametrize("text", ["password=hunter2", "api_key: sk-abc123XYZ", "secret is Zx9!kq2Lm", "PGPASSWORD hunter2x9",
+                                  "token = abcdef123456"])
+def test_secret_values_are_still_rejected(env, text):
+    assert "secret" in _only_reason(_check(env, columns=[_col(meaning=text)]), "columns")
+
+
+def test_reverse_direction_contradiction_with_a_declared_fk_is_rejected(env):
+    g, ctx = env
+    # declared: shop.order_items(order_id) -> shop.orders(id); this claims order_items.order_id is the target of customers.id
+    res = V.validate({"relations": [_rel(ft="shop.customers", fc=("id",), tt="shop.order_items", tc=("order_id",))]}, g, ctx,
+                     {"unit_tables": ["shop.customers"]})
+    assert "contradicts declared foreign key" in res["rejected"][0]["reason"]
+    res = V.validate({"relations": [_rel(ft="shop.orders", fc=("id",), tt="shop.order_items", tc=("order_id",))]}, g, ctx,
+                     {"unit_tables": ["shop.orders"]})
+    assert "already declared" in res["rejected"][0]["reason"]

@@ -93,12 +93,38 @@ def _table(**kw):
     return _ent("tables", {"table": "shop.orders", "purpose": "p", "reason": "r", "confidence": 0.7, **kw})
 
 
-def test_grain_key_uniqueness(src, shop_graph):
-    ok, dup, no_grain = _run(src, shop_graph, [_table(grain="one row per order"),
-                                               _table(grain="one row per customer", grain_columns=["customer_id"]), _table()])
-    assert ok["verified"] is True and ok["rate"] == 1.0 and ok["check"] == "grain_unique" and ok["n"] == 120
-    assert dup["verified"] is False and dup["rate"] == 0.5
-    assert no_grain["verified"] is None and no_grain["check"] == "none"
+def test_grain_probe_is_sample_based_and_skips_the_trivial_primary_key(src, shop_graph):
+    pk, pk_named, missing, dup, ok, none = _run(src, shop_graph, [
+        _table(grain="one row per customer"), _table(grain="g", grain_columns=["id"]), _table(grain="g", grain_columns=[]),
+        _table(grain="one row per customer", grain_columns=["customer_id"]),
+        _table(grain="g", grain_columns=["id", "customer_id"]), _table()])
+    for v in (pk, pk_named, missing):
+        assert v["verified"] is None and v["check"] == "grain_pk_trivial"
+    assert dup["verified"] is False and dup["check"] == "grain_sample_unique" and dup["rate"] == 0.5 and dup["n"] == 120
+    assert ok["verified"] is True and ok["check"] == "grain_sample_unique" and ok["n"] == 120
+    assert none["verified"] is None and none["check"] == "none"
+
+
+def test_identifiers_double_their_quote_character():
+    assert P.quote_ident("a\"b", '"') == '"a""b"' and P.quote_ident("a`b", "`") == "`a``b`"
+    assert P.quote_ident("a]b", "[]") == "[a]]b]"
+
+
+@pytest.mark.parametrize("kind,quote", [("mysql", "`"), ("mariadb", "`"), ("clickhouse", "`"), ("sqlserver", "[]"), ("postgres", '"'),
+                                        ("sqlite", '"'), ("", '"'), (None, '"')])
+def test_quote_follows_the_dialect(kind, quote):
+    assert P.quote_for(kind) == quote
+
+
+def test_cmd_runner_takes_its_dialect_from_the_caller_and_the_map(shop_graph, monkeypatch):
+    monkeypatch.setenv("KG_TEST_C", "true {sql}")
+    assert P.runner_from_env("", "KG_TEST_C", dialect="postgres").quote == '"'
+    assert P.runner_from_env("", "KG_TEST_C", dialect="mysql").quote == "`"
+    assert P.runner_from_env("", "KG_TEST_C").quote == '"'
+    shop_graph.build = {"sources": [{"kind": "mariadb"}]}
+    assert P.dialect_of(shop_graph) == "mariadb"
+    shop_graph.build = None
+    assert P.dialect_of(shop_graph) is None
 
 
 def test_default_filter_selectivity(src, shop_graph):
@@ -164,7 +190,7 @@ def test_cmd_runner_probes_through_the_command(shop_graph, shop_db, tmp_path, mo
                       "print('log line'); print(json.dumps([dict(zip(names, r)) for r in cur.fetchall()]))\n")
     monkeypatch.setenv("KG_TEST_SHOP_CMD", f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {{sql}}")
     s = P.runner_from_env("", "KG_TEST_SHOP_CMD")
-    assert s.quote == "`" and not s.bare
+    assert s.quote == '"' and not s.bare
     with pytest.raises(UnsafeSQL):
         s.runner.run("DELETE FROM orders")
     ok = P.probe_items([_codes({"1": "placed"}, table="shop.orders")], shop_graph, s.runner, '"', bare=True)  # `bare` as sqlite ids
@@ -200,7 +226,7 @@ def test_errors_give_the_type_never_the_message(shop_graph):
     def boom(sql):
         raise RuntimeError("password=hunter2 value 4111111111111111")
 
-    out = P.probe_items([_codes({"1": "x"}), _table(grain="g")], shop_graph, SelectOnlyRunner(boom), '"')
+    out = P.probe_items([_codes({"1": "x"}), _table(grain="g", grain_columns=["customer_id"])], shop_graph, SelectOnlyRunner(boom), '"')
     assert [v["verified"] for v in out] == [None, None] and out[0]["error"] == "RuntimeError" and out[1]["error"] == "RuntimeError"
     assert "hunter2" not in json.dumps(out) and "4111" not in json.dumps(out)
 

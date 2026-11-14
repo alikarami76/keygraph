@@ -21,18 +21,21 @@ class UnsafeSQL(ValueError):
     pass
 
 
+_TOKENS = re.compile(r"""('(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`)|/\*.*?\*/|--[^\n]*""", re.S)
+
+
 def assert_select(sql: str) -> str:
-    s = re.sub(r"/\*.*?\*/", " ", sql, flags=re.S)
-    s = re.sub(r"--[^\n]*", " ", s).strip()
+    # string literals and quoted names are kept as they are, so `--` or `/*` inside one does not change the query
+    s = _TOKENS.sub(lambda m: m.group(1) or " ", sql).strip()
     if s.endswith(";"):
         s = s[:-1].strip()
     if not s:
         raise UnsafeSQL("empty statement")
-    if ";" in s:
+    stripped = re.sub(r"'(?:[^']|'')*'", "''", s)
+    if ";" in stripped:
         raise UnsafeSQL("only one statement is allowed")
     if not re.match(r"select\b", s, re.I):
         raise UnsafeSQL("only SELECT statements are allowed")
-    stripped = re.sub(r"'(?:[^']|'')*'", "''", s)
     m = _BAD.search(stripped)
     if m:
         raise UnsafeSQL(f"forbidden keyword in query: {m.group(0)}")
