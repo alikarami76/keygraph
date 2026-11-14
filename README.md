@@ -1,46 +1,101 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/readme-hero-dark.svg">
-  <img alt="keygraph: map how your tables connect, for people and AI agents" src="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/readme-hero-light.svg">
-</picture>
-
 # keygraph
+
+**The schema map that stops your SQL agent from double-counting.**
+
+Join paths, keys, grain and status codes for any agent, over MCP. Deterministic, no LLM calls.
+
+[![PyPI](https://img.shields.io/pypi/v/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![CI](https://github.com/alikarami76/keygraph/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/alikarami76/keygraph/actions/workflows/ci.yml) [![Downloads](https://img.shields.io/pepy/dt/keygraph?cacheSeconds=86400)](https://pepy.tech/project/keygraph) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
+
+![Without a map, a SQL agent joins orders to order_items and reports the wrong top customer (#43 Liam €3,436.40); keygraph path flags both fan-out hops and keygraph describe flags status codes, so the corrected query returns #56 Ava €828.20.](https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/hero.gif)
+
+**What the animation shows.** In the bundled demo shop, an agent with no map joins `orders` to `order_items` and adds up `orders.total` once per order line, so it names customer #43 as the top customer with €3,436.40. `keygraph path` flags both one-to-many hops as fan-out, and `keygraph describe` shows that status 1 is an unpaid basket, 4 is cancelled and 9 appears in the data without being documented. The corrected query adds up the orders before joining the lines and keeps only paid and shipped orders: the top customer is #56 with €828.20. Across all customers the naive sum is €67,106.60 against €14,660.60 of paid and shipped revenue, 4.6 times too high. The agent's prompt and its rewritten SQL are a replay; the keygraph output and both query results are real (checked with `sqlite3 -readonly examples/shop/shop.db` on 2026-11-13).
+
+**Measured so far.** With the foreign keys stripped from the 11 BIRD mini-dev databases (104 declared keys), keygraph infers 65.4% of them again at confidence 0.6 or higher, with precision of at least 93.2% (measured 2026-11-12 on the code merged in commit 1591589; method, datasets and caveats in [bench/README.md](https://github.com/alikarami76/keygraph/blob/main/bench/README.md#fk-recovery)).
+<!-- AGENT A/B NUMBER GOES HERE (ENG-019): the agent benchmark (same agent with and without keygraph, accuracy and tokens) is still running. Add one sentence with the measured result, the method, the model and the date, linked to bench/README.md. Do not add a number that is not recorded in bench/. -->
 
 keygraph is an open-source schema map for people building a data analyst agent, a text-to-SQL agent or any other LLM agent that answers questions from a database. It maps how your tables connect (keys, indexes, declared and inferred foreign keys, grain, status codes, business context and value profiles) and serves that schema context to agents through an MCP server, a CLI with `--json`, or markdown files, and to people through an offline HTML explorer. It reads only metadata, makes no LLM calls, and gives the same output for the same input. It can also link your source code to the same tables and columns (where each column is declared, written, read and used) and keep a log of the queries people and agents ran, with their timing and the business question behind them.
 
-**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Twenty MCP tools (plus `dev_note` only in dev mode): fourteen read-only, one that logs a query and five `index_*` tools for LLM indexing. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [quickstart](#quickstart), [MCP setup](#mcp), [FAQ](#faq).
+**At a glance.** MIT licence. Python 3.11 or newer. Reads MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, or `information_schema` dumps. Twenty MCP tools (plus `dev_note` only in dev mode): fourteen read-only, one that logs a query and five `index_*` tools for LLM indexing. Runs without a server, and the bundled demo webshop has 35 tables in three schemas. Jump to: [quickstart](#quickstart), [what your agent gets](#what-your-agent-gets), [build a data analyst agent](#how-do-i-build-a-data-analyst-agent-with-keygraph), [MCP setup](#mcp), [comparison](#comparison), [FAQ](#faq).
 
-[![PyPI](https://img.shields.io/pypi/v/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![Python](https://img.shields.io/pypi/pyversions/keygraph?cacheSeconds=3600)](https://pypi.org/project/keygraph/) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/alikarami76/keygraph/blob/main/LICENSE)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/section-quickstart-dark.svg">
+  <img alt="Quickstart" src="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/section-quickstart-light.svg">
+</picture>
 
-## Why a prebuilt map beats no context or context made on the fly
+## Quickstart
 
-An agent that writes SQL needs to know which tables exist, how they join, what one row means and what the codes in a column stand for. There are three ways to give it that.
+### Try it on the demo (no database needed)
 
-**No context at all.** The agent guesses table names and joins on columns that look alike. It cannot see that a table holds one row per order line rather than per order, so its sums double count. It does not know that `status = 4` means "cancelled". The SQL runs and returns a number, and nothing tells you the number is wrong.
+keygraph needs Python 3.11 or newer; these commands use [uv](https://docs.astral.sh/uv/) (`pip install keygraph` works too). They build a map of the bundled fictional webshop (35 tables in three schemas) and ask it for the join behind the double count:
 
-**Context the agent makes itself.** The agent queries `information_schema` and samples rows at the start of each session, or asks an LLM to describe the tables. This helps, with four costs:
+```bash
+uvx keygraph demo                                              # builds the demo map in ./keygraph-demo and opens the offline explorer
+uvx keygraph path customers order_items --dir keygraph-demo    # the join, with both fan-out hops flagged
+uvx keygraph describe orders --dir keygraph-demo               # grain, pitfalls, status codes (9 is undocumented)
+```
 
-- the same exploration is repeated in every session, which costs time, tokens and load on the database;
-- a large database does not fit in a context window. A 10,000-table warehouse has well over 100,000 columns, so the agent sees only the slice it happened to open and misses the join path that runs through a table it never looked at;
-- the result changes from run to run. LLM-written descriptions can be confidently wrong, and nothing marks which parts are guesses;
-- sampled rows can carry personal data straight into prompts and logs.
+To give the demo map to Claude Code (other clients are in [MCP](#mcp)), run this from the same folder:
 
-**A map built in advance (keygraph).** keygraph reads the metadata once and stores the result:
+```bash
+claude mcp add keygraph -- uvx --from 'keygraph[mcp]' keygraph mcp --dir "$PWD/keygraph-demo"
+```
 
-- **Whole schema, small prompts.** Join paths, hub tables and business areas are computed by code over the whole database. The agent asks for only what it needs, such as one path or one table page, so it doesn't load the schema into its prompt.
-- **Same answer every time.** There are no LLM calls, and the same input always gives the same output, so the map can be reviewed and versioned in git like code.
-- **Guesses are labelled.** Every inferred relation carries a confidence and the reason it was inferred. Curated business context is marked verified or unverified, so the agent knows what to double-check.
-- **Knowledge accumulates.** Grain, status codes, pitfalls and corrections are written down once and reused by every person and agent, instead of being rediscovered and forgotten in each session.
-- **Safe by construction.** It reads metadata only, value profiles mask personal data, and agents query the map instead of the production database.
-- **One map for people and agents.** The HTML explorer, the CLI, the MCP server and the markdown pages all read the same graph.
+`claude mcp list` should show `keygraph` as connected; `uvx keygraph doctor --dir keygraph-demo` checks the map and the server (warnings about the `live`, `yaml` and `code` extras do not matter for the demo). To build the same demo from a clone of the repository instead: `git clone https://github.com/alikarami76/keygraph && cd keygraph && uv sync && uv run bash examples/shop/build.sh`, which writes the map to `examples/shop/out`.
 
-| | No context | Made on the fly | keygraph |
-|---|---|---|---|
-| Covers the whole schema | no | only what fits in the prompt | yes |
-| Cost per question | low, but answers are often wrong | repeated exploration every session | one lookup |
-| Same answer each run | no | no | yes |
-| Shows which joins are guesses | no | no | yes, with confidence and reason |
-| Business meaning of codes and grain | no | rediscovered, then lost | stored, curated, reused |
-| Personal data in prompts | no | often | masked |
+## What your agent gets
+
+- **Join paths with fan-out warnings.** `path` returns ranked routes with the join columns, a confidence and the evidence for each hop, and a ready `JOIN` snippet. Every one-to-many hop is flagged, so the agent adds up before it joins.
+- **Grain, status codes and pitfalls.** `describe` says what one row means, what each code stands for, and which codes appear in the data without being documented.
+- **Keys and indexes in column order.** `keys` shows the primary key, unique keys and indexes, so filters can use an index.
+- **Search by business term.** `search "net revenue"` finds the tables that hold a concept and says why each one matched.
+- **Guesses that say they are guesses.** Inferred relations carry a confidence and their reason; `describe` and `neighbors` hide the ones below 0.6 unless asked.
+- **Small answers.** The agent asks for one path or one table page instead of loading the whole schema; `describe --brief` and `search --no-paths` make the first look cheaper.
+
+All of this comes through twenty MCP tools (five of them run LLM indexing), the CLI with `--json` (the same JSON), or markdown pages for agents that only read files. See [Use with AI agents](#use-with-ai-agents).
+
+## Works with DBHub and MCP Toolbox
+
+keygraph never runs your queries: it reads metadata, plus small bounded SELECT samples when you ask it to profile. It tells the agent which tables to join, how, and what one row means. Running the query is the job of a database MCP server or other read-only access you already use, such as [DBHub](https://github.com/bytebase/dbhub) or [MCP Toolbox for Databases](https://github.com/googleapis/mcp-toolbox). Register both servers in the same agent: it asks keygraph for the path and the codes, writes the SQL, and runs it through the other server with read-only credentials. keygraph itself needs no database credentials at query time, because it answers from the map it already built.
+
+## Use it on your own database
+
+**With your AI agent.** Paste this into Claude Code, Codex, Cursor, ZCode, OpenCode, Unsloth Studio or any other coding agent:
+
+> Set up keygraph for this project. Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md exactly.
+
+The agent detects your database and its own harness, then asks you up to six questions. It builds the map, connects keygraph over MCP, and checks the result with `keygraph doctor`. Your credentials never go into a config file. Details are in [setup/](https://github.com/alikarami76/keygraph/blob/main/setup/README.md).
+
+**By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
+
+```bash
+pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
+keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
+keygraph ui                                                          # opens keygraph-out/keygraph.html
+keygraph doctor                                                      # checks the install, the map and the MCP server
+keygraph dev on                                                      # optional: record how agents use keygraph (see Dev mode)
+```
+
+`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, and the connection's current schema for PostgreSQL and SQL Server; a scan that finds no tables stops with a message suggesting `--schema` or `--all-schemas`). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
+
+```bash
+keygraph describe orders --brief         # keys, filter columns, notes and columns as name/type/key/codes only
+keygraph describe orders --min-confidence 0   # also the weak inferred relations (hidden below 0.6 by default)
+keygraph neighbors orders --depth 2 --min-confidence 0.4   # neighbors hide relations below 0.6 unless you lower the floor
+keygraph search "monthly revenue" --no-paths   # skip the suggested join paths
+keygraph path customers shipments        # ranked join paths with a JOIN snippet
+keygraph search "monthly revenue"        # which tables hold this
+keygraph keys orders                     # primary key, unique keys, indexes in column order
+```
+
+The build writes `graph.json`, `RELATIONS_REPORT.md`, `keygraph.html` (a self-contained explorer that works from disk, offline), `keygraph.db` (SQLite with full-text search), the agent pages `areas/*.md` and `tables/*.md`, and `build.json` (build time, keygraph version, source kind and database name, covered schemas; no host or credentials; the only file that differs between two identical builds, and `SOURCE_DATE_EPOCH` fixes its time). An unknown-table answer names the schemas the map covers. Details of every step are in [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf) and [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md).
+
+If you cannot connect to the database, build from `information_schema` dumps instead:
+
+```bash
+keygraph load --columns columns.jsonl [--statistics stats.jsonl] [--key-columns kcu.jsonl] [--tables tables.jsonl]
+```
+
+Dumps use `information_schema` field names. `--columns-map '{"TABLE_SCHEMA":"db"}'`, `--flatten raw` and `--where field=value` adapt other shapes. Without STATISTICS the tool falls back to `COLUMN_KEY` (PRI/UNI/MUL), and without KEY_COLUMN_USAGE every relation is inferred. `keygraph fetch --cmd 'my-sql-cli --sql {sql}' --out dir` fetches those two tables through any read-only command that prints JSON rows.
 
 ## How do I build a data analyst agent with keygraph?
 
@@ -76,58 +131,22 @@ Use keygraph when you need to:
 - profile column values (top values, empty rate, ranges) with personal data masked;
 - browse a data catalog from one offline HTML file, without running a server.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/section-quickstart-dark.svg">
-  <img alt="Quickstart" src="https://raw.githubusercontent.com/alikarami76/keygraph/main/design/visuals/section-quickstart-light.svg">
-</picture>
+## Why a prebuilt map beats no context or context made on the fly
 
-## Quickstart
+**No context.** The agent guesses joins from column names that look alike, cannot see that a table holds one row per order line rather than per order, and does not know that `status = 4` means "cancelled". The SQL runs, returns a number, and nothing says the number is wrong.
 
-**With your AI agent.** Paste this into Claude Code, Codex, Cursor, ZCode, OpenCode, Unsloth Studio or any other coding agent:
+**Context the agent makes itself.** The agent queries `information_schema`, samples rows or asks an LLM to describe the tables at the start of each session. It repeats that work, and its cost in tokens and database load, every session. In a 10,000-table warehouse it sees only the slice that fits in its prompt and misses join paths through tables it never opened. The result changes from run to run, nothing marks which parts are guesses, and sampled rows can carry personal data into prompts and logs.
 
-> Set up keygraph for this project. Follow https://github.com/alikarami76/keygraph/blob/main/setup/SETUP.md exactly.
+**A map built in advance.** keygraph reads the metadata once and stores the result. Join paths, hubs and business areas are computed over the whole schema, and the agent asks only for the path or table it needs. The same input always gives the same output, so the map can be reviewed and versioned in git. Every inferred relation carries a confidence and a reason, curated notes are marked verified or unverified, and what one session learns (grain, codes, pitfalls) is saved for the next. It reads metadata only, and value profiles mask personal data.
 
-The agent detects your database and its own harness, then asks you up to six questions. It builds the map, connects keygraph over MCP, and checks the result with `keygraph doctor`. Your credentials never go into a config file. Details are in [setup/](https://github.com/alikarami76/keygraph/blob/main/setup/README.md).
-
-**By hand.** keygraph needs Python 3.11 or newer. Install it, build a graph from a live database, and open the explorer:
-
-```bash
-uvx keygraph demo                # (keygraph 0.4.0+) builds the bundled fictional webshop and opens the explorer; no database, no extras
-pip install 'keygraph[live]'     # or: uvx --from 'keygraph[live]' keygraph ...
-keygraph scan --url postgresql://user@host/db --schema public       # read-only metadata scan, writes ./keygraph-out
-keygraph ui                                                          # opens keygraph-out/keygraph.html (for the demo: keygraph ui --dir keygraph-demo)
-keygraph doctor                                                      # checks the install, the map and the MCP server
-keygraph dev on                                                      # optional: record how agents use keygraph (see Dev mode)
-```
-
-`scan` takes any SQLAlchemy URL, so add the driver for your database (for example `psycopg` for PostgreSQL or `pymysql` for MySQL). For MySQL/MariaDB, PostgreSQL, SQL Server and ClickHouse URLs, `scan` uses that engine's own adapter, so the map keeps column comments, enum members, row-count estimates and partitions (SELECT-only, the same as `load`); SQLite and other databases use the SQLAlchemy inspector. `--schema` and `--all-schemas` work the same on both paths (without them, the connected database for MySQL and ClickHouse, and the connection's current schema for PostgreSQL and SQL Server; a scan that finds no tables stops with a message suggesting `--schema` or `--all-schemas`). If the adapter fails, `scan` warns on stderr and falls back to the inspector; `--generic` forces the inspector. `build.json` records which path was used. Then ask questions from the command line:
-
-```bash
-keygraph describe orders --brief         # keys, filter columns, notes and columns as name/type/key/codes only
-keygraph describe orders --min-confidence 0   # also the weak inferred relations (hidden below 0.6 by default)
-keygraph neighbors orders --depth 2 --min-confidence 0.4   # neighbors hide relations below 0.6 unless you lower the floor
-keygraph search "monthly revenue" --no-paths   # skip the suggested join paths
-keygraph path customers shipments        # ranked join paths with a JOIN snippet
-keygraph search "monthly revenue"        # which tables hold this
-keygraph keys orders                     # primary key, unique keys, indexes in column order
-```
-
-`keygraph demo [--dir DIR] [--no-open] [--json]` builds the bundled fictional webshop (35 tables, three schemas) into `./keygraph-demo` (or `--dir`) with the core install only, opens `keygraph.html` and prints three commands to try next (`--json` also gives `database`, the path of the packaged read-only SQLite sample; `path`, `describe`, `mcp`; `mcp` needs `keygraph[mcp]`). It refuses a folder that is not empty and not an earlier demo, and a rerun gives byte-identical files. Where an extra would improve a step, the demo uses a simpler built-in reader and prints a note naming the extra (SQL parsing in the code index and query log: `keygraph[code]`). To build the same demo from a clone of the repository instead:
-
-```bash
-git clone https://github.com/alikarami76/keygraph && cd keygraph
-uv sync && uv run bash examples/shop/build.sh && uv run keygraph ui --dir examples/shop/out
-```
-
-The build writes `graph.json`, `RELATIONS_REPORT.md`, `keygraph.html` (a self-contained explorer that works from disk, offline), `keygraph.db` (SQLite with full-text search) the agent pages `areas/*.md` and `tables/*.md`, and `build.json` (build time, keygraph version, source kind and database name, covered schemas; no host or credentials; the only file that differs between two identical builds, and `SOURCE_DATE_EPOCH` fixes its time). An unknown-table answer names the schemas the map covers. Details of every step are in [How keygraph works (PDF)](https://github.com/alikarami76/keygraph/blob/main/docs/how-it-works.pdf) and [examples/shop](https://github.com/alikarami76/keygraph/blob/main/examples/shop/README.md).
-
-If you cannot connect to the database, build from `information_schema` dumps instead:
-
-```bash
-keygraph load --columns columns.jsonl [--statistics stats.jsonl] [--key-columns kcu.jsonl] [--tables tables.jsonl]
-```
-
-Dumps use `information_schema` field names. `--columns-map '{"TABLE_SCHEMA":"db"}'`, `--flatten raw` and `--where field=value` adapt other shapes. Without STATISTICS the tool falls back to `COLUMN_KEY` (PRI/UNI/MUL), and without KEY_COLUMN_USAGE every relation is inferred. `keygraph fetch --cmd 'my-sql-cli --sql {sql}' --out dir` fetches those two tables through any read-only command that prints JSON rows.
+| | No context | Made on the fly | keygraph |
+|---|---|---|---|
+| Covers the whole schema | no | only what fits in the prompt | yes |
+| Cost per question | low, but answers are often wrong | repeated exploration every session | one lookup |
+| Same answer each run | no | no | yes |
+| Shows which joins are guesses | no | no | yes, with confidence and reason |
+| Business meaning of codes and grain | no | rediscovered, then lost | stored, curated, reused |
+| Personal data in prompts | no | often | masked |
 
 ## LLM indexing (recommended for agents)
 
@@ -388,6 +407,10 @@ These tools solve neighbouring problems. The table says what each is for and whe
 | DataHub, OpenMetadata | Metadata platforms run as servers: ingestion, lineage, ownership, governance, glossary. | keygraph is a command-line tool that writes a folder of files. It has no server, users, lineage or governance. It is smaller in scope and needs no deployment. |
 | Database IDE diagrams (DBeaver, DataGrip) | Generate ER diagrams from an existing database, mostly from its declared foreign keys. | keygraph groups a large schema into areas so each diagram stays readable, and shows inferred relations next to declared ones. |
 | Diagram design tools (dbdiagram) | Design a schema as code and draw it, usually before the database exists. | keygraph starts from an existing database and does not design or change schemas. |
+| Semantic layers (dbt Semantic Layer, Cube) | Define metrics once so dashboards and tools compute them the same way. | keygraph does not define or compute metrics. It maps the raw tables those definitions sit on, including databases with no semantic layer. Metrics you record in keygraph's context help search and agents but are never run. |
+| dbt | Transforms data in the warehouse with versioned SQL models, tests and generated docs. | keygraph transforms nothing. It reads an existing database as it is, including tables no dbt project describes, and infers the relations nobody declared. |
+| Database MCP servers (DBHub, MCP Toolbox for Databases) | Let an agent list schemas and run SQL against a database. | They run queries; keygraph never does. keygraph tells the agent which tables to join, how, and what one row and each code mean, and works next to them (see [Works with DBHub and MCP Toolbox](#works-with-dbhub-and-mcp-toolbox)). |
+| graphify | Turns a codebase with its docs, SQL schemas and configs into a knowledge graph for coding agents. | keygraph starts from the database itself: declared and inferred keys with confidence, join paths with fan-out warnings, grain, status codes and sampled value profiles. Its code index links code to tables and columns, but it does not map a codebase in general. |
 | Text-to-SQL schema linking | Choose which tables and columns are relevant to a natural-language question, often with a model. | keygraph supplies the inputs such a system can use (keys, join paths with fan-out warnings, grain, status codes). It does not turn a question into SQL and it makes no LLM calls. |
 
 What keygraph does not do: it does not run your queries, generate SQL beyond a `JOIN` snippet, track lineage, monitor data quality, manage access, or edit a database.
@@ -431,7 +454,7 @@ Log queries with `keygraph queries add` or `keygraph queries import`, or let an 
 No. keygraph calls no LLM and makes no network requests beyond the connection to the database you choose. Whatever your agent does with the answers is up to the agent. Value profiles never store raw values for personal data (the PII rule above), so profiled output is safer to hand to a model, but treat profiles as samples.
 
 ### How is keygraph different from a semantic layer, dbt or a data catalog?
-keygraph is a smaller tool with a narrower job. It reads an existing database and builds a map of keys, joins and business meaning as a folder of files. It does not define metrics for dashboards, transform data, track lineage, run a server or manage governance, which is what DataHub, OpenMetadata and similar catalogs are for (see the [comparison](#comparison)). The metrics and status codes you record in keygraph's context file help search and agents, but keygraph does not compute them. This README does not compare keygraph with dbt or semantic-layer products feature by feature.
+keygraph is a smaller tool with a narrower job. It reads an existing database and builds a map of keys, joins and business meaning as a folder of files. It does not define metrics for dashboards, transform data, track lineage, run a server or manage governance, which is what DataHub, OpenMetadata and similar catalogs are for (see the [comparison](#comparison)). The metrics and status codes you record in keygraph's context file help search and agents, but keygraph does not compute them. The [comparison](#comparison) has a row each for semantic layers and dbt.
 
 ### Which databases and agent frameworks does keygraph work with?
 Databases: MySQL, MariaDB, PostgreSQL, SQLite, SQL Server, ClickHouse, Metabase and MongoDB, plus `information_schema` dumps (see [Supported sources](#supported-sources)). Agents: anything that can call MCP tools or run a command-line tool. There are no official plugins for specific frameworks.
