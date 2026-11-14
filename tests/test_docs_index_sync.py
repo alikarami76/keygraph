@@ -40,8 +40,8 @@ def test_every_index_subcommand_a_doc_names_exists(doc):
 @pytest.mark.parametrize("doc", DOCS)
 def test_every_index_tool_a_doc_names_exists(doc):
     text = (ROOT / doc).read_text()
-    # `index_information` is a MongoDB method named in the README, so only the loop verbs count as tool names.
-    named = set(re.findall(r"\bindex_(start|next|submit|status|finish|replay|refresh)\b", text))
+    # `index_information` is a MongoDB method named in the README, so only the five loop verbs count as tool names (`index_replay` and `index_refresh` are dev-log event names, not tools).
+    named = set(re.findall(r"\bindex_(start|next|submit|status|finish)\b", text))
     assert {"start", "next", "submit", "status", "finish"} <= named, f"{doc} must name the five MCP tools"
     for verb in sorted(named):
         assert f"index_{verb}" in MCP_TOOLS, f"{doc} names MCP tool index_{verb}, which does not exist"
