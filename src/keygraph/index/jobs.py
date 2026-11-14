@@ -8,10 +8,10 @@ import re
 import time
 
 from keygraph import __version__
+from keygraph.index.schema import SCHEMA_VERSION, TASKS
 
 ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 UNIT_STATUS = ("pending", "done", "failed", "skipped")
-TASKS = ("relations", "columns", "tables", "concepts", "metrics", "performance")
 
 
 def _now() -> str:
@@ -38,7 +38,7 @@ def _unit(r) -> dict:
 
 
 def create_job(ctx, units: list[dict], *, budget: int, tasks=TASKS, url_env: str = "", cmd_env: str = "",
-               schema_version: int | str = 1) -> str:
+               schema_version: int | str = SCHEMA_VERSION) -> str:
     """Create an open job with its pending units and return the job id (job-0001, job-0002, ...)."""
     if int(budget) <= 0:
         raise ValueError("budget must be a positive number of tokens, for example --budget 200000")
