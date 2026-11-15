@@ -312,14 +312,15 @@ def build_server(dir: str | Path) -> MCPServer:
         return run(IX.start_result, out, budget, tasks, url_env, cmd_env, dialect, max_units, restart)
 
     @srv.tool()
-    def index_next() -> dict:
-        """The next unit to index: unit_id, tasks, instructions, a packet (columns, keys, candidate relations, masked
+    def index_next(worker: str = "", lease_seconds: int = 600) -> dict:
+        """Claim the next unit to index (worker: your name, so parallel workers never get the same unit; lease_seconds: how long
+        the claim holds before the unit goes back to the pool, default 600): unit_id, tasks, instructions, a packet (columns, keys, candidate relations, masked
         profiles, code references, logged queries, notes) and the JSON schema your answer must follow. It returns the same
-        unit until you submit it. Also returns status budget_exhausted (with the command to resume) or done (call index_finish), or finished (the job was closed). The reply is compact JSON under 40,000 characters; a `truncated` note ({cap, original_chars, cut}) says which packet sections were dropped (the unit is still answerable; fetch more with describe, keys, query_for or code_where). The packet may carry `copies` (same-shape tables with no unit of their own) and `family_undecided` (same-shape tables nothing could tell apart)."""
-        return run(IX.next_result, out)
+        unit until you submit it. Also returns status budget_exhausted (with the command to resume), waiting (every pending unit is leased to another worker: call again after retry_after seconds), done (call index_finish), or finished (the job was closed). The reply is compact JSON under 40,000 characters; a `truncated` note ({cap, original_chars, cut}) says which packet sections were dropped (the unit is still answerable; fetch more with describe, keys, query_for or code_where). The packet may carry `copies` (same-shape tables with no unit of their own) and `family_undecided` (same-shape tables nothing could tell apart)."""
+        return run(IX.next_result, out, worker, lease_seconds)
 
     @srv.tool()
-    def index_submit(unit_id: str, answer: dict, model: str = "", probe_seconds: float = 60.0) -> dict:
+    def index_submit(unit_id: str, answer: dict, model: str = "", probe_seconds: float = 60.0, worker: str = "") -> dict:
         """Submit your answer for a unit as a JSON object (the answer argument, not text) following the schema from
         index_next, and say which model you are. keygraph rejects unknown tables and columns, PII-looking values and
         contradictions with declared keys, probes checkable claims read-only, and stores the rest with provenance. Returns
@@ -327,8 +328,8 @@ def build_server(dir: str | Path) -> MCPServer:
         counts, and `next`. Include every requested kind as a list ([] when empty). Accepted items are stored at once; on
         partially_accepted or rejected, resubmit only the rejected items for this unit_id (attempts_left counts down, the
         third rejected or partial submission fails the unit and keeps the deterministic map). probe_seconds is the wall-clock
-        budget for all probes of this submit (default 60)."""
-        return run(IX.submit_result, out, unit_id, answer, model, probe_seconds)
+        budget for all probes of this submit (default 60). worker is the name you gave index_next: a unit leased to another worker is refused."""
+        return run(IX.submit_result, out, unit_id, answer, model, probe_seconds, worker)
 
     @srv.tool()
     def index_status() -> dict:

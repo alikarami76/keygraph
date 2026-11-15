@@ -341,13 +341,39 @@ def test_index_tools_match_the_cli(out, tmp_path, capsys):
     assert (mcp_dir / "index" / "summary.json").read_bytes() == (cli_dir / "index" / "summary.json").read_bytes()
 
 
+def test_index_worker_params_match_the_cli(out, tmp_path, capsys):
+    """index_next(worker, lease_seconds) and index_submit(worker) equal `index next --worker --lease-seconds` / `submit --worker`."""
+    cli_dir, mcp_dir = _copy(out, tmp_path, "wcli"), _copy(out, tmp_path, "wmcp")
+    s2 = build_server(mcp_dir)
+    cli_json(capsys, cli_dir, "index", "start", "--tasks", "relations")
+    call(s2, "index_start", tasks=["relations"])
+    for w in ("w1", "w2"):
+        c = cli_json(capsys, cli_dir, "index", "next", "--worker", w, "--lease-seconds", "120")
+        err, got = call(s2, "index_next", worker=w, lease_seconds=120)
+        assert not err and got == c and c["status"] == "unit"
+        if w == "w1":
+            first = c["unit_id"]
+        else:
+            assert c["unit_id"] != first
+    f = tmp_path / "wa.json"
+    f.write_text(json.dumps({"relations": []}), encoding="utf-8")
+    cli_res = cli_json(capsys, cli_dir, "index", "submit", first, str(f), "--worker", "w1")
+    err, got = call(s2, "index_submit", unit_id=first, answer={"relations": []}, worker="w1")
+    assert not err and got == cli_res and cli_res["status"] == "accepted"
+    err, msg = call(s2, "index_submit", unit_id=c["unit_id"], answer={"relations": []}, worker="w1")
+    assert err and "leased to worker w2" in msg
+    assert main(["index", "submit", c["unit_id"], str(f), "--worker", "w1", "--dir", str(cli_dir)]) == 2
+    assert "leased to worker w2" in capsys.readouterr().err
+
+
 def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatch):
     d = _copy(out, tmp_path, "names")
     s2 = build_server(d)
     tools = {t.name: t for t in asyncio.run(s2.list_tools())}
     props = {n: set((tools[n].input_schema or {}).get("properties", {})) for n in INDEX_TOOLS}
     assert props["index_start"] == {"budget", "tasks", "url_env", "cmd_env", "dialect", "max_units", "restart"}
-    assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds"} and props["index_next"] == set() == props["index_status"] == props["index_finish"]
+    assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds", "worker"}
+    assert props["index_next"] == {"worker", "lease_seconds"} and props["index_status"] == set() == props["index_finish"]
     assert not any("url" in p.replace("url_env", "") or "cmd" in p.replace("cmd_env", "") for ps in props.values() for p in ps)
     monkeypatch.delenv("KG_MCP_UNSET", raising=False)
     err, msg = call(s2, "index_start", url_env="KG_MCP_UNSET")

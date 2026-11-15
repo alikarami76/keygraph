@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS index_jobs(job_id TEXT PRIMARY KEY, started_at TEXT, 
   tasks TEXT, keygraph_version TEXT, schema_version TEXT, status TEXT, url_env TEXT, cmd_env TEXT, dialect TEXT);
 CREATE TABLE IF NOT EXISTS index_units(unit_id TEXT, job_id TEXT, tables TEXT, tasks TEXT, rank INTEGER, packet_hash TEXT,
   status TEXT, attempts INTEGER, tokens_est INTEGER, submitted_at TEXT, PRIMARY KEY(job_id, unit_id));
+CREATE TABLE IF NOT EXISTS index_leases(job_id TEXT, unit_id TEXT, worker TEXT, leased_at TEXT, until REAL,
+  PRIMARY KEY(job_id, unit_id));
 CREATE TABLE IF NOT EXISTS fact_provenance(kind TEXT, ref TEXT, source TEXT, model TEXT, prompt_hash TEXT, job_id TEXT,
   unit_id TEXT, confidence REAL, verified INTEGER, verified_by TEXT, probe TEXT, at TEXT, PRIMARY KEY(kind, ref));
 CREATE TABLE IF NOT EXISTS index_relations(rel_id TEXT PRIMARY KEY, unit_id TEXT, from_table TEXT, from_columns TEXT,
@@ -136,17 +138,20 @@ def read_copy_globs(paths) -> list[str]:
     return out
 
 
+BUSY_SECONDS = 5.0  # sqlite busy_timeout (5000 ms): index workers wait for each other's short write transactions
+
+
 class ContextDB:
     def __init__(self, path: str | Path, graph=None, readonly: bool = False):
         """readonly: open an existing file without writing to it; a missing file gives an empty in-memory context."""
         self.path = Path(path)
         if readonly and self.path.exists():
-            self.db = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True)
+            self.db = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, timeout=BUSY_SECONDS)
         elif readonly:
             self.db = sqlite3.connect(":memory:")
         else:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.db = sqlite3.connect(self.path)
+            self.db = sqlite3.connect(self.path, timeout=BUSY_SECONDS)  # parallel index workers share this file
         self.db.row_factory = sqlite3.Row
         if not (readonly and self.path.exists()):
             self.db.executescript(SCHEMA)

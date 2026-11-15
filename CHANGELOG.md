@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Parallel-safe indexing: `keygraph index next --worker NAME [--lease-seconds N]` (MCP `index_next(worker, lease_seconds)`) claims a unit with a lease in a new `index_leases` table, so several workers never get the same unit; the packet estimate is reserved against the budget at claim (parallel claims cannot overspend). `index submit --worker` (MCP `index_submit(worker)`) is accepted only from the lease holder, or after the lease expired while the unit is still pending; a rejected unit keeps its lease. New `waiting` status when every pending unit is leased. `replay` and `finish` now apply answers in plan rank order, so the map is byte-identical whatever order workers submit. Index connections wait up to 5 s for the database lock. Without `--worker` nothing changes (worker `default`).
+
 - Families need data evidence: same-shape tables form a family only when stored profiles show overlapping key ranges or shared values; the shape alone never does, so without profiles every table keeps its unit. A row count decides the representative only when it is at least 10 percent above the next member; otherwise usage, then relation degree, then undecided. Families are computed once per `index start`/`refresh` (stored in `index/families.json`) instead of per packet; `families` in the start reply counts decided families only.
 - SQLite row counts are deterministic: `sqlite_stat1`, else `SELECT COUNT(*) FROM (SELECT 1 FROM t LIMIT 1000001)` (no clock); a bigger table records `rows_estimate: 1000000` and `rows_at_least: true`. Every statement passes `assert_select` and the file is opened with a `mode=ro` URI (no PRAGMA). `build.json` method counts are `sqlite_stat1`, `count`, `count_capped`.
 
