@@ -125,30 +125,62 @@ def _save_ledger(out: Path, d: dict) -> None:
     os.replace(tmp, p)
 
 
+LOCK_STALE = 5.0   # seconds after which a ledger lock counts as left behind by a crash (the critical section takes milliseconds)
+LOCK_WAIT = 15.0   # how long a writer waits for the lock; longer than LOCK_STALE so a crashed holder is recovered inside one call
+
+
+def _break_stale(p: Path) -> None:
+    """Move a stale lock aside with an atomic rename (only one waiter wins), then delete it. A lock that turns out fresh (the
+    waiter raced a new holder) is put back."""
+    moved = p.with_name(f"{p.name}.stale{os.getpid()}-{threading.get_ident()}")
+    try:
+        os.rename(p, moved)
+    except OSError:
+        return  # someone else broke it first
+    try:
+        if time.time() - moved.stat().st_mtime > LOCK_STALE:
+            moved.unlink(missing_ok=True)
+        elif not p.exists():
+            os.rename(moved, p)
+        else:
+            moved.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 @contextlib.contextmanager
 def _ledger_lock(out: Path):
-    """A short lock (a file created exclusively) around the ledger's read-modify-write; a lock older than 30 s is stale."""
+    """A short lock (a file created exclusively, holding a unique token) around the ledger's read-modify-write. A lock older
+    than LOCK_STALE seconds is broken; only the holder's own token is removed on exit."""
     p = out / "index" / (LEDGER + ".lock")
     p.parent.mkdir(parents=True, exist_ok=True)
-    end = time.monotonic() + 10
+    token = f"{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"
+    end = time.monotonic() + LOCK_WAIT
     while True:
         try:
-            os.close(os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, token.encode())
+            os.close(fd)
             break
         except FileExistsError:
             try:
-                if time.time() - p.stat().st_mtime > 30:
-                    p.unlink(missing_ok=True)
+                if time.time() - p.stat().st_mtime > LOCK_STALE:
+                    _break_stale(p)
                     continue
             except OSError:
                 continue
             if time.monotonic() > end:
-                raise ValueError("the index ledger is busy; call again in a few seconds") from None
+                raise ValueError(f"the index ledger is locked by another writer (a lock left by a crash clears after {int(LOCK_STALE)} s); "
+                                 f"call again in a few seconds") from None
             time.sleep(0.01)
     try:
         yield
     finally:
-        p.unlink(missing_ok=True)
+        try:
+            if p.read_text(encoding="utf-8") == token:
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _put_entry(out: Path, uid: str, ent: dict) -> None:
@@ -302,11 +334,13 @@ def _busy(fn):
 
 @RY.capped
 @_busy
-def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS) -> dict:
+def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS, full: bool = False, have: str = "") -> dict:
     """Claim the best pending unit that no other worker holds, and return it with its packet, or budget_exhausted, waiting
     (every pending unit is leased to someone else) or done. The lease lasts `lease_seconds` (default 600) and the packet
     estimate is reserved against the budget at claim. The same worker gets the same unit back until it is submitted (or fails
-    after three rejections); an expired lease puts the unit back in the pool. Without `worker` the owner is `default`."""
+    after three rejections); an expired lease puts the unit back in the pool. Without `worker` the owner is `default`.
+    Lean replies: every unit reply carries `instructions_ref` (a hash of the instructions and the answer schema). When `have`
+    equals it and `full` is false, `instructions` and `answer_schema` are left out; otherwise they are sent."""
     out = Path(dir)
     worker = jobs.worker_name(worker)
     lease_seconds = int(lease_seconds)
@@ -350,8 +384,13 @@ def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS) 
             tasks = unit["tasks"]
             devlog.decide("index_next", status="unit", unit_id=unit["unit_id"], tokens_est=est, attempt=unit["attempts"] + 1,
                           budget_left=left, trimmed=len(pk.get("trimmed") or []), worker=worker)
-            return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions": SC.instructions(tasks), "packet": pk,
-                    "answer_schema": SC.answer_schema(tasks), "budget_left": left, "attempt": unit["attempts"] + 1}
+            text, schema = SC.instructions(tasks), SC.answer_schema(tasks)
+            ref = SC.instructions_ref(text, schema)
+            if have and have == ref and not full:
+                return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions_ref": ref, "packet": pk,
+                        "budget_left": left, "attempt": unit["attempts"] + 1}
+            return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions": text, "instructions_ref": ref,
+                    "packet": pk, "answer_schema": schema, "budget_left": left, "attempt": unit["attempts"] + 1}
         raise ValueError("could not claim a unit: other workers kept taking them; call index_next again")
 
 
@@ -434,6 +473,8 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
     The submit is accepted only from the worker that holds the unit's lease (`worker`, default `default`), or when the lease
     expired and the unit is still pending; otherwise it is refused with the holder's name. Done and failed units release their
     lease; a rejected or partial one keeps it for the resubmit.
+    `{status: waiting, retry_after, hint}` means other workers' reservations hold the budget this answer needs: nothing was stored,
+    so send the same answer again after retry_after seconds.
     Text that is not JSON (`_parse_error`, CLI only) is free three times per unit. A finished job returns {status: finished, hint}."""
     out = Path(dir)
     worker = jobs.worker_name(worker)
@@ -590,9 +631,11 @@ def status_result(dir) -> dict:
 
 
 @RY.capped
-def finish_result(dir) -> dict:
+def finish_result(dir, partial: bool = False) -> dict:
     """Replay the saved answers onto the base graph, write index/summary.json and close the job when nothing is pending.
-    Returns the summary (counts only), the same dict `replay` returns."""
+    Returns the summary (counts only), the same dict `replay` returns.
+    partial=True re-renders the map from the answers accepted so far and keeps the job open: no summary file, the job is never
+    closed, and the reply adds `partial: true` and `pending` (units still to do). The same answers give the same outputs."""
     out = Path(dir)
     _base(out)
     with ContextDB(out / "keygraph.db") as ctx:
@@ -602,6 +645,13 @@ def finish_result(dir) -> dict:
         if not (ST.answers_dir(out) / f"{u['unit_id']}.json").exists():
             raise ValueError(f"unit {u['unit_id']} is marked done but has no answer file (index/answers/{u['unit_id']}.json); restore the "
                              f"file, or run `keygraph index start --restart` to index again")
+    if partial:
+        res = RP.replay(out)
+        with ContextDB(out / "keygraph.db") as ctx:
+            job = jobs.open_job(ctx)
+            pending = len(jobs.list_units(ctx, job["job_id"], "pending")) if job else 0
+        devlog.decide("index_finish", partial=True, units=res["units"], pending=pending)
+        return {**res, "partial": True, "pending": pending}
     res = RP.finish(out)
     with ContextDB(out / "keygraph.db") as ctx:
         job = jobs.open_job(ctx)

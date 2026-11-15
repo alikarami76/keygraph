@@ -174,6 +174,8 @@ keygraph index submit UNIT_ID answer.json       # validate, probe-check, store; 
 keygraph index finish                           # rebuild graph.json, pages, report and explorer from all stored answers
 ```
 
+**Parallel workers:** spawn N subagents (default 4). Each loops `index next --worker NAME --json` then `index submit UNIT_ID answer.json --worker NAME`, until `next` says `done`; on `waiting` it sleeps `retry_after` seconds and calls again (stop if `waiting` persists for minutes). Then run `index finish`. Workers never get the same unit (a lease of 600 s by default, `--lease-seconds`), and the map is identical whatever order they submit. Replies are lean: pass `--have <instructions_ref>` (MCP does this for you per worker) and `index next` leaves out the unchanged instructions and answer schema; `--full` sends them again. `index finish --partial` re-renders from the answers so far and keeps the job open, so the best-ranked tables are usable early. Run indexing agents at low reasoning effort.
+
 `keygraph index status` shows progress and budget. The same loop is available over MCP as `index_start`, `index_next`, `index_submit`, `index_status` and `index_finish`, which return the same JSON. The full rules (attempts, resubmits, budget, probes, `refresh`) are in [AGENTS.md](https://github.com/alikarami76/keygraph/blob/main/AGENTS.md#llm-indexing). Commit your context files next to `index/answers/`: replay from a fresh checkout is deterministic, but code-join and business-context evidence live in `keygraph.db` and the context files.
 
 LLM indexing is recommended for agents but not yet the default. It becomes the default once a benchmark shows it improves answers over the deterministic map alone; no accuracy or speed numbers are published yet.

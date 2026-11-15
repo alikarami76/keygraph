@@ -27,14 +27,15 @@ Dev mode (optional): if a `dev_note` tool is listed, call it once per user quest
 After a map is built, you can add a meaning layer yourself (undeclared relations, column and status-code meanings, grain, concepts, metrics, performance notes). keygraph never calls a model: it gives you a packet, you answer with JSON, it validates, probe-checks and stores it. It spends your tokens, so ask the user first and tell them the budget (`--budget`, default 200000). Use `--json` and read `status` in every reply.
 
     keygraph index start --budget 200000 [--tasks relations,columns,tables,concepts,metrics,performance] [--url-env NAME | --cmd-env NAME] [--dialect D] [--max-units N] [--restart]
-    keygraph index next --json [--worker NAME] [--lease-seconds 600]   # status unit | waiting | done | budget_exhausted | finished; parallel workers use different names
+    keygraph index next --json [--worker NAME] [--lease-seconds 600] [--have REF] [--full]   # status unit | waiting | done | budget_exhausted | finished; parallel workers use different names
     keygraph index submit UNIT_ID answer.json --json [--model NAME] [--probe-seconds 60] [--worker NAME]   # or FILE `-` for stdin; same worker as `next`
     keygraph index status --json
-    keygraph index finish --json                   # rebuild graph, pages, report, explorer
+    keygraph index finish --json [--partial]       # rebuild graph, pages, report, explorer; --partial keeps the job open
+    # Parallel: spawn N (default 4) subagents, each loops next --worker NAME then submit --worker NAME until done (on waiting, sleep retry_after); then finish. Pass --have <instructions_ref> to get lean replies. Use low reasoning effort.
     keygraph index replay --json                   # same rebuild, no model, no database
     keygraph index refresh --json                  # after the map changed (CLI only)
 
-MCP: `index_start`, `index_next(worker, lease_seconds)`, `index_submit(unit_id, answer, model, probe_seconds, worker)` (`answer` is an object), `index_status`, `index_finish`; same JSON as the CLI, compact and under 40,000 characters.
+MCP: `index_start`, `index_next(worker, lease_seconds, full)`, `index_submit(unit_id, answer, model, probe_seconds, worker)` (`answer` is an object), `index_status`, `index_finish`; same JSON as the CLI, compact and under 40,000 characters.
 - If a reply has `truncated`, the packet lost the sections in `truncated.cut`; answer from what is left (the unit is still submittable) and use `describe`, `keys`, `query_for` or `code_where` for the rest. `truncated.over_cap` means even the trimmed reply is long: answer anyway.
 - The plan puts query-log, code and context tables first, then bigger and better-connected ones; empty or tiny tables go last.
 - `packet.copies` lists tables with the same columns and overlapping data that get no unit: answer only for the unit's own tables. `packet.family_undecided` lists same-shape tables nothing could tell apart (start reply `families_undecided`): index each on its own and do not assume which is canonical.

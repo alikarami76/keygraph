@@ -192,7 +192,7 @@ def test_replay_is_byte_identical_after_shuffled_submits(built, tmp_path):
 def test_next_without_worker_is_unchanged(work, capsys):
     r = _start(work)
     a = X.next_result(work)
-    assert list(a) == ["status", "unit_id", "tasks", "instructions", "packet", "answer_schema", "budget_left", "attempt"]
+    assert list(a) == ["status", "unit_id", "tasks", "instructions", "instructions_ref", "packet", "answer_schema", "budget_left", "attempt"]
     assert a["status"] == "unit" and a["attempt"] == 1 and a["budget_left"] == r["budget"]  # the reservation is not subtracted from the claimer
     assert X.next_result(work) == a
     with ContextDB(work / "keygraph.db") as ctx:
@@ -417,3 +417,95 @@ def test_replay_order_comes_from_the_answer_files_and_discriminates(built, tmp_p
         ctx.db.execute("DELETE FROM index_units")
     RP.replay(other)
     assert _snapshot(other) == _snapshot(outs["rank"])
+
+
+# --- A2: lean replies, JSON-only line, finish --partial; round-2 ledger lock minors ----------------------------------------
+
+def test_instructions_ref_is_sent_on_every_reply_and_the_bulk_only_when_needed(work):
+    _start(work)
+    a = X.next_result(work, "a")
+    ref = a["instructions_ref"]
+    assert a["instructions"] and a["answer_schema"] and len(ref) == 16
+    again = X.next_result(work, "a", have=ref)  # same unit back, caller already has the text
+    assert again["instructions_ref"] == ref and "instructions" not in again and "answer_schema" not in again
+    assert again["packet"] == a["packet"] and again["unit_id"] == a["unit_id"]
+    assert "instructions" in X.next_result(work, "a", have=ref, full=True)  # --full resends
+    assert "instructions" in X.next_result(work, "a", have="0123456789abcdef")  # another hash: resend
+    assert len(json.dumps(again)) < len(json.dumps(a))
+
+
+def test_instructions_ref_changes_when_the_tasks_change(built, tmp_path):
+    d1, d2 = tmp_path / "t1", tmp_path / "t2"
+    shutil.copytree(built, d1)
+    shutil.copytree(built, d2)
+    X.start_result(d1, tasks=["relations"])
+    X.start_result(d2, tasks=["relations", "columns"])
+    r1, r2 = X.next_result(d1, "a"), X.next_result(d2, "a", have=X.next_result(d1, "a")["instructions_ref"])
+    assert r1["instructions_ref"] != r2["instructions_ref"] and "instructions" in r2  # new tasks: sent in full
+
+
+def test_have_works_over_the_cli(work, capsys):
+    _start(work)
+    capsys.readouterr()
+    assert main(["index", "next", "--dir", str(work), "--json"]) == 0
+    full = json.loads(capsys.readouterr().out)
+    assert main(["index", "next", "--have", full["instructions_ref"], "--dir", str(work), "--json"]) == 0
+    lean = json.loads(capsys.readouterr().out)
+    assert "instructions" not in lean and lean["instructions_ref"] == full["instructions_ref"]
+    assert main(["index", "next", "--have", full["instructions_ref"], "--full", "--dir", str(work), "--json"]) == 0
+    assert "instructions" in json.loads(capsys.readouterr().out)
+
+
+def test_instructions_ask_for_the_json_only(work):
+    _start(work)
+    assert "Call index_submit with the JSON answer only. Do not explain, restate the packet or add commentary." in X.next_result(work, "a")["instructions"]
+
+
+def test_old_answer_files_replay_the_same(built, tmp_path):
+    """Answers store their own prompt hash, so the changed instruction text does not touch replay."""
+    d = tmp_path / "old"
+    shutil.copytree(built, d)
+    _start(d)
+    _order_sensitive(d, (0, 1))
+    RP.replay(d)
+    first = _snapshot(d)
+    RP.replay(d)
+    assert _snapshot(d) == first
+
+
+def test_finish_partial_rerenders_and_keeps_the_job_open(work, tmp_path):
+    _start(work)
+    a = X.next_result(work, "a")["unit_id"]
+    assert _submit(work, a, "a")["status"] == "accepted"
+    res = X.finish_result(work, partial=True)
+    assert res["partial"] is True and res["units"] == 1 and res["pending"] > 0
+    assert not (work / "index" / "summary.json").exists()
+    with ContextDB(work / "keygraph.db") as ctx:
+        assert jobs.open_job(ctx)["job_id"] == "job-0001"
+    first = _snapshot(work)
+    X.finish_result(work, partial=True)
+    assert _snapshot(work) == first  # same answers, same outputs
+    RP.replay(work)
+    assert _snapshot(work) == first
+    assert X.next_result(work, "a")["status"] == "unit"  # the job keeps working after a partial finish
+
+
+def test_stale_ledger_lock_is_broken_and_a_fresh_one_waits(work, monkeypatch):
+    import os
+    _start(work)
+    lock = work / "index" / (X.LEDGER + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("crashed")
+    old = lock.stat().st_mtime - 60
+    os.utime(lock, (old, old))
+    X._put_entry(work, "u1", {"accepted": 1})
+    assert not lock.exists() and X._ledger(work)["u1"] == {"accepted": 1}
+    lock.write_text("someone else")  # fresh: held by a live writer
+    monkeypatch.setattr(X, "LOCK_WAIT", 0.2)
+    with pytest.raises(ValueError, match="ledger"):
+        X._put_entry(work, "u2", {"accepted": 2})
+    assert lock.read_text() == "someone else"  # never deleted by a waiter
+
+
+def test_the_lock_wait_outlasts_the_stale_age():
+    assert X.LOCK_WAIT > X.LOCK_STALE

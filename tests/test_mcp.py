@@ -366,6 +366,27 @@ def test_index_worker_params_match_the_cli(out, tmp_path, capsys):
     assert "leased to worker w2" in capsys.readouterr().err
 
 
+def test_index_lean_replies_and_partial_finish_match_the_cli(out, tmp_path, capsys):
+    """The MCP server remembers the last instructions hash per worker; the CLI takes it as --have. Both give the same JSON."""
+    cli_dir, mcp_dir = _copy(out, tmp_path, "lcli"), _copy(out, tmp_path, "lmcp")
+    s2 = build_server(mcp_dir)
+    cli_json(capsys, cli_dir, "index", "start", "--tasks", "relations")
+    call(s2, "index_start", tasks=["relations"])
+    c1 = cli_json(capsys, cli_dir, "index", "next", "--worker", "w1")
+    err, g1 = call(s2, "index_next", worker="w1")
+    assert not err and g1 == c1 and "instructions" in g1
+    c2 = cli_json(capsys, cli_dir, "index", "next", "--worker", "w1", "--have", c1["instructions_ref"])
+    err, g2 = call(s2, "index_next", worker="w1")  # the server knows w1 already has them
+    assert not err and g2 == c2 and "instructions" not in g2
+    err, g3 = call(s2, "index_next", worker="w1", full=True)
+    assert not err and g3 == c1
+    err, g4 = call(s2, "index_next", worker="w2")  # a different worker has nothing yet
+    assert not err and "instructions" in g4
+    p1 = cli_json(capsys, cli_dir, "index", "finish", "--partial")
+    err, got = call(s2, "index_finish", partial=True)
+    assert not err and got == p1 and p1["partial"] is True
+
+
 def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatch):
     d = _copy(out, tmp_path, "names")
     s2 = build_server(d)
@@ -373,7 +394,8 @@ def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatc
     props = {n: set((tools[n].input_schema or {}).get("properties", {})) for n in INDEX_TOOLS}
     assert props["index_start"] == {"budget", "tasks", "url_env", "cmd_env", "dialect", "max_units", "restart"}
     assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds", "worker"}
-    assert props["index_next"] == {"worker", "lease_seconds"} and props["index_status"] == set() == props["index_finish"]
+    assert props["index_next"] == {"worker", "lease_seconds", "full"} and props["index_status"] == set()
+    assert props["index_finish"] == {"partial"}
     assert not any("url" in p.replace("url_env", "") or "cmd" in p.replace("cmd_env", "") for ps in props.values() for p in ps)
     monkeypatch.delenv("KG_MCP_UNSET", raising=False)
     err, msg = call(s2, "index_start", url_env="KG_MCP_UNSET")
