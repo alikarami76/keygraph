@@ -1,7 +1,7 @@
 """Replay: rebuild the meaning layer from saved answers with no model and no database access.
 
 `snapshot_base` keeps the deterministic graph.json as index/base_graph.json (index start calls it). `replay` clears every
-llm fact, re-applies index/answers/*.json in unit-id order and renders. `finish` is replay plus index/summary.json
+llm fact, re-applies index/answers/*.json in plan rank order (never in the order workers submitted them) and renders. `finish` is replay plus index/summary.json
 (counts only). Same base graph plus same answers gives byte-identical graph.json, pages, report and explorer."""
 
 from __future__ import annotations
@@ -104,14 +104,16 @@ def replay(out_dir) -> dict:
     out = Path(out_dir)
     g = load_base(out)
     check_fresh(out)
-    files = sorted(answers_dir(out).glob("*.json"), key=lambda p: p.stem)
+    files = list(answers_dir(out).glob("*.json"))
     have_db = (out / "keygraph.db").exists()
     used = 0
     totals = {"kept": 0, "filled": 0, "probe_failed": 0}
     with ContextDB(out / "keygraph.db", g) as ctx:
         clear_llm(ctx)
-        for f in files:
-            a = json.loads(f.read_text(encoding="utf-8"))
+        loaded = [(f, json.loads(f.read_text(encoding="utf-8"))) for f in files]
+        # Order comes from the files alone: those with a `rank` by (rank, unit id), then those without (0.4.0 files) by unit id, as 0.4.0 did.
+        loaded.sort(key=lambda fa: (0, fa[1]["rank"], fa[0].stem) if isinstance(fa[1].get("rank"), int) else (1, 0, fa[0].stem))
+        for f, a in loaded:
             if have_db and _crashed(ctx, f, a):
                 continue
             used += 1

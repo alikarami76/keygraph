@@ -710,18 +710,18 @@ def _index_run(X, a, c: str) -> dict:
         tasks = [t for x in (a.tasks or []) for t in x.split(",") if t.strip()]
         return X.start_result(a.dir, a.budget, tasks or None, a.url_env or "", a.cmd_env or "", a.dialect or "", a.max_units, a.restart)
     if c == "next":
-        return X.next_result(a.dir)
+        return X.next_result(a.dir, a.worker or "", a.lease_seconds, a.full, a.have or "")
     if c == "submit":
         try:
             text = sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             what = exc.strerror if isinstance(exc, OSError) and exc.strerror else "not readable as UTF-8 text"
             raise ValueError(f"cannot read the answer file {a.file}: {what}; write the JSON to a file, or pipe it in with `-`") from None
-        return X.submit_text(a.dir, a.unit_id, text, a.model or "", a.probe_seconds)
+        return X.submit_text(a.dir, a.unit_id, text, a.model or "", a.probe_seconds, a.worker or "")
     if c == "status":
         return X.status_result(a.dir)
     if c == "finish":
-        return X.finish_result(a.dir)
+        return X.finish_result(a.dir, a.partial)
     if c == "replay":
         return X.replay_result(a.dir)
     return X.refresh_result(a.dir)
@@ -983,14 +983,20 @@ def main(argv=None) -> int:
     p.add_argument("--dialect", choices=dialects, help="SQL dialect of the probe source (quoting for --cmd-env); default: the map's source kind")
     p.add_argument("--max-units", type=int, default=0, metavar="N", help="plan only the N best-ranked units; the rest are skipped and keep the deterministic map")
     p.add_argument("--restart", action="store_true", help="abort the open job and start a new one with every unit pending")
-    ix_cmd("next", "the next unit: packet, instructions and answer schema (the same unit until it is submitted)")
+    p = ix_cmd("next", "claim the next unit: packet, instructions and answer schema (the same unit comes back to the same worker until it is submitted)")
+    p.add_argument("--worker", metavar="NAME", help="name of this worker (default: default); parallel workers use different names and never get the same unit")
+    p.add_argument("--lease-seconds", type=int, default=600, metavar="N", help="how long the claim holds before the unit goes back to the pool (default 600, 1 to 3600)")
+    p.add_argument("--have", metavar="HASH", help="the instructions_ref you already hold: when it matches, the reply leaves out the instructions and answer_schema")
+    p.add_argument("--full", action="store_true", help="send the instructions and answer_schema even when --have matches")
     p = ix_cmd("submit", "send your answer for one unit: validated, probe-checked and stored; accepted items are kept even when others are rejected")
     p.add_argument("unit_id")
     p.add_argument("file", metavar="FILE|-", help="the answer as a JSON object that follows the answer_schema from `index next` (a file, or - for stdin); after a partial or rejected reply send only the rejected items")
     p.add_argument("--model", help="name of the model that wrote the answer (default: `model` in the JSON, else unknown)")
     p.add_argument("--probe-seconds", type=float, default=60.0, help="wall-clock budget for probing one submit (default 60)")
+    p.add_argument("--worker", metavar="NAME", help="the worker that claimed the unit with `index next --worker` (default: default)")
     ix_cmd("status", "progress, budget, accept and verify rates, failed units")
-    ix_cmd("finish", "replay the saved answers, re-render graph.json, pages and explorer, write index/summary.json")
+    p = ix_cmd("finish", "replay the saved answers, re-render graph.json, pages and explorer, write index/summary.json")
+    p.add_argument("--partial", action="store_true", help="re-render from the answers accepted so far and keep the job open (no summary file); use the best-ranked tables early")
     ix_cmd("replay", "rebuild the meaning layer from index/answers/ (no model, no database access)")
     ix_cmd("refresh", "re-plan after the map changed: only units whose packet changed, new tables and removed ones")
     a, extra = ap.parse_known_args(argv)

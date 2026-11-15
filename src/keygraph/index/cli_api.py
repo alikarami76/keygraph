@@ -14,10 +14,12 @@ counts and rates is stored, logged or returned. Dev mode logs ids, sizes, counts
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 import sqlite3
+import threading
 from collections import Counter
 from pathlib import Path
 
@@ -38,6 +40,7 @@ MAX_ATTEMPTS = 3
 # One value for both surfaces (CLI and MCP return identical JSON), so every hint names both forms.
 NEXT = "index_next (CLI: keygraph index next)"
 FINISH = "index_finish (CLI: keygraph index finish)"
+REFRESH = "the job is finished; after the map is rebuilt run `keygraph index refresh` (CLI only), or `keygraph index start --restart` to redo all"
 FREE_PARSE_ERRORS = 3
 DIALECTS = ("mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite")
 LEDGER = "ledger.json"
@@ -104,18 +107,65 @@ def _packet(g, ctx, unit: dict, out: Path | None = None) -> tuple[dict, int, str
     return pk, PK.estimate(pk), hashlib.sha256(SC.canonical(pk).encode("utf-8")).hexdigest()
 
 
+LEDGER_DIR = "ledger"
+
+
+def _write_atomic(p: Path, text: str) -> None:
+    """Write through a temp file and rename it, so a reader never sees half a file."""
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"{p.name}.tmp{os.getpid()}-{threading.get_ident()}")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _entry_path(out: Path, uid: str) -> Path:
+    return out / "index" / LEDGER_DIR / f"{uid}.json"
+
+
 def _ledger(out: Path) -> dict:
+    """Per-unit ledger entries (index/ledger/<unit_id>.json) laid over the old single index/ledger.json some maps still have.
+    Each unit has its own file, written by the one worker holding the unit, so parallel submits never share a file."""
     try:
         d = json.loads((out / "index" / LEDGER).read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
+        led = d if isinstance(d, dict) else {}
     except (OSError, ValueError):
-        return {}
+        led = {}
+    for f in sorted((out / "index" / LEDGER_DIR).glob("*.json")):
+        try:
+            e = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(e, dict):
+            led[f.stem] = e
+    return led
 
 
-def _save_ledger(out: Path, d: dict) -> None:
-    p = out / "index" / LEDGER
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+def _put_entry(out: Path, uid: str, ent: dict) -> None:
+    """Store one unit's ledger entry atomically in its own file."""
+    _write_atomic(_entry_path(out, uid), json.dumps(ent, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
+
+
+def _drop_entries(out: Path, uids) -> None:
+    """Forget these units' ledger entries (refresh); also removes them from an old single ledger.json."""
+    uids = list(uids)
+    for uid in uids:
+        _entry_path(out, uid).unlink(missing_ok=True)
+    legacy = out / "index" / LEDGER
+    try:
+        d = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(d, dict) and any(u in d for u in uids):
+        for u in uids:
+            d.pop(u, None)
+        _write_atomic(legacy, json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
+
+
+def _clear_ledger(out: Path) -> None:
+    """A new job starts with an empty ledger."""
+    for f in (out / "index" / LEDGER_DIR).glob("*.json*"):
+        f.unlink(missing_ok=True)
+    (out / "index" / LEDGER).unlink(missing_ok=True)
 
 
 def _save_families(out: Path, g, ctx) -> None:
@@ -232,7 +282,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
         _save_families(out, g, pre)
         job_id = jobs.create_job(ctx, units, budget=budget, tasks=want, url_env=url_env or "", cmd_env=cmd_env or "",
                                  dialect=dialect, skip_after=max_units if max_units > 0 else None)
-        _save_ledger(out, {})
+        _clear_ledger(out)
         res = {**_job_view(ctx, jobs.get_job(ctx, job_id), False), **_families_view(out)}
     devlog.decide("index_start", job_id=job_id, resumed=False, units=res["units"], budget=res["budget"], skipped=res["skipped"],
                   tasks=len(want), probe=("url_env" if url_env else "cmd_env" if cmd_env else "none"))
@@ -241,35 +291,86 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
 
 # --- next ------------------------------------------------------------------------------------------------------
 
+CLAIM_TRIES = 20
+RESERVED_RETRY = 15  # a `waiting` caused only by other workers' reservations clears when they submit, so retry soon, not after the lease
+MAX_LEASE_SECONDS = 3600
+
+
+def _busy(fn):
+    """A lock wait that outlasts the 5 s busy timeout becomes a plain error telling the agent to call again."""
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        try:
+            return fn(*a, **k)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc) or "busy" in str(exc):
+                raise ValueError("the index database is busy (other workers are writing); call again in a few seconds") from None
+            raise
+    return wrapper
+
+
 @RY.capped
-def next_result(dir) -> dict:
-    """The best pending unit with its packet, or budget_exhausted, or done. The same unit comes back until it is submitted
-    (or fails after three rejections)."""
+@_busy
+def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS, full: bool = False, have: str = "") -> dict:
+    """Claim the best pending unit that no other worker holds, and return it with its packet, or budget_exhausted, waiting
+    (every pending unit is leased to someone else) or done. The lease lasts `lease_seconds` (default 600) and the packet
+    estimate is reserved against the budget at claim. The same worker gets the same unit back until it is submitted (or fails
+    after three rejections); an expired lease puts the unit back in the pool. Without `worker` the owner is `default`.
+    Lean replies: every unit reply carries `instructions_ref` (a hash of the instructions and the answer schema). When `have`
+    equals it and `full` is false, `instructions` and `answer_schema` are left out; otherwise they are sent."""
     out = Path(dir)
+    worker = jobs.worker_name(worker)
+    lease_seconds = int(lease_seconds)
+    if not 1 <= lease_seconds <= MAX_LEASE_SECONDS:
+        raise ValueError(f"lease_seconds must be between 1 and {MAX_LEASE_SECONDS} seconds, for example --lease-seconds 600")
     g = _base(out)
     with ContextDB(out / "keygraph.db", g) as ctx:
         job = jobs.open_job(ctx)
-        unit = jobs.next_unit(ctx, job["job_id"]) if job else None
         if job is None and jobs.latest_job(ctx) is None:
             raise ValueError("no index job: run `keygraph index start` first")
         if job is None and _finished(ctx):
             return _finished(ctx)
-        if unit is None:
-            devlog.decide("index_next", status="done")
-            return {"status": "done", "finish": FINISH}
-        pk, est, h = _packet(g, ctx, unit, out)
-        jobs.update_unit(ctx, job["job_id"], unit["unit_id"], tokens_est=est, packet_hash=h)
-        left = jobs.budget_left(ctx, job["job_id"])
-        if not jobs.has_budget(ctx, job["job_id"], est):
-            devlog.decide("index_next", status="budget_exhausted", unit_id=unit["unit_id"], tokens_est=est, budget_left=left)
-            more = max(job["budget"] * 2, job["used"] + est)
-            return {"status": "budget_exhausted", "unit_id": unit["unit_id"], "budget_left": left, "needed": est,
-                    "resume": f"index_start budget={more} (CLI: keygraph index start --budget {more})"}
-        tasks = unit["tasks"]
-        devlog.decide("index_next", status="unit", unit_id=unit["unit_id"], tokens_est=est, attempt=unit["attempts"] + 1,
-                      budget_left=left, trimmed=len(pk.get("trimmed") or []))
-        return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions": SC.instructions(tasks), "packet": pk,
-                "answer_schema": SC.answer_schema(tasks), "budget_left": left, "attempt": unit["attempts"] + 1}
+        for _ in range(CLAIM_TRIES):
+            unit = jobs.candidate(ctx, job["job_id"], worker) if job else None
+            if unit is None:
+                if job and jobs.list_units(ctx, job["job_id"], "pending"):  # all of them leased to other workers
+                    wait = jobs.retry_after(ctx, job["job_id"])
+                    devlog.decide("index_next", status="waiting", worker=worker, leased=jobs.leased_count(ctx, job["job_id"]))
+                    return {"status": "waiting", "leased": jobs.leased_count(ctx, job["job_id"]), "retry_after": wait,
+                            "hint": "every pending unit is leased to another worker; call index_next again after retry_after "
+                                    "seconds (an expired lease puts its unit back)"}
+                devlog.decide("index_next", status="done")
+                return {"status": "done", "finish": FINISH}
+            pk, est, h = _packet(g, ctx, unit, out)
+            got = jobs.try_claim(ctx, job["job_id"], unit, worker, lease_seconds, est, h)
+            if got == "taken":
+                continue  # another worker was faster: pick again
+            left = jobs.available(ctx, job["job_id"], unit["unit_id"])
+            if got == "budget" and jobs.reserved(ctx, job["job_id"], unit["unit_id"]) and \
+                    est <= max(0, job["budget"] - jobs.get_job(ctx, job["job_id"])["used"]):
+                wait = min(jobs.retry_after(ctx, job["job_id"]), RESERVED_RETRY)  # only other workers' reservations are in the way
+                devlog.decide("index_next", status="waiting", worker=worker, reason="reserved")
+                return {"status": "waiting", "leased": jobs.leased_count(ctx, job["job_id"]), "retry_after": wait,
+                        "hint": "the budget left is reserved by other workers' units; call again after retry_after seconds "
+                                "(a lease that expires gives its reservation back)"}
+            if got == "budget":
+                devlog.decide("index_next", status="budget_exhausted", unit_id=unit["unit_id"], tokens_est=est, budget_left=left)
+                more = max(job["budget"] * 2, job["used"] + est)
+                return {"status": "budget_exhausted", "unit_id": unit["unit_id"], "budget_left": left, "needed": est,
+                        "resume": f"index_start budget={more} (CLI: keygraph index start --budget {more})"}
+            tasks = unit["tasks"]
+            devlog.decide("index_next", status="unit", unit_id=unit["unit_id"], tokens_est=est, attempt=unit["attempts"] + 1,
+                          budget_left=left, trimmed=len(pk.get("trimmed") or []), worker=worker)
+            text, schema = SC.instructions(tasks), SC.answer_schema(tasks)
+            ref = SC.instructions_ref(text, schema)
+            if have and have == ref and not full:
+                return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions_omitted": True,
+                        "instructions_ref": ref, "packet": pk, "budget_left": left, "attempt": unit["attempts"] + 1,
+                        "hint": f"Instructions unchanged since your last unit (ref {ref}). If you no longer have them, call "
+                                f"index_next with full=true (CLI: --full)."}
+            return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions": text, "instructions_ref": ref,
+                    "packet": pk, "answer_schema": schema, "budget_left": left, "attempt": unit["attempts"] + 1}
+        raise ValueError("could not claim a unit: other workers kept taking them; call index_next again")
 
 
 # --- submit ----------------------------------------------------------------------------------------------------
@@ -291,7 +392,8 @@ def _source(job: dict, g) -> tuple[PR.Source | None, str]:
 
 
 @RY.capped
-def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET) -> dict:
+@_busy
+def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET, worker: str = "") -> dict:
     """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt, for the first
     three times per unit; after that each one is a rejection like any other."""
     try:
@@ -300,7 +402,33 @@ def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: fl
         answer = None
         err = (f"the answer is not valid JSON ({type(exc).__name__}: {getattr(exc, 'msg', 'parse error')} at line "
                f"{getattr(exc, 'lineno', '?')}, column {getattr(exc, 'colno', '?')}); fix the file and submit again")
-    return submit_result(dir, unit_id, answer, model, probe_seconds, _parse_error=err, _answer_tokens=(len(text) + 3) // 4 if err else None)
+    return submit_result(dir, unit_id, answer, model, probe_seconds, worker, _parse_error=err,
+                         _answer_tokens=(len(text) + 3) // 4 if err else None)
+
+
+def _check_lease(ctx, job_id: str, unit_id: str, worker: str) -> None:
+    """Refuse a submit while another worker holds a live lease on the unit (an expired lease or none is fine)."""
+    held = jobs.live_lease(ctx, job_id, unit_id)
+    if held and held["worker"] != worker:
+        raise ValueError(f"unit {unit_id} is leased to worker {held['worker']}, not {worker} (your lease expired or never existed); "
+                         f"claim a unit of your own with `keygraph index next --worker {worker}`")
+
+
+def _budget_stop(ctx, job: dict, unit_id: str, est: int, atoks: int, charge: int) -> dict | None:
+    """budget_exhausted reply when the charge does not fit what is free (budget minus used minus other workers' reservations)."""
+    left_now = jobs.available(ctx, job["job_id"], unit_id)
+    if charge <= left_now:
+        return None
+    if jobs.reserved(ctx, job["job_id"], unit_id) and charge <= max(0, jobs.get_job(ctx, job["job_id"])["budget"] - jobs.get_job(ctx, job["job_id"])["used"]):
+        return {"status": "waiting", "unit_id": unit_id, "retry_after": min(jobs.retry_after(ctx, job["job_id"]), RESERVED_RETRY),
+                "hint": "other workers' reservations hold the budget this answer needs; nothing was stored and no attempt was used. "
+                        "Submit the same answer again after retry_after seconds"}
+    devlog.decide("index_submit", unit_id=unit_id, status="budget_exhausted", tokens_est=est, answer_tokens=atoks, budget_left=left_now)
+    more = max(job["budget"] * 2, job["used"] + charge)
+    return {"status": "budget_exhausted", "unit_id": unit_id, "budget_left": left_now, "needed": charge,
+            "hint": "this answer does not fit the budget left; nothing was stored and no attempt was used. Raise the budget "
+                    "and submit the same answer again, or run `keygraph index finish` to keep what is stored",
+            "resume": f"index_start budget={more} (CLI: keygraph index start --budget {more})"}
 
 
 def _resubmit(unit_id: str) -> str:
@@ -308,7 +436,8 @@ def _resubmit(unit_id: str) -> str:
 
 
 @RY.capped
-def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, *,
+@_busy
+def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, worker: str = "", *,
                   _parse_error: str | None = None, _answer_tokens: int | None = None) -> dict:
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
 
@@ -320,8 +449,14 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
     items are accepted and some rejected the status is `partially_accepted`: the accepted items are stored, the unit stays
     pending and the agent resubmits only the rejected ones (the saved answer is the union). Every rejected or partial
     submission uses one of three attempts; the third one marks the unit failed. The packet is charged once per unit.
+    The submit is accepted only from the worker that holds the unit's lease (`worker`, default `default`), or when the lease
+    expired and the unit is still pending; otherwise it is refused with the holder's name. Done and failed units release their
+    lease; a rejected or partial one keeps it for the resubmit.
+    `{status: waiting, retry_after, hint}` means other workers' reservations hold the budget this answer needs: nothing was stored,
+    so send the same answer again after retry_after seconds.
     Text that is not JSON (`_parse_error`, CLI only) is free three times per unit. A finished job returns {status: finished, hint}."""
     out = Path(dir)
+    worker = jobs.worker_name(worker)
     g = _base(out)
     with ContextDB(out / "keygraph.db", g) as ctx:
         job = jobs.open_job(ctx)
@@ -338,6 +473,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             raise ValueError(f"unit {unit_id} is already {unit['status']}; `keygraph index refresh` puts "
                              + ("failed units and units with changed tables back" if unit["status"] == "failed"
                                 else "it back only when its tables changed"))
+        _check_lease(ctx, job_id, unit_id, worker)
         tasks = unit["tasks"]
         pk, est, ph = _packet(g, ctx, unit, out)
         prompt = SC.prompt_hash(SC.instructions(tasks), SC.answer_schema(tasks), pk)
@@ -350,19 +486,13 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         if _parse_error:
             ent["parse_errors"] = ent.get("parse_errors", 0) + 1
             if ent["parse_errors"] <= FREE_PARSE_ERRORS:
-                _save_ledger(out, led)
+                _put_entry(out, unit_id, ent)
                 raise ValueError(f"{_parse_error} (free parse error {ent['parse_errors']} of {FREE_PARSE_ERRORS}: no attempt used; "
                                  f"later ones count as attempts)")
         charge = atoks + (est if unit["attempts"] == 0 else 0)  # what this submit would add to `used`
-        left_now = jobs.budget_left(ctx, job_id)
-        if charge > left_now:  # hard stop: nothing is stored, charged or counted as an attempt
-            devlog.decide("index_submit", unit_id=unit_id, status="budget_exhausted", tokens_est=est, answer_tokens=atoks,
-                          budget_left=left_now)
-            more = max(job["budget"] * 2, job["used"] + charge)
-            return {"status": "budget_exhausted", "unit_id": unit_id, "budget_left": left_now, "needed": charge,
-                    "hint": "this answer does not fit the budget left; nothing was stored and no attempt was used. Raise the budget "
-                            "and submit the same answer again, or run `keygraph index finish` to keep what is stored",
-                    "resume": f"index_start budget={more} (CLI: keygraph index start --budget {more})"}
+        stop = _budget_stop(ctx, job, unit_id, est, atoks, charge)
+        if stop:
+            return stop
         again = bool(ent.get("partial"))  # an earlier submit stored some items and left the rest to be resubmitted
         if _parse_error:
             val = {"accepted": [], "rejected": [], "errors": [f"$: {_parse_error}"]}
@@ -371,7 +501,22 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         rejected = [{"item": "$", "reason": e.removeprefix("$: ")} for e in val["errors"]] + \
                    [{"item": r["item"], "reason": r["reason"]} for r in val["rejected"]]
         attempts = unit["attempts"] + 1
-        jobs.add_used(ctx, job_id, charge)  # the packet is paid for once per unit
+        # The lease, the unit's status and the budget are checked again and the charge is added in one write transaction, so
+        # two workers can neither store the same unit nor overspend the budget between the first check and here.
+        jobs.begin_write(ctx)
+        try:
+            _check_lease(ctx, job_id, unit_id, worker)
+            if (jobs.get_unit(ctx, job_id, unit_id) or {}).get("status") != "pending":
+                raise ValueError(f"unit {unit_id} was already submitted by another worker")
+            stop = _budget_stop(ctx, job, unit_id, est, atoks, charge)
+            if stop:
+                ctx.db.rollback()
+                return stop
+            jobs.hold(ctx, job_id, unit_id, worker, max(jobs.LEASE_SECONDS, int(probe_seconds) + 60))  # outlast the probes
+            jobs.add_used(ctx, job_id, charge)  # the packet is paid for once per unit (commits the transaction)
+        except BaseException:
+            ctx.db.rollback()
+            raise
         left = jobs.budget_left(ctx, job_id)
         failed = bool(rejected) and attempts >= MAX_ATTEMPTS
         if val["errors"] or (rejected and not val["accepted"]):
@@ -380,7 +525,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             ent.update(attempts=attempts, rejected=ent["rejected"] + len(rejected), reasons=rejected[:REASONS_KEPT])
             if failed:
                 ent.pop("partial", None)
-            _save_ledger(out, led)
+            _put_entry(out, unit_id, ent)
             devlog.decide("index_submit", unit_id=unit_id, status="failed" if failed else "rejected", attempt=attempts,
                           tokens_est=est, answer_tokens=atoks, accepted=0, rejected=len(rejected), errors=len(val["errors"]))
             res = {"status": "failed" if failed else "rejected", "accepted": 0, "rejected": rejected, "unverified": 0,
@@ -417,7 +562,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             ent["partial"] = True
         else:
             ent.pop("partial", None)
-        _save_ledger(out, led)
+        _put_entry(out, unit_id, ent)
         status = "failed" if failed else "partially_accepted" if rejected else "accepted"
         devlog.decide("index_submit", unit_id=unit_id, status=status, attempt=attempts, tokens_est=est, answer_tokens=atoks,
                       accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, codes_seen=n_seen, unverified=n_unk,
@@ -461,13 +606,16 @@ def status_result(dir) -> dict:
             "verify_rate": round(tot["verified"] / tot["accepted"], 3) if tot["accepted"] else None,
             "failed_units": [{"unit_id": u["unit_id"], "tables": u["tables"], "attempts": u["attempts"],
                               "reasons": mine[u["unit_id"]].get("reasons", [])} for u in failed],
-            "next": NEXT if prog["units"]["pending"] else FINISH}
+            "next": NEXT if prog["units"]["pending"] else FINISH if job["status"] == "open" else REFRESH}
 
 
 @RY.capped
-def finish_result(dir) -> dict:
+@_busy
+def finish_result(dir, partial: bool = False) -> dict:
     """Replay the saved answers onto the base graph, write index/summary.json and close the job when nothing is pending.
-    Returns the summary (counts only), the same dict `replay` returns."""
+    Returns the summary (counts only), the same dict `replay` returns.
+    partial=True re-renders the map from the answers accepted so far and keeps the job open: an earlier index/summary.json is removed while units are still pending (it would describe another run; a finished job keeps its summary), the job is never
+    closed, and the reply adds `partial: true` and `pending` (units still to do). The same answers give the same outputs."""
     out = Path(dir)
     _base(out)
     with ContextDB(out / "keygraph.db") as ctx:
@@ -477,6 +625,15 @@ def finish_result(dir) -> dict:
         if not (ST.answers_dir(out) / f"{u['unit_id']}.json").exists():
             raise ValueError(f"unit {u['unit_id']} is marked done but has no answer file (index/answers/{u['unit_id']}.json); restore the "
                              f"file, or run `keygraph index start --restart` to index again")
+    if partial:
+        res = RP.replay(out)
+        with ContextDB(out / "keygraph.db") as ctx:
+            job = jobs.open_job(ctx)
+            pending = len(jobs.list_units(ctx, job["job_id"], "pending")) if job else 0
+        if pending:  # work went on after the summary was written: it would describe an earlier run (a finished job keeps its own)
+            (out / "index" / "summary.json").unlink(missing_ok=True)
+        devlog.decide("index_finish", partial=True, units=res["units"], pending=pending)
+        return {**res, "partial": True, "pending": pending}
     res = RP.finish(out)
     with ContextDB(out / "keygraph.db") as ctx:
         job = jobs.open_job(ctx)
@@ -534,18 +691,16 @@ def refresh_result(dir) -> dict:
                     (changed if h != o["packet_hash"] else retried).append(u["unit_id"])
                     continue
             jobs.set_rank(ctx, job_id, u["unit_id"], u["rank"])
+            ST.set_saved_rank(out, u["unit_id"], u["rank"])
             kept += 1
         keep = {u["unit_id"] for u in new}
-        led = _ledger(out)
         for uid in sorted(set(old) - keep):
             jobs.drop_unit(ctx, job_id, uid)
             (ST.answers_dir(out) / f"{uid}.json").unlink(missing_ok=True)
-            led.pop(uid, None)
             dropped.append(uid)
         for uid in changed + retried:
-            led.pop(uid, None)
             ST.set_saved_attempts(out, uid, 0)  # the old answer keeps counting until the unit is submitted again
-        _save_ledger(out, led)
+        _drop_entries(out, [*dropped, *changed, *retried])
         jobs.add_units(ctx, job_id, added, job["tasks"])
         if (changed or retried or added) and job["status"] != "open":
             jobs.reopen_job(ctx, job_id)

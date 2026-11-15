@@ -115,7 +115,10 @@ def instructions(tasks=TASKS) -> str:
             "Use only the tables and columns the packet names (unit tables, their columns, and listed neighbours). "
             "Every item needs a short `reason` and a `confidence`. Never write personal "
             "values (emails, phone numbers, card or national ids). Leave a list empty when the packet gives no support. "
-            "Optional top-level `model` names the model you are.\n" + "\n".join(INSTRUCTIONS[k] for k in kinds)
+            "Optional top-level `model` names the model you are. "
+            "Call index_submit (CLI: `keygraph index submit`) with the JSON answer only. Do not explain, restate the packet or add commentary. "
+            "Later replies may carry only `instructions_ref`: then these instructions and the answer_schema are the same as in the "
+            "last reply that had them.\n" + "\n".join(INSTRUCTIONS[k] for k in kinds)
             + "\nOne valid item per kind:\n"
             + "\n".join(f"{k}: {canonical(EXAMPLES[k])}" for k in kinds))
 
@@ -127,6 +130,11 @@ def examples(tasks=TASKS) -> dict:
 def canonical(obj) -> str:
     """Canonical JSON: sorted keys, no spaces, non-ASCII kept. Byte-stable."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def instructions_ref(instructions_text: str, schema: dict) -> str:
+    """A short hash (16 hex characters) of the instructions and the answer schema: equal tasks give an equal ref."""
+    return hashlib.sha256("\n".join((instructions_text, canonical(schema))).encode("utf-8")).hexdigest()[:16]
 
 
 def prompt_hash(instructions_text: str, schema: dict, packet: dict) -> str:

@@ -281,10 +281,24 @@ def save_answer(out_dir, unit: dict, job_id: str, answer: dict, model: str, prom
     body = {"answer": known, "job_id": job_id, "model": clean(model, 120), "prompt_hash": prompt_hash,
             "schema_version": SCHEMA_VERSION, "tables": sorted(unit.get("tables") or []), "unit_id": unit["unit_id"],
             "verdicts": [{"kind": v.get("kind"), "index": v.get("index"), **_verdict(v)} for v in verdicts]}
+    if isinstance(unit.get("rank"), int):  # the unit's place in the plan: replay applies answers in this order
+        body["rank"] = unit["rank"]
     if attempts is not None:  # the unit's attempts after this submit: replay uses it to tell a file from a crashed submit
         body["attempts"] = attempts
     _write_json(p, body)
     return p
+
+
+def set_saved_rank(out_dir, unit_id: str, rank: int) -> None:
+    """Rewrite the `rank` of a saved answer (refresh re-plans the order); no file means nothing to do."""
+    p = answers_dir(out_dir) / f"{unit_id}.json"
+    try:
+        body = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(body, dict) and body.get("rank") != rank:
+        body["rank"] = rank
+        _write_json(p, body)
 
 
 def set_saved_attempts(out_dir, unit_id: str, attempts: int) -> None:

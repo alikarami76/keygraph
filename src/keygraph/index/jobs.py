@@ -4,11 +4,26 @@ The probe source is stored as environment variable NAMES only, never values."""
 from __future__ import annotations
 
 import json
+import re
 import time
 
 from keygraph import __version__
 from keygraph.devlog import ENV_NAME
 from keygraph.index.schema import SCHEMA_VERSION, TASKS
+
+LEASE_SECONDS = 600
+DEFAULT_WORKER = "default"
+WORKER = re.compile(r"[A-Za-z0-9_.:@-]{1,64}")
+_clock = time.time  # tests replace this to move time
+
+
+def worker_name(worker: str | None) -> str:
+    """The worker's name ("default" when empty); letters, digits and _ . : @ - only, up to 64 characters."""
+    w = (worker or "").strip() or DEFAULT_WORKER
+    if not WORKER.fullmatch(w):
+        raise ValueError("worker is a short name (letters, digits and _ . : @ -, up to 64 characters), for example --worker w1")
+    return w
+
 
 UNIT_STATUS = ("pending", "done", "failed", "skipped")
 
@@ -112,6 +127,7 @@ def update_unit(ctx, job_id: str, unit_id: str, *, status: str | None = None, at
     sets = {k: v for k, v in sets.items() if v is not None}
     if status in ("done", "failed"):
         sets["submitted_at"] = now()
+        ctx.db.execute("DELETE FROM index_leases WHERE job_id=? AND unit_id=?", (job_id, unit_id))  # a finished unit frees its lease
     if sets:
         ctx.db.execute(f"UPDATE index_units SET {', '.join(f'{k}=?' for k in sets)} WHERE job_id=? AND unit_id=?",
                        [*sets.values(), job_id, unit_id])
@@ -191,15 +207,113 @@ def add_units(ctx, job_id: str, units: list[dict], tasks) -> None:
 
 def drop_unit(ctx, job_id: str, unit_id: str) -> None:
     ctx.db.execute("DELETE FROM index_units WHERE job_id=? AND unit_id=?", (job_id, unit_id))
+    ctx.db.execute("DELETE FROM index_leases WHERE job_id=? AND unit_id=?", (job_id, unit_id))
     ctx.db.commit()
 
 
 def reset_unit(ctx, job_id: str, unit_id: str, rank: int) -> None:
     """Put a unit back to pending with no attempts (its inputs changed) and set its new rank."""
     ctx.db.execute("UPDATE index_units SET status='pending', attempts=0, rank=? WHERE job_id=? AND unit_id=?", (rank, job_id, unit_id))
+    ctx.db.execute("DELETE FROM index_leases WHERE job_id=? AND unit_id=?", (job_id, unit_id))
     ctx.db.commit()
 
 
 def set_rank(ctx, job_id: str, unit_id: str, rank: int) -> None:
     ctx.db.execute("UPDATE index_units SET rank=? WHERE job_id=? AND unit_id=?", (rank, job_id, unit_id))
     ctx.db.commit()
+
+
+# --- leases: parallel workers claim units (dec-021 follow-up, ENG-108) ---------------------------------------------
+
+def _lease(r) -> dict:
+    return {"unit_id": r["unit_id"], "worker": r["worker"], "leased_at": r["leased_at"], "until": r["until"]}
+
+
+def begin_write(ctx) -> None:
+    """Start a write transaction that takes the database lock now (BEGIN IMMEDIATE): keep what runs inside it short."""
+    ctx.db.commit()
+    ctx.db.execute("BEGIN IMMEDIATE")
+
+
+def live_lease(ctx, job_id: str, unit_id: str) -> dict | None:
+    """The lease on a unit if it has not expired, else None."""
+    r = ctx.db.execute("SELECT * FROM index_leases WHERE job_id=? AND unit_id=? AND until>?", (job_id, unit_id, _clock())).fetchone()
+    return _lease(r) if r else None
+
+
+def leased_count(ctx, job_id: str) -> int:
+    return ctx.db.execute("SELECT COUNT(*) FROM index_leases WHERE job_id=? AND until>?", (job_id, _clock())).fetchone()[0]
+
+
+def retry_after(ctx, job_id: str) -> int:
+    """Whole seconds until the first live lease expires (at least 1)."""
+    t = _clock()
+    r = ctx.db.execute("SELECT MIN(until) FROM index_leases WHERE job_id=? AND until>?", (job_id, t)).fetchone()[0]
+    return max(1, int(r - t) + 1) if r else 1
+
+
+def candidate(ctx, job_id: str, worker: str) -> dict | None:
+    """The unit this worker should get: the one it holds a live lease on, else the best-ranked pending unit with no live lease."""
+    t = _clock()
+    own = ("SELECT u.* FROM index_units u JOIN index_leases l ON l.job_id=u.job_id AND l.unit_id=u.unit_id "
+           "WHERE u.job_id=? AND u.status='pending' AND l.worker=? AND l.until>? ORDER BY u.rank, u.unit_id LIMIT 1")
+    free = ("SELECT u.* FROM index_units u WHERE u.job_id=? AND u.status='pending' AND NOT EXISTS "
+            "(SELECT 1 FROM index_leases l WHERE l.job_id=u.job_id AND l.unit_id=u.unit_id AND l.until>?) "
+            "ORDER BY u.rank, u.unit_id LIMIT 1")
+    for q, args in ((own, (job_id, worker, t)), (free, (job_id, t))):
+        r = ctx.db.execute(q, args).fetchone()
+        if r:
+            return _unit(r)
+    return None
+
+
+def reserved(ctx, job_id: str, exclude_unit: str = "") -> int:
+    """Tokens reserved by live leases for units not charged yet (a unit's packet is charged at its first submit)."""
+    return ctx.db.execute(
+        "SELECT COALESCE(SUM(u.tokens_est), 0) FROM index_leases l JOIN index_units u ON u.job_id=l.job_id AND u.unit_id=l.unit_id "
+        "WHERE l.job_id=? AND l.until>? AND u.status='pending' AND u.attempts=0 AND u.unit_id<>?",
+        (job_id, _clock(), exclude_unit)).fetchone()[0]
+
+
+def available(ctx, job_id: str, exclude_unit: str = "") -> int:
+    """Budget left after what is used and what other workers have reserved (the unit named is not counted as reserved)."""
+    j = get_job(ctx, job_id)
+    return max(0, j["budget"] - j["used"] - reserved(ctx, job_id, exclude_unit))
+
+
+def try_claim(ctx, job_id: str, unit: dict, worker: str, seconds: int, est: int, packet_hash: str) -> str:
+    """Lease `unit` to `worker` inside BEGIN IMMEDIATE. Returns claimed, taken (another worker got it first) or budget
+    (the packet estimate does not fit what is free: no lease is written). A worker that already holds the lease keeps it and
+    the lease is extended."""
+    begin_write(ctx)
+    try:
+        u = get_unit(ctx, job_id, unit["unit_id"])
+        l = live_lease(ctx, job_id, unit["unit_id"])
+        if u is None or u["status"] != "pending" or (l and l["worker"] != worker):
+            ctx.db.rollback()
+            return "taken"
+        if available(ctx, job_id, unit["unit_id"]) < int(est):
+            ctx.db.execute("UPDATE index_units SET tokens_est=?, packet_hash=? WHERE job_id=? AND unit_id=?",
+                           (est, packet_hash, job_id, unit["unit_id"]))
+            ctx.db.commit()
+            return "budget"
+        t = _clock()
+        ctx.db.execute("DELETE FROM index_leases WHERE job_id=? AND until<=?", (job_id, t))
+        ctx.db.execute("INSERT OR REPLACE INTO index_leases VALUES(?,?,?,?,?)",
+                       (job_id, unit["unit_id"], worker, now(), t + max(1, int(seconds))))
+        ctx.db.execute("UPDATE index_units SET tokens_est=?, packet_hash=? WHERE job_id=? AND unit_id=?",
+                       (est, packet_hash, job_id, unit["unit_id"]))
+        ctx.db.commit()
+        return "claimed"
+    except BaseException:
+        ctx.db.rollback()
+        raise
+
+
+def hold(ctx, job_id: str, unit_id: str, worker: str, seconds: int = LEASE_SECONDS) -> None:
+    """Inside an open write transaction: make `worker` the holder of the unit for `seconds` from now. It renews the worker's
+    own lease and takes an unleased or expired one; a live lease of another worker is left alone (the caller checked)."""
+    held = live_lease(ctx, job_id, unit_id)
+    if held is None or held["worker"] == worker:
+        ctx.db.execute("INSERT OR REPLACE INTO index_leases VALUES(?,?,?,?,?)",
+                       (job_id, unit_id, worker, now(), max(_clock() + int(seconds), (held or {}).get("until", 0))))

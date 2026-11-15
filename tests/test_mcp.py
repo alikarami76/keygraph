@@ -341,13 +341,77 @@ def test_index_tools_match_the_cli(out, tmp_path, capsys):
     assert (mcp_dir / "index" / "summary.json").read_bytes() == (cli_dir / "index" / "summary.json").read_bytes()
 
 
+def test_index_worker_params_match_the_cli(out, tmp_path, capsys):
+    """index_next(worker, lease_seconds) and index_submit(worker) equal `index next --worker --lease-seconds` / `submit --worker`."""
+    cli_dir, mcp_dir = _copy(out, tmp_path, "wcli"), _copy(out, tmp_path, "wmcp")
+    s2 = build_server(mcp_dir)
+    cli_json(capsys, cli_dir, "index", "start", "--tasks", "relations")
+    call(s2, "index_start", tasks=["relations"])
+    for w in ("w1", "w2"):
+        c = cli_json(capsys, cli_dir, "index", "next", "--worker", w, "--lease-seconds", "120")
+        err, got = call(s2, "index_next", worker=w, lease_seconds=120)
+        assert not err and got == c and c["status"] == "unit"
+        if w == "w1":
+            first = c["unit_id"]
+        else:
+            assert c["unit_id"] != first
+    f = tmp_path / "wa.json"
+    f.write_text(json.dumps({"relations": []}), encoding="utf-8")
+    cli_res = cli_json(capsys, cli_dir, "index", "submit", first, str(f), "--worker", "w1")
+    err, got = call(s2, "index_submit", unit_id=first, answer={"relations": []}, worker="w1")
+    assert not err and got == cli_res and cli_res["status"] == "accepted"
+    err, msg = call(s2, "index_submit", unit_id=c["unit_id"], answer={"relations": []}, worker="w1")
+    assert err and "leased to worker w2" in msg
+    assert main(["index", "submit", c["unit_id"], str(f), "--worker", "w1", "--dir", str(cli_dir)]) == 2
+    assert "leased to worker w2" in capsys.readouterr().err
+
+
+def test_index_lean_replies_and_partial_finish_match_the_cli(out, tmp_path, capsys):
+    """The MCP server remembers the last instructions hash per worker; the CLI takes it as --have. Both give the same JSON."""
+    cli_dir, mcp_dir = _copy(out, tmp_path, "lcli"), _copy(out, tmp_path, "lmcp")
+    s2 = build_server(mcp_dir)
+    cli_json(capsys, cli_dir, "index", "start", "--tasks", "relations")
+    call(s2, "index_start", tasks=["relations"])
+    c1 = cli_json(capsys, cli_dir, "index", "next", "--worker", "w1")
+    err, g1 = call(s2, "index_next", worker="w1")
+    assert not err and g1 == c1 and "instructions" in g1
+    c2 = cli_json(capsys, cli_dir, "index", "next", "--worker", "w1", "--have", c1["instructions_ref"])
+    err, g2 = call(s2, "index_next", worker="w1")  # the server knows w1 already has them
+    assert not err and g2 == c2 and "instructions" not in g2
+    err, g3 = call(s2, "index_next", worker="w1", full=True)
+    assert not err and g3 == c1
+    err, g4 = call(s2, "index_next", worker="w2")  # a different worker has nothing yet
+    assert not err and "instructions" in g4
+    p1 = cli_json(capsys, cli_dir, "index", "finish", "--partial")
+    err, got = call(s2, "index_finish", partial=True)
+    assert not err and got == p1 and p1["partial"] is True
+
+
+def test_index_lean_reply_says_how_to_recover_and_a_shared_name_can_ask_for_full(out, tmp_path):
+    """Two agents (or one that lost its context) under one worker name get a lean reply with a hint; full=true brings the text back."""
+    d = _copy(out, tmp_path, "lean")
+    s2 = build_server(d)
+    call(s2, "index_start", tasks=["relations"])
+    err, first = call(s2, "index_next", worker=" w1 ")  # surrounding spaces are the same name as w1
+    assert not err and "instructions" in first
+    err, lean = call(s2, "index_next", worker="w1")
+    assert not err and "instructions" not in lean and lean["instructions_omitted"] is True and "full=true" in lean["hint"]
+    err, again = call(s2, "index_next", worker="w1", full=True)
+    assert not err and again == first
+    s3 = build_server(d)  # a restarted server remembers nothing: full text again
+    err, fresh = call(s3, "index_next", worker="w1")
+    assert not err and "instructions" in fresh
+
+
 def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatch):
     d = _copy(out, tmp_path, "names")
     s2 = build_server(d)
     tools = {t.name: t for t in asyncio.run(s2.list_tools())}
     props = {n: set((tools[n].input_schema or {}).get("properties", {})) for n in INDEX_TOOLS}
     assert props["index_start"] == {"budget", "tasks", "url_env", "cmd_env", "dialect", "max_units", "restart"}
-    assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds"} and props["index_next"] == set() == props["index_status"] == props["index_finish"]
+    assert props["index_submit"] == {"unit_id", "answer", "model", "probe_seconds", "worker"}
+    assert props["index_next"] == {"worker", "lease_seconds", "full"} and props["index_status"] == set()
+    assert props["index_finish"] == {"partial"}
     assert not any("url" in p.replace("url_env", "") or "cmd" in p.replace("cmd_env", "") for ps in props.values() for p in ps)
     monkeypatch.delenv("KG_MCP_UNSET", raising=False)
     err, msg = call(s2, "index_start", url_env="KG_MCP_UNSET")
