@@ -318,9 +318,9 @@ def build_server(dir: str | Path) -> MCPServer:
         the claim holds before the unit goes back to the pool, default 600, 1 to 3600; full: resend the instructions and answer_schema): unit_id, tasks, instructions, instructions_ref, a packet (columns, keys, candidate relations, masked
         profiles, code references, logged queries, notes) and the JSON schema your answer must follow. When this server already sent you the same instructions, the reply carries only `instructions_ref` (the instructions and answer_schema are unchanged; pass full=true to get them again). It returns the same
         unit until you submit it. Also returns status budget_exhausted (with the command to resume), waiting (every pending unit is leased to another worker: call again after retry_after seconds), done (call index_finish), or finished (the job was closed). The reply is compact JSON under 40,000 characters; a `truncated` note ({cap, original_chars, cut}) says which packet sections were dropped (the unit is still answerable; fetch more with describe, keys, query_for or code_where). The packet may carry `copies` (same-shape tables with no unit of their own) and `family_undecided` (same-shape tables nothing could tell apart)."""
-        res = run(IX.next_result, out, worker, lease_seconds, full, "" if full else seen_ref.get(worker or "default", ""))
+        res = run(IX.next_result, out, worker, lease_seconds, full, "" if full else seen_ref.get((worker or "").strip() or "default", ""))
         if isinstance(res, dict) and res.get("status") == "unit" and "instructions" in res:
-            seen_ref[worker or "default"] = res["instructions_ref"]
+            seen_ref[(worker or "").strip() or "default"] = res["instructions_ref"]
         return res
 
     @srv.tool()

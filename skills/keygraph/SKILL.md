@@ -31,7 +31,7 @@ After a map is built, you can add a meaning layer yourself (undeclared relations
     keygraph index submit UNIT_ID answer.json --json [--model NAME] [--probe-seconds 60] [--worker NAME]   # or FILE `-` for stdin; same worker as `next`
     keygraph index status --json
     keygraph index finish --json [--partial]       # rebuild graph, pages, report, explorer; --partial keeps the job open
-    # Parallel: spawn N (default 4) subagents, each loops next --worker NAME then submit --worker NAME until done (on waiting, sleep retry_after); then finish. Pass --have <instructions_ref> to get lean replies. Use low reasoning effort.
+    # Parallel: spawn 4 subagents named w1, w2, w3, w4 (never omit or share a name: same name = same unit); each loops next --worker wN then submit --worker wN until done; on waiting retry every retry_after s for up to lease_seconds+60 s, then run status and finish --partial and report. Lead agent runs finish. If the reply has instructions_omitted and you lack the instructions, rerun next with --full. Low reasoning effort.
     keygraph index replay --json                   # same rebuild, no model, no database
     keygraph index refresh --json                  # after the map changed (CLI only)
 

@@ -387,6 +387,22 @@ def test_index_lean_replies_and_partial_finish_match_the_cli(out, tmp_path, caps
     assert not err and got == p1 and p1["partial"] is True
 
 
+def test_index_lean_reply_says_how_to_recover_and_a_shared_name_can_ask_for_full(out, tmp_path):
+    """Two agents (or one that lost its context) under one worker name get a lean reply with a hint; full=true brings the text back."""
+    d = _copy(out, tmp_path, "lean")
+    s2 = build_server(d)
+    call(s2, "index_start", tasks=["relations"])
+    err, first = call(s2, "index_next", worker=" w1 ")  # surrounding spaces are the same name as w1
+    assert not err and "instructions" in first
+    err, lean = call(s2, "index_next", worker="w1")
+    assert not err and "instructions" not in lean and lean["instructions_omitted"] is True and "full=true" in lean["hint"]
+    err, again = call(s2, "index_next", worker="w1", full=True)
+    assert not err and again == first
+    s3 = build_server(d)  # a restarted server remembers nothing: full text again
+    err, fresh = call(s3, "index_next", worker="w1")
+    assert not err and "instructions" in fresh
+
+
 def test_index_tools_take_names_never_urls_or_commands(out, tmp_path, monkeypatch):
     d = _copy(out, tmp_path, "names")
     s2 = build_server(d)

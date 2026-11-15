@@ -14,14 +14,12 @@ counts and rates is stored, logged or returned. Dev mode logs ids, sizes, counts
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import hashlib
 import json
 import os
 import sqlite3
 import threading
-import time
 from collections import Counter
 from pathlib import Path
 
@@ -108,88 +106,65 @@ def _packet(g, ctx, unit: dict, out: Path | None = None) -> tuple[dict, int, str
     return pk, PK.estimate(pk), hashlib.sha256(SC.canonical(pk).encode("utf-8")).hexdigest()
 
 
-def _ledger(out: Path) -> dict:
-    try:
-        d = json.loads((out / "index" / LEDGER).read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
+LEDGER_DIR = "ledger"
 
 
-def _save_ledger(out: Path, d: dict) -> None:
-    """Write the whole ledger through a temp file and rename it, so a reader never sees half a file."""
-    p = out / "index" / LEDGER
+def _write_atomic(p: Path, text: str) -> None:
+    """Write through a temp file and rename it, so a reader never sees half a file."""
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f"{LEDGER}.tmp{os.getpid()}-{threading.get_ident()}")
-    tmp.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    tmp = p.with_name(f"{p.name}.tmp{os.getpid()}-{threading.get_ident()}")
+    tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, p)
 
 
-LOCK_STALE = 5.0   # seconds after which a ledger lock counts as left behind by a crash (the critical section takes milliseconds)
-LOCK_WAIT = 15.0   # how long a writer waits for the lock; longer than LOCK_STALE so a crashed holder is recovered inside one call
+def _entry_path(out: Path, uid: str) -> Path:
+    return out / "index" / LEDGER_DIR / f"{uid}.json"
 
 
-def _break_stale(p: Path) -> None:
-    """Move a stale lock aside with an atomic rename (only one waiter wins), then delete it. A lock that turns out fresh (the
-    waiter raced a new holder) is put back."""
-    moved = p.with_name(f"{p.name}.stale{os.getpid()}-{threading.get_ident()}")
+def _ledger(out: Path) -> dict:
+    """Per-unit ledger entries (index/ledger/<unit_id>.json) laid over the old single index/ledger.json some maps still have.
+    Each unit has its own file, written by the one worker holding the unit, so parallel submits never share a file."""
     try:
-        os.rename(p, moved)
-    except OSError:
-        return  # someone else broke it first
-    try:
-        if time.time() - moved.stat().st_mtime > LOCK_STALE:
-            moved.unlink(missing_ok=True)
-        elif not p.exists():
-            os.rename(moved, p)
-        else:
-            moved.unlink(missing_ok=True)
-    except OSError:
-        pass
-
-
-@contextlib.contextmanager
-def _ledger_lock(out: Path):
-    """A short lock (a file created exclusively, holding a unique token) around the ledger's read-modify-write. A lock older
-    than LOCK_STALE seconds is broken; only the holder's own token is removed on exit."""
-    p = out / "index" / (LEDGER + ".lock")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    token = f"{os.getpid()}-{threading.get_ident()}-{time.time_ns()}"
-    end = time.monotonic() + LOCK_WAIT
-    while True:
+        d = json.loads((out / "index" / LEDGER).read_text(encoding="utf-8"))
+        led = d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        led = {}
+    for f in sorted((out / "index" / LEDGER_DIR).glob("*.json")):
         try:
-            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, token.encode())
-            os.close(fd)
-            break
-        except FileExistsError:
-            try:
-                if time.time() - p.stat().st_mtime > LOCK_STALE:
-                    _break_stale(p)
-                    continue
-            except OSError:
-                continue
-            if time.monotonic() > end:
-                raise ValueError(f"the index ledger is locked by another writer (a lock left by a crash clears after {int(LOCK_STALE)} s); "
-                                 f"call again in a few seconds") from None
-            time.sleep(0.01)
-    try:
-        yield
-    finally:
-        try:
-            if p.read_text(encoding="utf-8") == token:
-                p.unlink(missing_ok=True)
-        except OSError:
-            pass
+            e = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(e, dict):
+            led[f.stem] = e
+    return led
 
 
 def _put_entry(out: Path, uid: str, ent: dict) -> None:
-    """Store one unit's ledger entry: reload the file under the lock and change only that unit, so parallel submits of
-    different units never overwrite each other."""
-    with _ledger_lock(out):
-        led = _ledger(out)
-        led[uid] = ent
-        _save_ledger(out, led)
+    """Store one unit's ledger entry atomically in its own file."""
+    _write_atomic(_entry_path(out, uid), json.dumps(ent, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
+
+
+def _drop_entries(out: Path, uids) -> None:
+    """Forget these units' ledger entries (refresh); also removes them from an old single ledger.json."""
+    uids = list(uids)
+    for uid in uids:
+        _entry_path(out, uid).unlink(missing_ok=True)
+    legacy = out / "index" / LEDGER
+    try:
+        d = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(d, dict) and any(u in d for u in uids):
+        for u in uids:
+            d.pop(u, None)
+        _write_atomic(legacy, json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n")
+
+
+def _clear_ledger(out: Path) -> None:
+    """A new job starts with an empty ledger."""
+    for f in (out / "index" / LEDGER_DIR).glob("*.json*"):
+        f.unlink(missing_ok=True)
+    (out / "index" / LEDGER).unlink(missing_ok=True)
 
 
 def _save_families(out: Path, g, ctx) -> None:
@@ -306,7 +281,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
         _save_families(out, g, pre)
         job_id = jobs.create_job(ctx, units, budget=budget, tasks=want, url_env=url_env or "", cmd_env=cmd_env or "",
                                  dialect=dialect, skip_after=max_units if max_units > 0 else None)
-        _save_ledger(out, {})
+        _clear_ledger(out)
         res = {**_job_view(ctx, jobs.get_job(ctx, job_id), False), **_families_view(out)}
     devlog.decide("index_start", job_id=job_id, resumed=False, units=res["units"], budget=res["budget"], skipped=res["skipped"],
                   tasks=len(want), probe=("url_env" if url_env else "cmd_env" if cmd_env else "none"))
@@ -387,8 +362,10 @@ def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS, 
             text, schema = SC.instructions(tasks), SC.answer_schema(tasks)
             ref = SC.instructions_ref(text, schema)
             if have and have == ref and not full:
-                return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions_ref": ref, "packet": pk,
-                        "budget_left": left, "attempt": unit["attempts"] + 1}
+                return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions_omitted": True,
+                        "instructions_ref": ref, "packet": pk, "budget_left": left, "attempt": unit["attempts"] + 1,
+                        "hint": f"Instructions unchanged since your last unit (ref {ref}). If you no longer have them, call "
+                                f"index_next with full=true (CLI: --full)."}
             return {"status": "unit", "unit_id": unit["unit_id"], "tasks": tasks, "instructions": text, "instructions_ref": ref,
                     "packet": pk, "answer_schema": schema, "budget_left": left, "attempt": unit["attempts"] + 1}
         raise ValueError("could not claim a unit: other workers kept taking them; call index_next again")
@@ -634,7 +611,7 @@ def status_result(dir) -> dict:
 def finish_result(dir, partial: bool = False) -> dict:
     """Replay the saved answers onto the base graph, write index/summary.json and close the job when nothing is pending.
     Returns the summary (counts only), the same dict `replay` returns.
-    partial=True re-renders the map from the answers accepted so far and keeps the job open: no summary file, the job is never
+    partial=True re-renders the map from the answers accepted so far and keeps the job open: an earlier index/summary.json is removed (it would describe another run), the job is never
     closed, and the reply adds `partial: true` and `pending` (units still to do). The same answers give the same outputs."""
     out = Path(dir)
     _base(out)
@@ -650,6 +627,7 @@ def finish_result(dir, partial: bool = False) -> dict:
         with ContextDB(out / "keygraph.db") as ctx:
             job = jobs.open_job(ctx)
             pending = len(jobs.list_units(ctx, job["job_id"], "pending")) if job else 0
+        (out / "index" / "summary.json").unlink(missing_ok=True)  # it would describe an earlier run, not this render
         devlog.decide("index_finish", partial=True, units=res["units"], pending=pending)
         return {**res, "partial": True, "pending": pending}
     res = RP.finish(out)
@@ -712,16 +690,13 @@ def refresh_result(dir) -> dict:
             ST.set_saved_rank(out, u["unit_id"], u["rank"])
             kept += 1
         keep = {u["unit_id"] for u in new}
-        led = _ledger(out)
         for uid in sorted(set(old) - keep):
             jobs.drop_unit(ctx, job_id, uid)
             (ST.answers_dir(out) / f"{uid}.json").unlink(missing_ok=True)
-            led.pop(uid, None)
             dropped.append(uid)
         for uid in changed + retried:
-            led.pop(uid, None)
             ST.set_saved_attempts(out, uid, 0)  # the old answer keeps counting until the unit is submitted again
-        _save_ledger(out, led)
+        _drop_entries(out, [*dropped, *changed, *retried])
         jobs.add_units(ctx, job_id, added, job["tasks"])
         if (changed or retried or added) and job["status"] != "open":
             jobs.reopen_job(ctx, job_id)

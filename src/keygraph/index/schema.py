@@ -116,7 +116,7 @@ def instructions(tasks=TASKS) -> str:
             "Every item needs a short `reason` and a `confidence`. Never write personal "
             "values (emails, phone numbers, card or national ids). Leave a list empty when the packet gives no support. "
             "Optional top-level `model` names the model you are. "
-            "Call index_submit with the JSON answer only. Do not explain, restate the packet or add commentary. "
+            "Call index_submit (CLI: `keygraph index submit`) with the JSON answer only. Do not explain, restate the packet or add commentary. "
             "Later replies may carry only `instructions_ref`: then these instructions and the answer_schema are the same as in the "
             "last reply that had them.\n" + "\n".join(INSTRUCTIONS[k] for k in kinds)
             + "\nOne valid item per kind:\n"

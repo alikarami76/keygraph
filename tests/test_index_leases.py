@@ -253,15 +253,15 @@ def test_concurrent_submits_keep_every_ledger_entry(work, monkeypatch):
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errs
-    led = json.loads((work / "index" / "ledger.json").read_text(encoding="utf-8"))
+    led = X._ledger(work)
     assert {a, b} <= set(led) and led[a]["accepted"] == 0 and led[a]["attempts"] == 1 and led[b]["attempts"] == 1
 
 
 def test_a_torn_ledger_is_never_seen(work):
     _start(work)
     X.next_result(work, "a")
-    X._save_ledger(work, {"x": {"accepted": 1}})
-    assert not list((work / "index").glob("*.tmp*"))  # written through a temp file and renamed
+    X._put_entry(work, "x", {"accepted": 1})
+    assert not list((work / "index").rglob("*.tmp*"))  # written through a temp file and renamed
 
 
 def test_lease_is_renewed_when_a_submit_starts_its_write_window(work, clock, monkeypatch):
@@ -428,6 +428,8 @@ def test_instructions_ref_is_sent_on_every_reply_and_the_bulk_only_when_needed(w
     assert a["instructions"] and a["answer_schema"] and len(ref) == 16
     again = X.next_result(work, "a", have=ref)  # same unit back, caller already has the text
     assert again["instructions_ref"] == ref and "instructions" not in again and "answer_schema" not in again
+    assert again["instructions_omitted"] is True and ref in again["hint"] and "full=true" in again["hint"] and "--full" in again["hint"]
+    assert "instructions_omitted" not in a
     assert again["packet"] == a["packet"] and again["unit_id"] == a["unit_id"]
     assert "instructions" in X.next_result(work, "a", have=ref, full=True)  # --full resends
     assert "instructions" in X.next_result(work, "a", have="0123456789abcdef")  # another hash: resend
@@ -458,7 +460,7 @@ def test_have_works_over_the_cli(work, capsys):
 
 def test_instructions_ask_for_the_json_only(work):
     _start(work)
-    assert "Call index_submit with the JSON answer only. Do not explain, restate the packet or add commentary." in X.next_result(work, "a")["instructions"]
+    assert "Call index_submit (CLI: `keygraph index submit`) with the JSON answer only. Do not explain, restate the packet or add commentary." in X.next_result(work, "a")["instructions"]
 
 
 def test_old_answer_files_replay_the_same(built, tmp_path):
@@ -490,22 +492,85 @@ def test_finish_partial_rerenders_and_keeps_the_job_open(work, tmp_path):
     assert X.next_result(work, "a")["status"] == "unit"  # the job keeps working after a partial finish
 
 
-def test_stale_ledger_lock_is_broken_and_a_fresh_one_waits(work, monkeypatch):
-    import os
-    _start(work)
-    lock = work / "index" / (X.LEDGER + ".lock")
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    lock.write_text("crashed")
-    old = lock.stat().st_mtime - 60
-    os.utime(lock, (old, old))
+def test_ledger_entries_are_per_unit_files_and_parallel_writes_lose_nothing(work, monkeypatch):
+    real = X.os.replace
+    n = {"i": 0}
+
+    def slow(a, b):  # a slow writer must not hold anyone up or lose anything
+        n["i"] += 1
+        if n["i"] == 1:
+            import time
+            time.sleep(0.5)
+        return real(a, b)
+
+    monkeypatch.setattr(X.os, "replace", slow)
+    ts = [threading.Thread(target=X._put_entry, args=(work, f"u{i}", {"accepted": i})) for i in range(16)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    led = X._ledger(work)
+    assert led == {f"u{i}": {"accepted": i} for i in range(16)}
+    assert sorted(p.name for p in (work / "index" / "ledger").glob("*.json")) == sorted(f"u{i}.json" for i in range(16))
+    assert not list((work / "index").rglob("*.lock*")) and not list((work / "index").rglob("*.tmp*"))
+
+
+def test_an_old_single_ledger_file_is_still_read_and_per_unit_files_win(work):
+    (work / "index").mkdir(exist_ok=True)
+    (work / "index" / X.LEDGER).write_text(json.dumps({"old": {"accepted": 1}, "both": {"accepted": 1}}), encoding="utf-8")
+    X._put_entry(work, "both", {"accepted": 2})
+    X._put_entry(work, "new", {"accepted": 3})
+    assert X._ledger(work) == {"old": {"accepted": 1}, "both": {"accepted": 2}, "new": {"accepted": 3}}
+    X._drop_entries(work, ["old", "both"])
+    assert X._ledger(work) == {"new": {"accepted": 3}}
+
+
+def test_start_clears_the_ledger(work):
     X._put_entry(work, "u1", {"accepted": 1})
-    assert not lock.exists() and X._ledger(work)["u1"] == {"accepted": 1}
-    lock.write_text("someone else")  # fresh: held by a live writer
-    monkeypatch.setattr(X, "LOCK_WAIT", 0.2)
-    with pytest.raises(ValueError, match="ledger"):
-        X._put_entry(work, "u2", {"accepted": 2})
-    assert lock.read_text() == "someone else"  # never deleted by a waiter
+    _start(work)
+    assert X._ledger(work) == {}
 
 
-def test_the_lock_wait_outlasts_the_stale_age():
-    assert X.LOCK_WAIT > X.LOCK_STALE
+def test_partial_finish_removes_a_stale_summary_and_keeps_snapshots_identical(work):
+    _start(work, max_units=2)
+    for w in ("a", "b"):
+        assert _submit(work, X.next_result(work, w)["unit_id"], w)["status"] == "accepted"
+    X.finish_result(work)
+    assert (work / "index" / "summary.json").exists()
+    full = _snapshot(work)
+    res = X.finish_result(work, partial=True)
+    assert res["partial"] is True and res["pending"] == 0
+    assert not (work / "index" / "summary.json").exists()  # the old summary would no longer be the last run's
+    assert _snapshot(work) == full
+
+
+def test_partial_finish_during_an_in_flight_submit(work, monkeypatch):
+    _start(work)
+    a = X.next_result(work, "a")["unit_id"]
+    b = X.next_result(work, "b")["unit_id"]
+    assert _submit(work, b, "b")["status"] == "accepted"
+    in_probe, release = threading.Event(), threading.Event()
+    real = X.PR.probe_items
+
+    def probe(*args, **kw):
+        in_probe.set()
+        assert release.wait(10)
+        return real(*args, **kw)
+
+    monkeypatch.setattr(X.PR, "probe_items", probe)
+    out = []
+    t = threading.Thread(target=lambda: out.append(_submit(work, a, "a")))
+    t.start()
+    assert in_probe.wait(10)
+    res = X.finish_result(work, partial=True)  # a is still being checked: it is simply not in this render
+    assert res["units"] == 1 and res["partial"] is True
+    release.set()
+    t.join()
+    assert out[0]["status"] == "accepted"
+    assert X.finish_result(work, partial=True)["units"] == 2
+
+
+def test_whitespace_worker_is_the_default_worker_and_inner_spaces_are_refused(work):
+    _start(work)
+    a = X.next_result(work, "   ")
+    assert X.next_result(work)["unit_id"] == a["unit_id"]  # blank means default
+    with pytest.raises(ValueError, match="worker"):
+        X.next_result(work, "w 1")
