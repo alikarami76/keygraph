@@ -310,9 +310,10 @@ def try_claim(ctx, job_id: str, unit: dict, worker: str, seconds: int, est: int,
         raise
 
 
-def hold(ctx, job_id: str, unit_id: str, worker: str) -> None:
-    """Inside an open write transaction: make `worker` the holder of an unleased or expired unit (a submit that arrives after
-    its lease ran out, when nobody took the unit meanwhile)."""
-    if live_lease(ctx, job_id, unit_id) is None:
+def hold(ctx, job_id: str, unit_id: str, worker: str, seconds: int = LEASE_SECONDS) -> None:
+    """Inside an open write transaction: make `worker` the holder of the unit for `seconds` from now. It renews the worker's
+    own lease and takes an unleased or expired one; a live lease of another worker is left alone (the caller checked)."""
+    held = live_lease(ctx, job_id, unit_id)
+    if held is None or held["worker"] == worker:
         ctx.db.execute("INSERT OR REPLACE INTO index_leases VALUES(?,?,?,?,?)",
-                       (job_id, unit_id, worker, now(), _clock() + LEASE_SECONDS))
+                       (job_id, unit_id, worker, now(), max(_clock() + int(seconds), (held or {}).get("until", 0))))

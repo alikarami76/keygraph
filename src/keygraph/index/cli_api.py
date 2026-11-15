@@ -14,10 +14,14 @@ counts and rates is stored, logged or returned. Dev mode logs ids, sizes, counts
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import hashlib
 import json
 import os
 import sqlite3
+import threading
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -113,9 +117,47 @@ def _ledger(out: Path) -> dict:
 
 
 def _save_ledger(out: Path, d: dict) -> None:
+    """Write the whole ledger through a temp file and rename it, so a reader never sees half a file."""
     p = out / "index" / LEDGER
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    tmp = p.with_name(f"{LEDGER}.tmp{os.getpid()}-{threading.get_ident()}")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+
+
+@contextlib.contextmanager
+def _ledger_lock(out: Path):
+    """A short lock (a file created exclusively) around the ledger's read-modify-write; a lock older than 30 s is stale."""
+    p = out / "index" / (LEDGER + ".lock")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    end = time.monotonic() + 10
+    while True:
+        try:
+            os.close(os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            try:
+                if time.time() - p.stat().st_mtime > 30:
+                    p.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                continue
+            if time.monotonic() > end:
+                raise ValueError("the index ledger is busy; call again in a few seconds") from None
+            time.sleep(0.01)
+    try:
+        yield
+    finally:
+        p.unlink(missing_ok=True)
+
+
+def _put_entry(out: Path, uid: str, ent: dict) -> None:
+    """Store one unit's ledger entry: reload the file under the lock and change only that unit, so parallel submits of
+    different units never overwrite each other."""
+    with _ledger_lock(out):
+        led = _ledger(out)
+        led[uid] = ent
+        _save_ledger(out, led)
 
 
 def _save_families(out: Path, g, ctx) -> None:
@@ -242,9 +284,24 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
 # --- next ------------------------------------------------------------------------------------------------------
 
 CLAIM_TRIES = 20
+MAX_LEASE_SECONDS = 3600
+
+
+def _busy(fn):
+    """A lock wait that outlasts the 5 s busy timeout becomes a plain error telling the agent to call again."""
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        try:
+            return fn(*a, **k)
+        except sqlite3.OperationalError as exc:
+            if "locked" in str(exc) or "busy" in str(exc):
+                raise ValueError("the index database is busy (other workers are writing); call again in a few seconds") from None
+            raise
+    return wrapper
 
 
 @RY.capped
+@_busy
 def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS) -> dict:
     """Claim the best pending unit that no other worker holds, and return it with its packet, or budget_exhausted, waiting
     (every pending unit is leased to someone else) or done. The lease lasts `lease_seconds` (default 600) and the packet
@@ -253,8 +310,8 @@ def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS) 
     out = Path(dir)
     worker = jobs.worker_name(worker)
     lease_seconds = int(lease_seconds)
-    if lease_seconds <= 0:
-        raise ValueError("lease_seconds must be a positive number of seconds, for example --lease-seconds 600")
+    if not 1 <= lease_seconds <= MAX_LEASE_SECONDS:
+        raise ValueError(f"lease_seconds must be between 1 and {MAX_LEASE_SECONDS} seconds, for example --lease-seconds 600")
     g = _base(out)
     with ContextDB(out / "keygraph.db", g) as ctx:
         job = jobs.open_job(ctx)
@@ -278,6 +335,13 @@ def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS) 
             if got == "taken":
                 continue  # another worker was faster: pick again
             left = jobs.available(ctx, job["job_id"], unit["unit_id"])
+            if got == "budget" and jobs.reserved(ctx, job["job_id"], unit["unit_id"]) and \
+                    est <= max(0, job["budget"] - jobs.get_job(ctx, job["job_id"])["used"]):
+                wait = jobs.retry_after(ctx, job["job_id"])  # only other workers' reservations are in the way
+                devlog.decide("index_next", status="waiting", worker=worker, reason="reserved")
+                return {"status": "waiting", "leased": jobs.leased_count(ctx, job["job_id"]), "retry_after": wait,
+                        "hint": "the budget left is reserved by other workers' units; call again after retry_after seconds "
+                                "(a lease that expires gives its reservation back)"}
             if got == "budget":
                 devlog.decide("index_next", status="budget_exhausted", unit_id=unit["unit_id"], tokens_est=est, budget_left=left)
                 more = max(job["budget"] * 2, job["used"] + est)
@@ -310,6 +374,7 @@ def _source(job: dict, g) -> tuple[PR.Source | None, str]:
 
 
 @RY.capped
+@_busy
 def submit_text(dir, unit_id: str, text: str, model: str = "", probe_seconds: float = PR.TIME_BUDGET, worker: str = "") -> dict:
     """submit for an answer given as JSON text (the CLI). Text that is not JSON is an error that uses no attempt, for the first
     three times per unit; after that each one is a rejection like any other."""
@@ -336,6 +401,10 @@ def _budget_stop(ctx, job: dict, unit_id: str, est: int, atoks: int, charge: int
     left_now = jobs.available(ctx, job["job_id"], unit_id)
     if charge <= left_now:
         return None
+    if jobs.reserved(ctx, job["job_id"], unit_id) and charge <= max(0, jobs.get_job(ctx, job["job_id"])["budget"] - jobs.get_job(ctx, job["job_id"])["used"]):
+        return {"status": "waiting", "unit_id": unit_id, "retry_after": jobs.retry_after(ctx, job["job_id"]),
+                "hint": "other workers' reservations hold the budget this answer needs; nothing was stored and no attempt was used. "
+                        "Submit the same answer again after retry_after seconds"}
     devlog.decide("index_submit", unit_id=unit_id, status="budget_exhausted", tokens_est=est, answer_tokens=atoks, budget_left=left_now)
     more = max(job["budget"] * 2, job["used"] + charge)
     return {"status": "budget_exhausted", "unit_id": unit_id, "budget_left": left_now, "needed": charge,
@@ -349,6 +418,7 @@ def _resubmit(unit_id: str) -> str:
 
 
 @RY.capped
+@_busy
 def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: float = PR.TIME_BUDGET, worker: str = "", *,
                   _parse_error: str | None = None, _answer_tokens: int | None = None) -> dict:
     """Check one answer (structure, validation, probes), store what passed and charge the budget.
@@ -396,7 +466,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
         if _parse_error:
             ent["parse_errors"] = ent.get("parse_errors", 0) + 1
             if ent["parse_errors"] <= FREE_PARSE_ERRORS:
-                _save_ledger(out, led)
+                _put_entry(out, unit_id, ent)
                 raise ValueError(f"{_parse_error} (free parse error {ent['parse_errors']} of {FREE_PARSE_ERRORS}: no attempt used; "
                                  f"later ones count as attempts)")
         charge = atoks + (est if unit["attempts"] == 0 else 0)  # what this submit would add to `used`
@@ -422,7 +492,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             if stop:
                 ctx.db.rollback()
                 return stop
-            jobs.hold(ctx, job_id, unit_id, worker)
+            jobs.hold(ctx, job_id, unit_id, worker, max(jobs.LEASE_SECONDS, int(probe_seconds) + 60))  # outlast the probes
             jobs.add_used(ctx, job_id, charge)  # the packet is paid for once per unit (commits the transaction)
         except BaseException:
             ctx.db.rollback()
@@ -435,7 +505,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             ent.update(attempts=attempts, rejected=ent["rejected"] + len(rejected), reasons=rejected[:REASONS_KEPT])
             if failed:
                 ent.pop("partial", None)
-            _save_ledger(out, led)
+            _put_entry(out, unit_id, ent)
             devlog.decide("index_submit", unit_id=unit_id, status="failed" if failed else "rejected", attempt=attempts,
                           tokens_est=est, answer_tokens=atoks, accepted=0, rejected=len(rejected), errors=len(val["errors"]))
             res = {"status": "failed" if failed else "rejected", "accepted": 0, "rejected": rejected, "unverified": 0,
@@ -472,7 +542,7 @@ def submit_result(dir, unit_id: str, answer, model: str = "", probe_seconds: flo
             ent["partial"] = True
         else:
             ent.pop("partial", None)
-        _save_ledger(out, led)
+        _put_entry(out, unit_id, ent)
         status = "failed" if failed else "partially_accepted" if rejected else "accepted"
         devlog.decide("index_submit", unit_id=unit_id, status=status, attempt=attempts, tokens_est=est, answer_tokens=atoks,
                       accepted=len(val["accepted"]), rejected=len(rejected), errors=0, verified=n_ok, codes_seen=n_seen, unverified=n_unk,
@@ -589,6 +659,7 @@ def refresh_result(dir) -> dict:
                     (changed if h != o["packet_hash"] else retried).append(u["unit_id"])
                     continue
             jobs.set_rank(ctx, job_id, u["unit_id"], u["rank"])
+            ST.set_saved_rank(out, u["unit_id"], u["rank"])
             kept += 1
         keep = {u["unit_id"] for u in new}
         led = _ledger(out)

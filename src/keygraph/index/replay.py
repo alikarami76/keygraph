@@ -99,13 +99,13 @@ def _crashed(ctx, f: Path, a: dict) -> bool:
 
 
 def _order_key(ctx):
-    """Sort key for answer files: the unit's rank in the newest job, then its id (files of unknown units come last, by id)."""
+    """Rank of a unit in the newest job, for answer files saved before they carried their own `rank` (else infinity)."""
     try:
         rows = ctx.db.execute("SELECT unit_id, rank FROM index_units WHERE job_id=(SELECT job_id FROM index_jobs ORDER BY rowid DESC LIMIT 1)").fetchall()
     except Exception:  # noqa: BLE001  (a context file without the index tables)
         rows = []
     rank = {r["unit_id"]: r["rank"] for r in rows}
-    return lambda p: (rank.get(p.stem, float("inf")), p.stem)
+    return lambda p: rank.get(p.stem, float("inf"))
 
 
 def replay(out_dir) -> dict:
@@ -120,9 +120,10 @@ def replay(out_dir) -> dict:
     totals = {"kept": 0, "filled": 0, "probe_failed": 0}
     with ContextDB(out / "keygraph.db", g) as ctx:
         clear_llm(ctx)
-        files.sort(key=_order_key(ctx))
-        for f in files:
-            a = json.loads(f.read_text(encoding="utf-8"))
+        loaded = [(f, json.loads(f.read_text(encoding="utf-8"))) for f in files]
+        dbrank = _order_key(ctx)
+        loaded.sort(key=lambda fa: (fa[1].get("rank") if isinstance(fa[1].get("rank"), int) else dbrank(fa[0]), fa[0].stem))
+        for f, a in loaded:
             if have_db and _crashed(ctx, f, a):
                 continue
             used += 1
