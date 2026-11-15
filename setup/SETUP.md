@@ -64,7 +64,7 @@ uv tool install 'keygraph[live,mcp,yaml,code]' [--with <driver>]   # --with only
 pipx install 'keygraph[live,mcp,yaml,code]'    # then, only if a driver is needed: pipx inject keygraph <driver>
 # plain pip (inside a virtual environment)
 python3 -m pip install 'keygraph[live,mcp,yaml,code]' [<driver>]
-# an unreleased version from a clone (this may update the clone's uv.lock); quote the whole spec so zsh does not treat the brackets as a glob
+# an unreleased version from a clone (this may update the clone's uv.lock); quote the whole spec, and write `${CLONE}` with braces, so zsh does not treat the brackets as a glob
 CLONE=/path/to/clone
 python3 -m pip install -e "${CLONE}[live,mcp,yaml,code]"
 ```
@@ -100,7 +100,7 @@ keygraph load --columns columns.jsonl --statistics statistics.jsonl --key-column
 # (c) a read-only command template that prints JSON rows for {sql}
 keygraph fetch --cmd 'mytool --sql {sql}' --out "$OUT/dumps"   # then load the dumps as in (b)
 
-# (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no extras, no clone). It needs a keygraph whose
+# (d) demo: the bundled webshop ships inside keygraph, so one command builds it (no clone). The demo with its starter context (question 5) needs the `mcp` and `yaml` extras (`keygraph[mcp,yaml]`); a `doctor` warning about the `live` or `code` extras can be ignored for the demo. It needs a keygraph whose
 # `keygraph --help` lists `demo` (check this, not the version number); otherwise use option (a), (b) or (c). Call keygraph by its full path (`<venv>/bin/keygraph`) in every command when it is in a virtual environment: a PATH export does not last across commands in some harnesses.
 # It loads the demo's context, code index, query log and profiles, and renders. OUT must be new or empty. After it run only
 # the starter-context import (question 5, below) and a final `keygraph render`; skip the whole extras block that follows
@@ -132,7 +132,7 @@ keygraph render --dir "$OUT"
 2. Copy `setup/templates/context-starter.yaml` (or fetch it from the raw URL above) to `keygraph-context.yaml` in the project, and delete every example entry in it before you fill it in: its `schema.orders` placeholder can name a real table.
 3. Fill it only with facts you can point to in the code or docs: what one row is, status code meanings from enums or constants, and metric formulas from existing reports. A short file is fine, and when every fact is already stored and verified you may add nothing.
 4. Leave `verified: false`. Use `verified=true` only for a fact you checked against data or code in this session, never for a guess or something merely read in a comment. A fact the user told you that you cannot check stays unverified: add it with `source="user, <date>"` and no `verified`.
-5. Check the import behaviour, not the version number: run `keygraph context history --json --dir "$OUT"`. If it works, an import from another source never replaces a verified entry (it keeps the verified one and prints a warning; ignore the keygraph version in `doctor`'s header line). If it fails, your keygraph is older and does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`).
+5. Check the import behaviour, not the version number: run `keygraph context history --json --dir "$OUT"`. If it prints any JSON reply (an empty list `[]` counts), it works: an import from another source never replaces a verified entry (it keeps the verified one and prints a warning; ignore the keygraph version in `doctor`'s header line). If it fails, your keygraph is older and does replace it. Read any such warning to the user, and leave out entries that duplicate a `verified: true` one unless the user wants yours instead (then add it with `verified=true`).
 6. Import it as above, then tell the user that the file is theirs to correct, and that keygraph search gets better with every fact they confirm.
 
 **Copies and replicas.** If the scan prints a warning about ambiguous relations across schemas, or the user named copy schemas, rebuild with `--copy-schema GLOB` for each one.
@@ -143,7 +143,7 @@ Check: `keygraph doctor --dir "$OUT"` shows `ok    graph` and `ok    query` line
 
 This adds a meaning layer (undeclared relations, what columns and status codes mean, what one row is, concepts, metrics, performance notes) on top of the map you just built, with you as the indexer. keygraph never calls a model. It gives you a packet of facts about a few tables, you write a JSON answer, and keygraph checks and stores it. It costs your own tokens, so do it only if the user says yes. If the user says no, skip to step 5; the map you built keeps working.
 
-**Ask first**, in one message: "I can also build a meaning layer with myself as the indexer. It uses my own tokens, capped at 200000 by default (I can use a smaller cap). It makes search and describe richer. Shall I do it?" Wait for the answer. If the user names a smaller number, use it as `--budget`.
+**Ask first**, in one message: "I can also build a meaning layer with myself as the indexer. It uses my own tokens, capped at 200000 by default (I can use a smaller cap). It makes search and describe richer. Shall I do it?" Wait for the answer. If the user already asked for indexing earlier in this session (for example "index this with yourself"), that request is the yes: do not ask again, say the budget you will use (200000 unless they named another number) and go on. If the user names a smaller number, use it as `--budget`.
 
 `OUT` is your output folder. Some harnesses run every command in a fresh shell, so nothing you `export` in one command is still set in the next. Set the probe variable on the same command line as each `keygraph index start` and each `keygraph index submit` (see "Probe source" below); if it is missing at `submit`, the reply says `probe_source: "missing: NAME is not set in this shell; items stored unverified"` and the items are stored without a probe. Add `--dir "$OUT"` to every command, or `export KEYGRAPH_DIR="$OUT"`. Use `--json`. Every `next` and `submit` reply has a `status` field: read it. (`start`, `finish`, `status` and `refresh` return a summary instead of a `status` field to branch on.) The `next` field of a reply names the next call.
 
@@ -171,20 +171,20 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
    keygraph index next --dir "$OUT" --json
    ```
 
-   - `"status": "unit"`: read `instructions`, `packet` and `answer_schema`, and go to 3. Note the `unit_id` and `packet.unit_tables`.
+   - `"status": "unit"`: read `packet` and, when the reply has them, `instructions` and `answer_schema` (a lean reply leaves them out: see the `instructions_ref` bullet), and go to 3. Note the `unit_id` and `packet.unit_tables`.
    - `"status": "done"`: go to 5.
    - `"status": "waiting"` (only with parallel workers): every pending unit is leased to another worker. When `index_next` says `waiting`, call it again after `retry_after` seconds, and keep doing so for up to lease_seconds + 60 s (about 11 minutes by default, because a crashed worker's unit only comes back when its lease expires); never stop sooner. If it is still `waiting` after that, run `index_status` and `index_finish(partial=true)` (CLI: `index finish --partial`), tell the user what is left, and stop.
-   - The reply carries `instructions_ref`. If you do not have the instructions and answer_schema in your context (the reply says `instructions_omitted`), call `index_next` again with `full=true` (CLI: `--full`) to get them. Pass it back as `--have <instructions_ref>` on the next `next` and the reply leaves out `instructions` and `answer_schema` (they are unchanged); `--full` sends them again. `--worker NAME` (default `default`) names you for parallel runs and `--lease-seconds N` (default 600, 1 to 3600) sets how long the claim holds. Submit with the same `--worker NAME`.
+   - The reply carries `instructions_ref`. If you do not have the instructions and answer_schema in your context (the reply says `instructions_omitted`), call `index_next` again with `full=true` (CLI: `--full`) to get them. Pass the `instructions_ref` back as `--have <instructions_ref>` to the next `next` only if this same worker already holds those instructions and the answer_schema in its context; then the reply leaves them out (they are unchanged). A worker that starts fresh (a new subagent, or after losing its context) runs `next --full` first. `--full` always sends them. `--worker NAME` (default `default`) names you for parallel runs and `--lease-seconds N` (default 600, 1 to 3600) sets how long the claim holds. Submit with the same `--worker NAME`.
    - Call `index submit` with the JSON answer only; do not explain, restate the packet or add commentary. Run indexing agents at low reasoning effort.
    - `"status": "budget_exhausted"`: the budget is used up. Tell the user how much was spent and what is left (`keygraph index status`). Continue only if they say yes, with a larger number: `keygraph index start --budget <larger number> --dir "$OUT"`, then `next` again. If they say no, go to 5.
    - `"status": "finished"`: the job is closed. Go to 5.
 
 3. Write the answer to any scratch file you can read back, for example a file in your project's scratch folder (the commands below call it `ANSWER.json`).
+   - First, for each table in `packet.unit_tables`, run `keygraph describe <table> --brief --dir "$OUT"` and leave out every item that is already `verified`: a verified note is never replaced, and an item that tries to is rejected.
    - It is one JSON object with a list for every kind named in `tasks`: `relations`, `columns`, `tables`, `concepts`, `metrics`, `performance`. Use `[]` for a kind where the packet gives you nothing to say.
    - Use only tables listed in `packet.unit_tables` as the `table` of a columns, tables, performance, concepts or metrics item, and only columns that appear in the packet. Write tables as `schema.table`, as in the packet. A table outside the unit is rejected and costs an attempt.
    - A relation item uses the keys `from_table`, `from_columns` (a list), `to_table`, `to_columns` (a list), `reason` and `confidence` (`cardinality` is optional), and needs at least one end in `packet.unit_tables`. The other end is another unit table or a neighbour listed in `packet.neighbours` (keygraph accepts any table of the map there, but you only know the ones the packet shows).
    - Every item needs a `reason` and a `confidence` between 0 and 1. Never write personal values.
-   - Before you answer for a column or table, check what is stored: `keygraph describe <table> --brief --dir "$OUT"`. A verified note is never replaced, and an item that tries to is rejected.
    - Do not repeat relations that the packet already lists as declared or inferred (`candidate_relations`). A declared one is rejected; an inferred one is accepted but adds evidence only, and the reply counts it in `confirmed_existing`. Propose relations only when the columns suggest a link the map does not have.
    - The `instructions` text ends with one valid example item per kind: copy its shape and replace every value. Shape of the answer, with placeholders:
 
@@ -194,7 +194,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
 
    A short honest answer is better than a long guess. Do not submit the placeholders as they are.
 
-   Never invent what a code means. Give a meaning for a code only when the packet supports it: an enum member, a column comment, a code reference, or a context note. Otherwise send the code with an empty meaning (`"1": ""`), or leave the `codes` out. A probe cannot tell you whether a label is right: it only checks that the code values occur in the data.
+   Never invent what a code means. Give codes only for values the profile in the packet shows: a documented code that does not occur in the data fails the codes probe (counted in `probe_failed`). Give a meaning for a code only when the packet supports it: an enum member, a column comment, a code reference, or a context note. Otherwise send the code with an empty meaning (`"1": ""`), or leave the `codes` out. A probe cannot tell you whether a label is right: it only checks that the code values occur in the data.
 
    To see the codes probe work on the demo, answer for `billing.payments.method_id` (the first unit, whose `packet.unit_tables` lists `billing.payments`) with codes that name only the values: `{"table": "billing.payments", "column": "method_id", "meaning": "How the customer paid", "codes": {"1": "", "2": "", "3": ""}, "reason": "values 1 to 3 in the profile; the packet does not name them", "confidence": 0.6}`. The probe finds all three values in the data, so the reply shows `codes_seen: 1` (and `verified: 0`): the values were seen in the data, which is not a verification of any label. (The demo has no note for that column, so it is not blocked by a verified note.)
 
@@ -210,7 +210,7 @@ This adds a meaning layer (undeclared relations, what columns and status codes m
    - `budget_exhausted` (from `submit`): the answer does not fit the budget left. Nothing was stored and no attempt was used. Ask the user whether to raise the budget (`keygraph index start --budget <larger number>`), then submit the same file again.
    - `accepted`: go back to 2.
    - `rejected`: nothing was stored and the unit stays pending. Read every entry of `rejected` (`item` and `reason`; item `$` means the whole answer, for example a missing list), fix the file, and run the same submit again with the same `unit_id`. You have three attempts per unit (`attempts_left` counts them down).
-   - `partially_accepted`: the accepted items are stored. Write a new file holding only the rejected items, fixed (you may leave out the kinds that had no problem), and submit it again for the same `unit_id`. If a reason says a fact is already verified, drop that item: you cannot replace it. An answer with all lists empty is a valid resubmit, and it finishes the unit.
+   - `partially_accepted`: the accepted items are stored. Write a new file holding only the rejected items, fixed (you may leave out the kinds that had no problem), and submit it again for the same `unit_id`. If a reason says a fact is already verified, drop that item: you cannot replace it. An answer with all lists empty is a valid resubmit: it returns `accepted` with 0 items and finishes the unit.
    - `failed`: three attempts are used up. The unit keeps its deterministic entry and nothing more is needed. Go back to 2.
    - An error (`"status": "error"`, exit code 2, for example "not valid JSON"): the file was not read and no attempt was used. Fix the file and submit again.
    - `probe_failed` greater than 0: the data did not support that claim. This is not an error. Go back to 2.
@@ -299,6 +299,7 @@ Dev mode records how agents use keygraph, locally, and never database rows or se
 
 ## Keeping it current
 
+- After a rebuild of a map that you indexed with LLM indexing: run `keygraph index refresh --dir "$OUT" --json`, then `index next` and `index submit` until `next` says `done`, then `index finish`. Refresh redoes only the units whose tables changed.
 - Rebuild after migrations: rerun the build command from `OUT/SETUP.md` (for the demo: `keygraph demo --dir OUT --no-open`), then re-import `keygraph-context.yaml` and any other context files (a rebuild that starts clean, like `keygraph demo`, drops notes saved with `context add`; put confirmed facts in the context file so they survive; `context add` merges (fields you do not give keep their stored values; `field=` with an empty value clears one), a file re-import adds or updates whole rows but does not remove links or entries you deleted from the file, so to remove one, rebuild from scratch and then import), then `keygraph render`. The MCP server picks up the new `graph.json` without a restart.
 - When you confirm what a table, column or status code means while working, save it with (a fact the user told you that you cannot check: leave out `verified=true` and add `source="user, <date>"`) `keygraph context add --kind column --author "<your agent name>" table=<schema.table> column=<column> meaning="..." verified=true --dir "$OUT"` (`--kind` is required: table, column, concept, relation, metric or link; `context add` merges: fields you leave out keep their values, `codes=` merges code by code, `field=` empty clears one; `verified=true` only for what you checked against data or code), as the skill describes (or set `KEYGRAPH_AUTHOR` once for the session; without either the source label is `context-add`) (`keygraph context history` shows what a later write replaced or refused). If the output says `kept` or "unverified write ... ignored", a verified note already exists and yours was not stored; either leave it, or, if you checked it yourself, repeat the command with `verified=true`.
 - After you run a query that answered a business question, log it with `query_submit`. The next agent can then reuse a proven query.

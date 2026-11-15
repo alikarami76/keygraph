@@ -98,16 +98,6 @@ def _crashed(ctx, f: Path, a: dict) -> bool:
     return bool(row and row["status"] == "pending" and row["attempts"] < a["attempts"])
 
 
-def _order_key(ctx):
-    """Rank of a unit in the newest job, for answer files saved before they carried their own `rank` (else infinity)."""
-    try:
-        rows = ctx.db.execute("SELECT unit_id, rank FROM index_units WHERE job_id=(SELECT job_id FROM index_jobs ORDER BY rowid DESC LIMIT 1)").fetchall()
-    except Exception:  # noqa: BLE001  (a context file without the index tables)
-        rows = []
-    rank = {r["unit_id"]: r["rank"] for r in rows}
-    return lambda p: rank.get(p.stem, float("inf"))
-
-
 def replay(out_dir) -> dict:
     """Rebuild the llm layer from index/answers/ and render. Never opens a database connection to a source."""
     from keygraph.cli import render
@@ -121,8 +111,8 @@ def replay(out_dir) -> dict:
     with ContextDB(out / "keygraph.db", g) as ctx:
         clear_llm(ctx)
         loaded = [(f, json.loads(f.read_text(encoding="utf-8"))) for f in files]
-        dbrank = _order_key(ctx)
-        loaded.sort(key=lambda fa: (fa[1].get("rank") if isinstance(fa[1].get("rank"), int) else dbrank(fa[0]), fa[0].stem))
+        # Order comes from the files alone: those with a `rank` by (rank, unit id), then those without (0.4.0 files) by unit id, as 0.4.0 did.
+        loaded.sort(key=lambda fa: (0, fa[1]["rank"], fa[0].stem) if isinstance(fa[1].get("rank"), int) else (1, 0, fa[0].stem))
         for f, a in loaded:
             if have_db and _crashed(ctx, f, a):
                 continue

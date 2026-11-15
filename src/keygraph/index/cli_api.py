@@ -40,6 +40,7 @@ MAX_ATTEMPTS = 3
 # One value for both surfaces (CLI and MCP return identical JSON), so every hint names both forms.
 NEXT = "index_next (CLI: keygraph index next)"
 FINISH = "index_finish (CLI: keygraph index finish)"
+REFRESH = "the job is finished; after the map is rebuilt run `keygraph index refresh` (CLI only), or `keygraph index start --restart` to redo all"
 FREE_PARSE_ERRORS = 3
 DIALECTS = ("mysql", "mariadb", "postgres", "postgresql", "tsql", "sqlserver", "clickhouse", "sqlite")
 LEDGER = "ledger.json"
@@ -291,6 +292,7 @@ def start_result(dir, budget: int = DEFAULT_BUDGET, tasks=None, url_env: str = "
 # --- next ------------------------------------------------------------------------------------------------------
 
 CLAIM_TRIES = 20
+RESERVED_RETRY = 15  # a `waiting` caused only by other workers' reservations clears when they submit, so retry soon, not after the lease
 MAX_LEASE_SECONDS = 3600
 
 
@@ -346,7 +348,7 @@ def next_result(dir, worker: str = "", lease_seconds: int = jobs.LEASE_SECONDS, 
             left = jobs.available(ctx, job["job_id"], unit["unit_id"])
             if got == "budget" and jobs.reserved(ctx, job["job_id"], unit["unit_id"]) and \
                     est <= max(0, job["budget"] - jobs.get_job(ctx, job["job_id"])["used"]):
-                wait = jobs.retry_after(ctx, job["job_id"])  # only other workers' reservations are in the way
+                wait = min(jobs.retry_after(ctx, job["job_id"]), RESERVED_RETRY)  # only other workers' reservations are in the way
                 devlog.decide("index_next", status="waiting", worker=worker, reason="reserved")
                 return {"status": "waiting", "leased": jobs.leased_count(ctx, job["job_id"]), "retry_after": wait,
                         "hint": "the budget left is reserved by other workers' units; call again after retry_after seconds "
@@ -418,7 +420,7 @@ def _budget_stop(ctx, job: dict, unit_id: str, est: int, atoks: int, charge: int
     if charge <= left_now:
         return None
     if jobs.reserved(ctx, job["job_id"], unit_id) and charge <= max(0, jobs.get_job(ctx, job["job_id"])["budget"] - jobs.get_job(ctx, job["job_id"])["used"]):
-        return {"status": "waiting", "unit_id": unit_id, "retry_after": jobs.retry_after(ctx, job["job_id"]),
+        return {"status": "waiting", "unit_id": unit_id, "retry_after": min(jobs.retry_after(ctx, job["job_id"]), RESERVED_RETRY),
                 "hint": "other workers' reservations hold the budget this answer needs; nothing was stored and no attempt was used. "
                         "Submit the same answer again after retry_after seconds"}
     devlog.decide("index_submit", unit_id=unit_id, status="budget_exhausted", tokens_est=est, answer_tokens=atoks, budget_left=left_now)
@@ -604,14 +606,15 @@ def status_result(dir) -> dict:
             "verify_rate": round(tot["verified"] / tot["accepted"], 3) if tot["accepted"] else None,
             "failed_units": [{"unit_id": u["unit_id"], "tables": u["tables"], "attempts": u["attempts"],
                               "reasons": mine[u["unit_id"]].get("reasons", [])} for u in failed],
-            "next": NEXT if prog["units"]["pending"] else FINISH}
+            "next": NEXT if prog["units"]["pending"] else FINISH if job["status"] == "open" else REFRESH}
 
 
 @RY.capped
+@_busy
 def finish_result(dir, partial: bool = False) -> dict:
     """Replay the saved answers onto the base graph, write index/summary.json and close the job when nothing is pending.
     Returns the summary (counts only), the same dict `replay` returns.
-    partial=True re-renders the map from the answers accepted so far and keeps the job open: an earlier index/summary.json is removed (it would describe another run), the job is never
+    partial=True re-renders the map from the answers accepted so far and keeps the job open: an earlier index/summary.json is removed while units are still pending (it would describe another run; a finished job keeps its summary), the job is never
     closed, and the reply adds `partial: true` and `pending` (units still to do). The same answers give the same outputs."""
     out = Path(dir)
     _base(out)
@@ -627,7 +630,8 @@ def finish_result(dir, partial: bool = False) -> dict:
         with ContextDB(out / "keygraph.db") as ctx:
             job = jobs.open_job(ctx)
             pending = len(jobs.list_units(ctx, job["job_id"], "pending")) if job else 0
-        (out / "index" / "summary.json").unlink(missing_ok=True)  # it would describe an earlier run, not this render
+        if pending:  # work went on after the summary was written: it would describe an earlier run (a finished job keeps its own)
+            (out / "index" / "summary.json").unlink(missing_ok=True)
         devlog.decide("index_finish", partial=True, units=res["units"], pending=pending)
         return {**res, "partial": True, "pending": pending}
     res = RP.finish(out)

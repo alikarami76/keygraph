@@ -7,9 +7,9 @@ This also covers Claude Code running on another model backend (DeepSeek, z.ai GL
 ## 1. Register the MCP server
 
 ```bash
-# this project only, private to the user (default answer to question 3)
+# this project only, private to the user (default answer to question 3); `--scope local` writes ~/.claude.json, under this project's path
 claude mcp add keygraph --scope local -- COMMAND ARGS...
-# every project (ask the user first)
+# every project (ask the user first); `--scope user` writes ~/.claude.json, in the user-level section
 claude mcp add keygraph --scope user -- COMMAND ARGS...
 ```
 
@@ -17,7 +17,7 @@ Optional, dev mode (SETUP.md step 9): add `-e KEYGRAPH_DEV=1` before the `--`, f
 
 Example: `claude mcp add keygraph --scope local -- /Users/me/.local/share/uv/tools/keygraph/bin/python -m keygraph mcp --dir /Users/me/app/keygraph-out`
 
-Do not use `--scope project` (which writes `.mcp.json`, usually committed) unless the user wants teammates to share it. The absolute paths are personal, so for a team commit a version that uses `uvx --from 'keygraph[mcp]' keygraph mcp --dir ./keygraph-out` instead.
+Do not use `--scope project` (which writes `.mcp.json` in the project folder, usually committed) unless the user wants teammates to share it. The absolute paths are personal, so for a team commit a version that uses `uvx --from 'keygraph[mcp]' keygraph mcp --dir ./keygraph-out` instead.
 
 If `keygraph` is already registered, remove the old entry first (`claude mcp remove keygraph --scope <scope>`).
 

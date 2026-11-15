@@ -529,17 +529,30 @@ def test_start_clears_the_ledger(work):
     assert X._ledger(work) == {}
 
 
-def test_partial_finish_removes_a_stale_summary_and_keeps_snapshots_identical(work):
+def test_partial_finish_keeps_the_summary_of_a_finished_job_and_removes_a_stale_one(work):
     _start(work, max_units=2)
     for w in ("a", "b"):
         assert _submit(work, X.next_result(work, w)["unit_id"], w)["status"] == "accepted"
     X.finish_result(work)
     assert (work / "index" / "summary.json").exists()
     full = _snapshot(work)
+    summary = (work / "index" / "summary.json").read_bytes()
     res = X.finish_result(work, partial=True)
     assert res["partial"] is True and res["pending"] == 0
-    assert not (work / "index" / "summary.json").exists()  # the old summary would no longer be the last run's
+    assert (work / "index" / "summary.json").read_bytes() == summary  # nothing pending: it is still the last run's summary
     assert _snapshot(work) == full
+
+
+def test_partial_finish_removes_a_summary_that_work_has_overtaken(work):
+    _start(work)
+    a = X.next_result(work, "a")["unit_id"]
+    _submit(work, a, "a")
+    X.finish_result(work)  # full finish with units still pending: writes a summary, keeps the job open
+    assert (work / "index" / "summary.json").exists()
+    b = X.next_result(work, "b")["unit_id"]
+    _submit(work, b, "b")
+    assert X.finish_result(work, partial=True)["pending"] > 0
+    assert not (work / "index" / "summary.json").exists()
 
 
 def test_partial_finish_during_an_in_flight_submit(work, monkeypatch):
@@ -574,3 +587,69 @@ def test_whitespace_worker_is_the_default_worker_and_inner_spaces_are_refused(wo
     assert X.next_result(work)["unit_id"] == a["unit_id"]  # blank means default
     with pytest.raises(ValueError, match="worker"):
         X.next_result(work, "w 1")
+
+
+def test_rankless_answer_files_replay_in_unit_id_order_with_or_without_the_db(built, tmp_path, monkeypatch):
+    """Answer files from 0.4.0 have no `rank`: replay orders them by unit id, as 0.4.0 did, whatever keygraph.db holds."""
+    outs = []
+    for name in ("with_db", "no_units"):
+        d = tmp_path / name
+        shutil.copytree(built, d)
+        _start(d)
+        units = _two_units(d)[:2]
+        assert units[0]["unit_id"] > units[1]["unit_id"]  # rank order differs from id order in the demo
+        for u, label, flt in ((units[0], "A", "1"), (units[1], "B", "2")):
+            ST.save_answer(d, {k: v for k, v in u.items() if k != "rank"}, "job-0001", {"tables": [
+                {"table": "shop.carts", "purpose": f"Basket {label}", "default_filters": [f"status = {flt}"], "reason": "r",
+                 "confidence": 0.7}]}, "m", "h", [])
+            assert "rank" not in json.loads((d / "index" / "answers" / f"{u['unit_id']}.json").read_text(encoding="utf-8"))
+        if name == "no_units":
+            with ContextDB(d / "keygraph.db") as ctx:
+                ctx.db.execute("DELETE FROM index_units")
+        seen = []
+        real = RP.store_unit
+        monkeypatch.setattr(RP, "store_unit", lambda ctx, g, job_id, unit, *a, _r=real, _s=seen, **k: (_s.append(unit["unit_id"]), _r(ctx, g, job_id, unit, *a, **k))[1])
+        RP.replay(d)
+        monkeypatch.setattr(RP, "store_unit", real)
+        assert seen == sorted(seen)  # 0.4.0 order: by unit id
+        outs.append(d)
+    assert _snapshot(outs[0]) == _snapshot(outs[1])
+
+
+def test_finish_reports_a_busy_database_in_plain_words(work, monkeypatch):
+    import sqlite3
+
+    from keygraph import context
+    _start(work)
+    monkeypatch.setattr(context, "BUSY_SECONDS", 0.1)
+    blocker = sqlite3.connect(work / "keygraph.db")
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(ValueError, match="busy"):
+            X.finish_result(work, partial=True)
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+
+def test_waiting_for_reserved_budget_retries_soon_not_after_the_whole_lease(work, built, tmp_path):
+    probe = tmp_path / "probe"
+    shutil.copytree(built, probe)
+    _start(probe)
+    X.next_result(probe, "p")
+    X.next_result(probe, "q")
+    e1, e2 = [u["tokens_est"] for u in _two_units(probe)[:2]]
+    _start(work, budget=e1 + e2 - 1)
+    X.next_result(work, "a", 3600)
+    r = X.next_result(work, "b")
+    assert r["status"] == "waiting" and r["retry_after"] <= X.RESERVED_RETRY < 3600
+
+
+def test_status_after_finish_does_not_send_you_back_to_finish(work):
+    _start(work, max_units=1)
+    a = X.next_result(work, "a")["unit_id"]
+    _submit(work, a, "a")
+    assert X.status_result(work)["next"] == X.FINISH
+    X.finish_result(work)
+    st = X.status_result(work)
+    assert st["status"] == "done" and "index_finish" not in st["next"] and "refresh" in st["next"]
